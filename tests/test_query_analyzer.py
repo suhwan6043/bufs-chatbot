@@ -27,8 +27,21 @@ def test_intent_graduation(analyzer):
 
 
 def test_intent_registration(analyzer):
-    result = analyzer.analyze("수강신청 기간 알려줘")
+    # 방법/규정 질문 → REGISTRATION
+    result = analyzer.analyze("수강신청 방법 알려줘")
     assert result.intent == Intent.REGISTRATION
+
+
+def test_intent_registration_period_is_schedule(analyzer):
+    # 기간/일정 질문 → SCHEDULE (언제인지 묻는 것)
+    result = analyzer.analyze("수강신청 기간 알려줘")
+    assert result.intent == Intent.SCHEDULE
+
+
+def test_intent_extra_registration_normalized(analyzer):
+    # 추가 수강신청 → 수강신청 정정 → SCHEDULE
+    result = analyzer.analyze("추가 수강신청 기간 알려줘")
+    assert result.intent == Intent.SCHEDULE
 
 
 def test_intent_schedule(analyzer):

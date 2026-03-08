@@ -42,11 +42,13 @@ class QueryAnalyzer:
             "수강신청", "수강", "재수강", "학점이월",
             "최대학점", "신청학점", "취소", "최대신청",
             "한국열린사이버대학교", "OCU", "장바구니", "납부",
+            "수강신청 정정", "수강정정", "공인결석계",
         ],
         Intent.SCHEDULE: [
             "언제", "기간", "일정", "마감", "시작일", "종료일",
             "중간고사", "기말고사", "개강", "종강", "방학",
             "수강취소", "수업일수", "학사일정",
+            "수강신청 정정", "정정기간", "추가수강",
         ],
         Intent.COURSE_INFO: [
             "과목", "교과목", "수업", "강의",
@@ -192,6 +194,17 @@ class QueryAnalyzer:
             or ("ocu" in text and any(kw in text for kw in ("납부", "사용료", "출석", "id")))
         ):
             return Intent.REGISTRATION
+
+        # 수강신청/정정 + 기간/일정 질문은 SCHEDULE 우선
+        if (
+            any(kw in text for kw in ("수강신청 정정", "수강신청정정", "수강취소", "수강변경",
+                                       "정정 기간", "정정기간"))
+            or (
+                any(kw in text for kw in ("수강신청", "수강"))
+                and any(kw in text for kw in ("기간", "언제", "일정", "마감", "날짜"))
+            )
+        ):
+            return Intent.SCHEDULE
 
         if (
             any(kw in text for kw in ("전과", "제1·2전공", "제1,2전공", "제2전공"))

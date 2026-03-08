@@ -71,7 +71,32 @@ def inject_custom_css():
         }
 
         /* Hide Streamlit chrome */
-        #MainMenu, header[data-testid="stHeader"], footer, .stDeployButton { display: none !important; }
+        footer { display: none !important; }
+        [data-testid="stToolbarActions"] { display: none !important; }
+        [data-testid="stMainMenu"]       { display: none !important; }
+        [data-testid="stAppDeployButton"]{ display: none !important; }
+
+        /* Header: 높이 0으로 줄이되 사이드바 토글 버튼은 유지 */
+        header[data-testid="stHeader"] {
+            background: transparent !important;
+            height: 0px !important;
+            min-height: 0px !important;
+            overflow: visible !important;
+        }
+
+        /* 사이드바 접기/펼치기 버튼 - 항상 좌상단에 고정 */
+        [data-testid="stExpandSidebarButton"] {
+            position: fixed !important;
+            top: 0.5rem !important;
+            left: 0.5rem !important;
+            z-index: 99999 !important;
+            background: var(--card) !important;
+            border: 1px solid var(--border) !important;
+            border-radius: 8px !important;
+            box-shadow: var(--shadow-sm) !important;
+            visibility: visible !important;
+            display: flex !important;
+        }
 
         /* App background */
         .stApp { background: var(--main-bg); }
