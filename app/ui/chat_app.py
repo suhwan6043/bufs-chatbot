@@ -41,6 +41,78 @@ PORTAL_LINKS = [
     {"icon": "📅", "label": "학사일정 달력",     "url": "https://m.bufs.ac.kr/popup/Haksa_Iljeong.aspx?gbn="},
 ]
 
+# ── Loading animation (답변 생성 중 표시) ───────────
+THINKING_HTML = """
+<style>
+@keyframes _bkFlt {
+    0%,100% { transform: translateY(0px) rotate(-4deg); }
+    25%     { transform: translateY(-8px) rotate(0deg); }
+    50%     { transform: translateY(-12px) rotate(4deg); }
+    75%     { transform: translateY(-6px) rotate(0deg); }
+}
+@keyframes _pgTrn {
+    0%,100% { transform: scaleX(1);  opacity: 1;   }
+    45%,55% { transform: scaleX(0);  opacity: 0.3; }
+}
+@keyframes _dtPop {
+    0%,80%,100% { transform: scale(0.5); opacity: 0.25; }
+    40%         { transform: scale(1.1); opacity: 1;    }
+}
+._cam-ld { display:flex; align-items:center; gap:16px; padding:8px 2px; }
+._cam-book-wrap {
+    position: relative; width: 44px; height: 44px;
+    display: flex; align-items: center; justify-content: center;
+}
+._cam-book {
+    font-size: 2.4rem; display: inline-block;
+    animation: _bkFlt 1.8s ease-in-out infinite;
+    filter: drop-shadow(0 4px 8px rgba(79,70,229,0.25));
+}
+._cam-page {
+    position: absolute; right: 4px; top: 10px;
+    width: 10px; height: 20px;
+    background: rgba(79,70,229,0.18);
+    border-radius: 0 3px 3px 0;
+    animation: _pgTrn 1.8s ease-in-out infinite;
+    transform-origin: left center;
+}
+._cam-info { display:flex; flex-direction:column; gap:7px; }
+._cam-lbl {
+    font-size: 0.86rem; color: #374151;
+    font-family: 'Noto Sans KR', sans-serif;
+    font-weight: 500; letter-spacing: -0.01em;
+}
+._cam-sub {
+    font-size: 0.74rem; color: #9ca3af;
+    font-family: 'Noto Sans KR', sans-serif;
+    margin-top: -4px;
+}
+._cam-dots { display:flex; gap:5px; align-items:center; }
+._cam-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #4f46e5;
+    animation: _dtPop 1.2s infinite ease-in-out;
+}
+._cam-dot:nth-child(2) { animation-delay: 0.22s; }
+._cam-dot:nth-child(3) { animation-delay: 0.44s; }
+</style>
+<div class="_cam-ld">
+  <div class="_cam-book-wrap">
+    <span class="_cam-book">📖</span>
+    <div class="_cam-page"></div>
+  </div>
+  <div class="_cam-info">
+    <div class="_cam-lbl">답변을 생성하고 있어요</div>
+    <div class="_cam-sub">학사 자료를 분석하는 중입니다</div>
+    <div class="_cam-dots">
+      <div class="_cam-dot"></div>
+      <div class="_cam-dot"></div>
+      <div class="_cam-dot"></div>
+    </div>
+  </div>
+</div>
+"""
+
 
 # ── CSS ────────────────────────────────────────────
 def inject_custom_css():
@@ -522,6 +594,9 @@ async def generate_response(question: str) -> str:
 
 
 async def generate_response_stream(question: str, placeholder) -> str:
+    # 처리 시작 즉시 애니메이션 표시 → 첫 토큰 도착 시 자동 대체됨
+    placeholder.markdown(THINKING_HTML, unsafe_allow_html=True)
+
     analyzer  = st.session_state.analyzer
     router    = st.session_state.router
     merger    = st.session_state.merger
