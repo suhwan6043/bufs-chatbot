@@ -36,9 +36,9 @@ QUICK_FEATURES = [
 ]
 
 PORTAL_LINKS = [
-    {"icon": "🖥️", "label": "수강신청 포털",   "url": "https://sugang.bufs.ac.kr"},
-    {"icon": "📊", "label": "학사정보시스템",    "url": "https://portal.bufs.ac.kr"},
-    {"icon": "📅", "label": "학사일정 달력",     "url": "https://www.bufs.ac.kr"},
+    {"icon": "🖥️", "label": "수강신청 포털",   "url": "https://sugang.bufs.ac.kr/Login.aspx"},
+    {"icon": "📊", "label": "학사정보시스템",    "url": "https://m.bufs.ac.kr/default.aspx?ReturnUrl=%2f"},
+    {"icon": "📅", "label": "학사일정 달력",     "url": "https://m.bufs.ac.kr/popup/Haksa_Iljeong.aspx?gbn="},
 ]
 
 
