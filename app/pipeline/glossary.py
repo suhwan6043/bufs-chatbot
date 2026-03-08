@@ -1,0 +1,67 @@
+"""
+용어 사전 - 은어/약어를 정식 용어로 변환
+CPU 전용, <1ms 처리
+"""
+
+import re
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class Glossary:
+    """
+    [역할] 학생들이 사용하는 은어/약어를 정식 학사 용어로 변환
+    [성능] CPU, <1ms
+    [확장] TERM_MAP에 새로운 용어를 추가하면 됩니다
+    """
+
+    TERM_MAP = {
+        # 줄임말 -> 정식 용어
+        "졸요": "졸업요건",
+        "수신": "수강신청",
+        "복전": "복수전공",
+        "부전": "부전공",
+        "전필": "전공필수",
+        "전선": "전공선택",
+        "교필": "교양필수",
+        "교선": "교양선택",
+        "학경": "학사경고",
+        "재수강": "재수강",
+        "학점이월": "학점이월",
+        "마크": "마이크로전공",
+        "마전": "마이크로전공",
+        "융전": "융합전공",
+        "전과": "전과",
+        # JSX 스키마 기준 추가 용어
+        "취커": "취업커뮤니티",
+        "학성사": "학업성적사정표",
+        "글소역": "글로벌소통역량과정",
+        "이수변": "이수구분 변경신청",
+        "전탐": "전공탐색",
+        "PSC": "PSC세미나",
+        "수1/4": "수업일수 1/4선",
+        # 비공식 표현 -> 정식 표현
+        "몇학점": "몇 학점",
+        "총학점": "총 이수학점",
+        "최소학점": "최소 이수학점",
+    }
+
+    def __init__(self):
+        # 긴 용어부터 매칭하기 위해 길이 내림차순 정렬
+        self._sorted_terms = sorted(
+            self.TERM_MAP.keys(), key=len, reverse=True
+        )
+        # 컴파일된 패턴 (한 번만 생성)
+        pattern_parts = [re.escape(term) for term in self._sorted_terms]
+        self._pattern = re.compile("|".join(pattern_parts))
+
+    def normalize(self, text: str) -> str:
+        """텍스트 내 은어/약어를 정식 용어로 변환합니다."""
+        if not text:
+            return text
+
+        def replace_match(match):
+            return self.TERM_MAP[match.group(0)]
+
+        return self._pattern.sub(replace_match, text)

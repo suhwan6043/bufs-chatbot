@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*.orig
+
+# Claude
+.claude/
+
+# OS
+nul
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Data - large/generated files
+data/chromadb/
+data/graphs/
+unpacked_doc/
+
+# Evaluation results (generated)
+data/eval/eval_results_*.json
+data/eval/BUFS_RAG_Evaluation_Report.docx
+eval_results_*.json
+
+# Environment variables
+.env
+.env.*
+
+# Logs
+*.log
+
+# Model cache (if any local model files)
+*.bin
+*.safetensors
+
+# Pytest
+.pytest_cache/

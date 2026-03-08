@@ -1,0 +1,265 @@
+"""
+쿼리 분석기 - 규칙 기반 Intent 분류 + 엔티티 추출
+LLM 호출 없이 정규식 + 키워드 매칭으로 <5ms 처리
+JSX 스키마 기준 9 Intent, 학번 그룹/학생유형/과목명 엔티티 추출
+"""
+
+import re
+import logging
+from typing import Optional
+
+from app.models import Intent, QueryAnalysis
+from app.pipeline.glossary import Glossary
+
+logger = logging.getLogger(__name__)
+
+
+class QueryAnalyzer:
+    """
+    [역할] 질문 의도 분류 + 엔티티 추출 (규칙 기반)
+    [핵심] LLM 호출 없음! 정규식 + 키워드 매칭으로 <5ms 처리
+    [이유] 7B 모델은 분석보다 생성에 집중시키는 것이 품질 향상에 유리
+    """
+
+    STUDENT_ID_PATTERN = re.compile(r"(20[12]\d)학번")
+    STUDENT_ID_RANGE_PATTERN = re.compile(r"(20[12]\d)\s*[~\-]\s*(20[12]\d)학번")
+    STUDENT_ID_BOUND_PATTERN = re.compile(r"(20[12]\d)학번\s*(이후|이전)")
+
+    STUDENT_TYPE_PATTERNS = {
+        "외국인": re.compile(r"외국인|유학생|외국인학생"),
+        "편입생": re.compile(r"편입생?|편입학"),
+    }
+
+    COURSE_NUMBER_PATTERN = re.compile(r"[A-Z]{2,4}\d{3,4}")
+
+    INTENT_KEYWORDS = {
+        Intent.GRADUATION_REQ: [
+            "졸업", "졸업요건", "졸업학점", "이수학점",
+            "몇 학점", "교양", "전공학점", "글로벌소통역량",
+            "취업커뮤니티", "NOMAD", "졸업인증", "졸업시험",
+        ],
+        Intent.REGISTRATION: [
+            "수강신청", "수강", "재수강", "학점이월",
+            "최대학점", "신청학점", "취소", "최대신청",
+            "한국열린사이버대학교", "OCU", "장바구니", "납부",
+        ],
+        Intent.SCHEDULE: [
+            "언제", "기간", "일정", "마감", "시작일", "종료일",
+            "중간고사", "기말고사", "개강", "종강", "방학",
+            "수강취소", "수업일수", "학사일정",
+        ],
+        Intent.COURSE_INFO: [
+            "과목", "교과목", "수업", "강의",
+            "개설", "강좌", "온라인", "대면", "플립",
+        ],
+        Intent.MAJOR_CHANGE: [
+            "복수전공", "부전공", "마이크로전공", "전과",
+            "제2전공", "융합전공", "전공탐색",
+        ],
+        Intent.ALTERNATIVE: [
+            "대체", "동일과목", "폐지", "변경", "대신",
+            "대체과목", "대체가능",
+        ],
+    }
+
+    DEPARTMENT_KEYWORDS = [
+        "컴퓨터공학", "컴공", "소프트웨어", "정보통신",
+        "영어", "일본어", "중국어", "한국어",
+        "경영", "국제통상", "관광", "호텔",
+        "법학", "행정", "사회복지", "미디어",
+    ]
+
+    LIBERAL_ARTS_KEYWORDS = {
+        "인성체험교양": ["채플", "PSC세미나", "사회봉사", "인성체험"],
+        "기초교양": ["글쓰기", "독서와토론", "AI", "IT", "기초교양"],
+        "균형교양": ["역사", "철학", "종교", "문학", "문화", "예술", "균형교양"],
+    }
+
+    def __init__(self):
+        self.glossary = Glossary()
+
+    def analyze(self, question: str) -> QueryAnalysis:
+        normalized = self.glossary.normalize(question)
+        student_groups = self._extract_student_groups(normalized)
+        student_id = self._extract_student_id(normalized, student_groups)
+        student_type = self._extract_student_type(normalized)
+        intent = self._classify_intent(normalized)
+        entities = self._extract_entities(normalized)
+        if student_groups:
+            entities["student_groups"] = student_groups
+
+        requires_graph = intent in (
+            Intent.GRADUATION_REQ, Intent.ALTERNATIVE, Intent.SCHEDULE,
+            Intent.COURSE_INFO, Intent.MAJOR_CHANGE, Intent.REGISTRATION,
+        )
+        requires_vector = intent not in (Intent.SCHEDULE, Intent.ALTERNATIVE)
+
+        missing_info = []
+        if not student_id and intent in (
+            Intent.GRADUATION_REQ, Intent.MAJOR_CHANGE, Intent.REGISTRATION
+        ):
+            missing_info.append("student_id")
+
+        return QueryAnalysis(
+            intent=intent,
+            student_id=student_id,
+            student_type=student_type,
+            entities=entities,
+            requires_graph=requires_graph,
+            requires_vector=requires_vector,
+            missing_info=missing_info,
+        )
+
+    def _extract_student_id(
+        self, text: str, student_groups: Optional[list] = None
+    ) -> Optional[str]:
+        match = self.STUDENT_ID_PATTERN.search(text)
+        if match:
+            return match.group(1)
+
+        range_match = self.STUDENT_ID_RANGE_PATTERN.search(text)
+        if range_match:
+            return range_match.group(1)
+
+        bound_match = self.STUDENT_ID_BOUND_PATTERN.search(text)
+        if bound_match:
+            return bound_match.group(1)
+
+        if student_groups:
+            first_group = student_groups[0]
+            if first_group == "2024_2025":
+                return "2024"
+            if first_group == "2017_2020":
+                return "2017"
+            if first_group == "2016_before":
+                return "2016"
+            return first_group
+
+        return None
+
+    def _extract_student_groups(self, text: str) -> list[str]:
+        groups = []
+
+        def add(group: str) -> None:
+            if group not in groups:
+                groups.append(group)
+
+        range_match = self.STUDENT_ID_RANGE_PATTERN.search(text)
+        if range_match:
+            start = range_match.group(1)
+            end = range_match.group(2)
+            if start == "2024" and end == "2025":
+                add("2024_2025")
+            else:
+                add(self._year_to_group(start))
+                add(self._year_to_group(end))
+
+        for year, bound in self.STUDENT_ID_BOUND_PATTERN.findall(text):
+            if bound == "이후":
+                add(self._year_to_group(year))
+            elif bound == "이전":
+                add(year)
+
+        for year in re.findall(r"(20[12]\d)학번", text):
+            add(self._year_to_group(year))
+
+        return groups
+
+    @staticmethod
+    def _year_to_group(year: str) -> str:
+        value = int(year)
+        if value >= 2024:
+            return "2024_2025"
+        if value == 2023:
+            return "2023"
+        if value == 2022:
+            return "2022"
+        if value == 2021:
+            return "2021"
+        if value >= 2017:
+            return "2017_2020"
+        return "2016_before"
+
+    def _extract_student_type(self, text: str) -> Optional[str]:
+        for stype, pattern in self.STUDENT_TYPE_PATTERNS.items():
+            if pattern.search(text):
+                return stype
+        return "내국인"
+
+    def _classify_intent(self, text: str) -> Intent:
+        if (
+            any(kw in text for kw in ("직전학기", "평점 4.0", "학점이월", "재수강", "장바구니"))
+            or ("ocu" in text and any(kw in text for kw in ("납부", "사용료", "출석", "id")))
+        ):
+            return Intent.REGISTRATION
+
+        if (
+            any(kw in text for kw in ("전과", "제1·2전공", "제1,2전공", "제2전공"))
+            and any(kw in text for kw in ("기간", "언제", "일정", "마감"))
+        ):
+            return Intent.SCHEDULE
+
+        scores = {}
+        for intent, keywords in self.INTENT_KEYWORDS.items():
+            score = sum(1 for kw in keywords if kw in text)
+            if score > 0:
+                scores[intent] = score
+
+        if not scores:
+            return Intent.GENERAL
+
+        priority = [
+            Intent.ALTERNATIVE, Intent.GRADUATION_REQ,
+            Intent.REGISTRATION, Intent.SCHEDULE,
+            Intent.MAJOR_CHANGE, Intent.COURSE_INFO,
+        ]
+        max_score = max(scores.values())
+        top = [i for i, s in scores.items() if s == max_score]
+        for p in priority:
+            if p in top:
+                return p
+        return top[0]
+
+    def _extract_entities(self, text: str) -> dict:
+        entities = {}
+
+        for dept in self.DEPARTMENT_KEYWORDS:
+            if dept in text:
+                entities["department"] = dept
+                break
+
+        m = self.COURSE_NUMBER_PATTERN.search(text)
+        if m:
+            entities["course_number"] = m.group()
+
+        for area, keywords in self.LIBERAL_ARTS_KEYWORDS.items():
+            if any(kw in text for kw in keywords):
+                entities["liberal_arts_area"] = area
+                break
+
+        m2 = re.search(r"방법\s*([123])", text)
+        if m2:
+            entities["major_method"] = f"방법{m2.group(1)}"
+
+        if "장바구니" in text:
+            entities["basket_limit"] = True
+
+        if "직전학기" in text or "평점 4.0" in text:
+            entities["gpa_exception"] = True
+
+        if "취소" in text and any(kw in text for kw in ("언제까지", "마감", "까지")):
+            entities["registration_deadline"] = True
+
+        if "ocu" in text:
+            entities["ocu"] = True
+
+        if "납부" in text and "기간" in text:
+            entities["payment_period"] = True
+
+        if "복수전공" in text and "이수학점" in text:
+            entities["second_major_credits"] = True
+
+        if "topik" in text:
+            entities["graduation_cert"] = "TOPIK"
+
+        return entities

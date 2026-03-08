@@ -1,0 +1,29 @@
+# BUFS Academic Chatbot - Dependencies
+# LLM 통신
+httpx>=0.24.0
+
+# PDF 처리
+PyMuPDF>=1.23.0
+pdfplumber>=0.10.0
+
+# 임베딩 & 리랭킹
+sentence-transformers>=3.0.0
+
+# 벡터 DB
+chromadb>=0.4.0
+
+# 그래프
+networkx>=3.0
+
+# 환경 설정
+python-dotenv>=1.0.0
+
+# UI
+streamlit>=1.28.0
+
+# 테스트
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+
+# OCR (선택 - 스캔 PDF 처리 시)
+# surya-ocr
