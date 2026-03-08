@@ -4,11 +4,14 @@
 
 import asyncio
 import logging
+import time
+import uuid
 from pathlib import Path
 
 import streamlit as st
 
 from app.config import settings
+from app.logging import ChatLogger
 from app.embedding import Embedder
 from app.vectordb import ChromaStore
 from app.graphdb import AcademicGraph
@@ -367,6 +370,9 @@ def inject_custom_css():
         ::-webkit-scrollbar { width: 5px; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
         ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        /* Streamlit 자동 페이지 내비 숨김 (커스텀 사이드바 보호) */
+        [data-testid="stSidebarNav"] { display: none !important; }
         </style>
         """,
         unsafe_allow_html=True,
@@ -455,7 +461,9 @@ def render_sidebar() -> bool:
         st.markdown(
             f'<div style="position:absolute;bottom:0.75rem;left:1rem;right:1rem;'
             f'font-size:0.7rem;color:#cbd5e1;border-top:1px solid #e2e8f0;padding-top:0.6rem;">'
-            f'버전 {APP_VERSION}</div>',
+            f'버전 {APP_VERSION}&nbsp;&nbsp;'
+            f'<a href="/logs" target="_self" style="color:#94a3b8;text-decoration:none;">'
+            f'📊 대화 로그</a></div>',
             unsafe_allow_html=True,
         )
 
@@ -545,7 +553,9 @@ def init_components():
             st.session_state.generator = AnswerGenerator()
             st.session_state.validator = ResponseValidator()
             st.session_state.chroma_store = chroma_store
-            st.session_state.messages  = []
+            st.session_state.chat_logger = ChatLogger()
+            st.session_state.session_id  = uuid.uuid4().hex[:12]
+            st.session_state.messages    = []
             st.session_state.initialized = True
 
 
@@ -596,6 +606,7 @@ async def generate_response(question: str) -> str:
 async def generate_response_stream(question: str, placeholder) -> str:
     # 처리 시작 즉시 애니메이션 표시 → 첫 토큰 도착 시 자동 대체됨
     placeholder.markdown(THINKING_HTML, unsafe_allow_html=True)
+    _t0 = time.monotonic()
 
     analyzer  = st.session_state.analyzer
     router    = st.session_state.router
@@ -610,6 +621,20 @@ async def generate_response_stream(question: str, placeholder) -> str:
         graph_results=search_results["graph_results"],
     )
 
+    def _log(answer: str) -> None:
+        """Q&A 쌍을 로그 파일에 기록 (실패해도 메인 기능에 영향 없음)"""
+        try:
+            st.session_state.chat_logger.log(
+                question=question,
+                answer=answer,
+                session_id=st.session_state.get("session_id", ""),
+                intent=analysis.intent.name if analysis.intent else "",
+                student_id=analysis.student_id,
+                duration_ms=int((time.monotonic() - _t0) * 1000),
+            )
+        except Exception:
+            pass
+
     if not merged.formatted_context.strip():
         msg = (
             "죄송합니다. 해당 질문에 대한 관련 정보를 찾을 수 없습니다.\n\n"
@@ -618,10 +643,12 @@ async def generate_response_stream(question: str, placeholder) -> str:
             "- 질문에 학번을 포함했는지 (예: 2023학번)"
         )
         placeholder.markdown(msg)
+        _log(msg)
         return msg
 
     if merged.direct_answer:
         placeholder.markdown(merged.direct_answer)
+        _log(merged.direct_answer)
         return merged.direct_answer
 
     full_answer = ""
@@ -646,6 +673,7 @@ async def generate_response_stream(question: str, placeholder) -> str:
         full_answer += f"\n\n---\n*검증 경고:*\n{warning_text}"
         placeholder.markdown(full_answer)
 
+    _log(full_answer)
     return full_answer
 
 

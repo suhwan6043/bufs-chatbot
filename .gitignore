@@ -32,6 +32,7 @@ desktop.ini
 # Data - large/generated files
 data/chromadb/
 data/graphs/
+data/logs/
 unpacked_doc/
 
 # Evaluation results (generated)
