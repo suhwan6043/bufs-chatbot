@@ -431,7 +431,8 @@ class AcademicGraph:
         trigger_map = [
             (lambda q: "수강신청취소" in q or ("취소" in q and "까지" in q), ["수업일수1/4선"]),
             (lambda q: "수업시작일" in q or "수업시작" in q, ["수업시작일"]),
-            (lambda q: "개강" in q and "수업시작" not in q, ["개강"]),
+            (lambda q: "ocu" in q and "개강" in q, ["ocu개강일"]),
+            (lambda q: "개강" in q and "수업시작" not in q and "ocu" not in q, ["개강"]),
             (lambda q: "장바구니" in q and ("기간" in q or "언제" in q), ["장바구니"]),
             (lambda q: "수강신청확인" in q or "수강정정" in q, ["수강신청확인"]),
             (lambda q: "중간고사" in q, ["중간고사"]),
@@ -439,6 +440,10 @@ class AcademicGraph:
             (lambda q: "제1·2전공" in q or "제1,2전공" in q or "변경(전과)" in q or "전과" in q,
              ["제12전공신청및변경전과"]),
             (lambda q: "ocu" in q and "납부" in q, ["ocusystem사용료납부기간", "ocu시스템사용료납부기간"]),
+            (lambda q: "야간" in q or any(f"{i}교시" in q for i in range(10, 15)), ["야간수업시간표"]),
+            (lambda q: "수강신청" in q and ("기간" in q or "언제" in q)
+             and "정정" not in q and "확인" not in q and "취소" not in q
+             and "장바구니" not in q, ["수강신청"]),
         ]
 
         matched: List[dict] = []
@@ -450,6 +455,7 @@ class AcademicGraph:
                 if any(keyword in event_norm for keyword in keywords):
                     matched.append(schedule)
             if matched:
+                matched.sort(key=lambda m: len(m.get("이벤트명", "")))
                 return matched
 
         for schedule in schedules:
@@ -457,6 +463,8 @@ class AcademicGraph:
             if event_norm and (event_norm in question_norm or question_norm in event_norm):
                 matched.append(schedule)
 
+        # 짧은 이름(더 정확한 매칭)을 우선
+        matched.sort(key=lambda m: len(m.get("이벤트명", "")))
         return matched
 
     def _find_major_method(
@@ -567,6 +575,39 @@ class AcademicGraph:
         if not rule:
             return []
 
+        # 재수강 제한 전용 핸들러 (focused context)
+        if "재수강" in question and any(kw in question for kw in ("제한", "한도", "최대")):
+            retake_limit = rule.get("재수강제한", "")
+            if retake_limit:
+                context = f"[재수강 제한 규정]\n- {retake_limit}"
+                return [self._make_direct_result(context, "", score=1.3)]
+
+        # 학점이월 전용 핸들러 (19학점 혼동 방지)
+        if "학점이월" in question:
+            lines = ["[학점이월제]"]
+            answer_parts = []
+            for reg_grp in ("2022이전", "2023이후"):
+                node_id = f"reg_{reg_grp}"
+                if node_id not in self.G.nodes:
+                    continue
+                node = dict(self.G.nodes[node_id])
+                carryover = node.get("학점이월여부", "")
+                carryover_max = node.get("학점이월최대학점")
+                carryover_cond = node.get("학점이월조건", "")
+                label = "2023학번 이후" if reg_grp == "2023이후" else "2022학번 이전"
+                lines.append(f"- {label}: {carryover}")
+                if carryover_max:
+                    lines.append(f"  이월 가능 최대학점: {carryover_max}학점")
+                    answer_parts.append(
+                        f"{label} 학번에만 적용되며, 최대 {carryover_max}학점까지 이월 가능합니다."
+                    )
+                elif "불가" in carryover or "폐지" in carryover:
+                    answer_parts.append(f"{label}부터는 폐지되었습니다.")
+                if carryover_cond:
+                    lines.append(f"  조건: {carryover_cond}")
+            answer = " ".join(answer_parts) + " [출처: 페이지 번호]" if answer_parts else ""
+            return [self._make_direct_result("\n".join(lines), answer, score=1.3)]
+
         if entities.get("gpa_exception"):
             limit = rule.get("평점4이상최대학점")
             if limit is not None:
@@ -625,6 +666,28 @@ class AcademicGraph:
                 context = f"[OCU 납부기간]\n- 납부기간: {start}~{end}"
                 return [self._make_direct_result(context, answer, score=1.3)]
 
+        # 기간/일정 질문 → 학사일정에서 검색 (장바구니 기간, 수강신청 기간 등)
+        # 절차/방법 질문은 제외 (e.g., "정정기간 이후 어떻게 처리되는가")
+        _PROCESS_KW = ("어떻게", "무엇", "방법", "절차", "처리", "전에", "가능한")
+        if (
+            entities.get("question_focus") == "period"
+            and not any(kw in question for kw in _PROCESS_KW)
+        ):
+            matches = self._find_schedule_matches(question)
+            if matches:
+                first = matches[0]
+                event_name = first.get("이벤트명", "")
+                period_text = self._format_period(
+                    first.get("시작일", ""), first.get("종료일", "")
+                )
+                answer = f"{event_name} 기간은 {period_text}입니다."
+                # 비고가 '수강 가능' 시간 안내이면 포함 (운영 시간표는 제외)
+                bigo = first.get("비고", "")
+                if bigo and ("수강 가능" in bigo or "부터" in bigo):
+                    answer += f" {bigo}."
+                answer += " [출처: 페이지 번호]"
+                return [self._schedule_to_result(first, answer, score=1.3)]
+
         return [SearchResult(
             text=self._fmt_registration_rule(student_id or "2023", rule),
             score=1.0,
@@ -639,6 +702,18 @@ class AcademicGraph:
         if matches:
             results = []
             first = matches[0]
+
+            # Reference-type node (no dates, e.g., 야간수업시간표)
+            if not first.get("시작일"):
+                skip_keys = {"id", "type", "이벤트명", "학기", "시작일", "종료일", "비고"}
+                lines = [f"[{first.get('이벤트명', '')}]"]
+                for k, v in first.items():
+                    if k not in skip_keys and v:
+                        lines.append(f"- {k}: {v}")
+                return [SearchResult(
+                    text="\n".join(lines), score=1.3, source="graph",
+                )]
+
             answer = (
                 f"{first.get('이벤트명', '')} 기간은 "
                 f"{self._format_period(first.get('시작일', ''), first.get('종료일', ''))}입니다. "
@@ -646,7 +721,12 @@ class AcademicGraph:
             )
 
             question_norm = self._normalize_text(question)
-            if "개강" in question_norm and "수업시작" not in question_norm:
+            if "ocu" in question_norm and "개강" in question_norm:
+                answer = f"OCU 개강일은 {self._format_date(first.get('시작일', ''))}입니다."
+                if first.get("비고"):
+                    answer += f" {first['비고']}."
+                answer += " [출처: 페이지 번호]"
+            elif "개강" in question_norm and "수업시작" not in question_norm:
                 answer = (
                     f"개강일은 {self._format_date(first.get('시작일', ''))}입니다. "
                     f"[출처: 페이지 번호]"
@@ -791,8 +871,9 @@ class AcademicGraph:
         for key in (
             "최대신청학점", "장바구니최대학점",
             "평점4이상최대학점", "교직복수전공최대학점",
-            "예외조건", "재수강제한", "수강취소마감일시",
-            "학점이월여부", "OCU초과학점",
+            "예외조건", "재수강제한", "재수강최고성적", "수강취소마감일시",
+            "학점이월여부", "학점이월최대학점", "학점이월조건",
+            "OCU초과학점",
             "정규학기_최대학점", "정규학기_최대과목",
             "졸업까지_최대학점", "졸업까지_최대과목",
             "시스템사용료_원", "초과수강료_원",

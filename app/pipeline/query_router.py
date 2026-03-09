@@ -100,8 +100,14 @@ class QueryRouter:
         no_id_intents = (Intent.SCHEDULE, Intent.ALTERNATIVE, Intent.REGISTRATION)
 
         if analysis.intent not in no_id_intents and not analysis.student_id:
-            logger.debug("student_id 없음 - 그래프 탐색 스킵")
-            return []
+            # 특정 엔티티가 있으면 기본 student_id로 그래프 탐색 허용
+            has_focused_entity = bool(
+                analysis.entities.get("graduation_cert")
+                or analysis.entities.get("major_method")
+            )
+            if not has_focused_entity:
+                logger.debug("student_id 없음 - 그래프 탐색 스킵")
+                return []
 
         return self.academic_graph.query_to_search_results(
             student_id=analysis.student_id or "2023",

@@ -201,8 +201,11 @@ def parse_registration_rules(pages: List[PageContent]) -> Dict[str, Dict]:
             "평점4이상최대학점": 22,
             "교직복수전공최대학점": 22,
             "예외조건": "직전학기 평점 4.0 이상 → 22학점, 교직복수전공자 → 22학점",
-            "재수강제한": "C+ 이하만 가능, 한 학기 최대 6학점, 졸업 전 최대 24학점, 재수강 최고 A",
-            "학점이월여부": "불가",
+            "재수강제한": "C+ 이하만 가능, 한 학기 최대 6학점, 졸업 전 최대 24학점",
+            "재수강최고성적": "A",
+            "학점이월여부": "조건부 허용",
+            "학점이월최대학점": 3,
+            "학점이월조건": "직전학기 최대신청학점(19학점)에 미달하여 신청한 학점을 최대 3학점까지 다음 학기로 이월",
             "OCU초과학점": "최대 6학점(2과목), 자유선택으로만 인정",
         },
         "2023이후": {
@@ -211,8 +214,9 @@ def parse_registration_rules(pages: List[PageContent]) -> Dict[str, Dict]:
             "평점4이상최대학점": 21,
             "교직복수전공최대학점": 21,
             "예외조건": "직전학기 평점 4.0 이상 → 21학점, 교직복수전공자 → 21학점",
-            "재수강제한": "C+ 이하만 가능, 한 학기 최대 6학점, 졸업 전 최대 24학점, 재수강 최고 A",
-            "학점이월여부": "조건부 허용",
+            "재수강제한": "C+ 이하만 가능, 한 학기 최대 6학점, 졸업 전 최대 24학점",
+            "재수강최고성적": "A",
+            "학점이월여부": "불가 (2023학년도 신입생부터 폐지)",
             "OCU초과학점": "최대 6학점(2과목), 자유선택으로만 인정",
         },
     }
@@ -250,8 +254,8 @@ def parse_registration_rules(pages: List[PageContent]) -> Dict[str, Dict]:
         per_sem = m.group(2)
         until_grad = m.group(3)
         note = f"{since_year}학번부터 한 학기 최대 {per_sem}학점, 졸업 전 최대 {until_grad}학점"
-        rules["2022이전"]["재수강제한"] = note + ", 재수강 최고 A"
-        rules["2023이후"]["재수강제한"] = note + ", 재수강 최고 A"
+        rules["2022이전"]["재수강제한"] = note
+        rules["2023이후"]["재수강제한"] = note
 
     m = _CANCEL_DEADLINE_PATTERN.search(full_text)
     if m:
@@ -274,6 +278,9 @@ _OCU_PAYMENT_PATTERN = re.compile(r"납부기간\s*[:：]\s*(202\d\.\d{2}\.\d{2}
 _OCU_OVERFLOW_PATTERN = re.compile(r"초과수강료.*?(\d+),*(\d*)원")  # 120,000원
 _OCU_ID_PATTERN = re.compile(r"ID\s*[:：]\s*(bufs[^+]*\+학번|bufs\(소문자\)\+학번)")
 _OCU_ATTENDANCE_PATTERN = re.compile(r"출석.*?(\d+)/(\d+)이상")  # 12/15 이상
+_OCU_START_PATTERN = re.compile(
+    r"OCU개강일\s*[:：]\s*(202\d)[.\-](\d{1,2})[.\-](\d{1,2}).*?오전\s*(\d+)시"
+)
 
 
 def parse_ocu_section(pages: List[PageContent]) -> Dict:
@@ -332,6 +339,12 @@ def parse_ocu_section(pages: List[PageContent]) -> Dict:
     m = _OCU_ATTENDANCE_PATTERN.search(full_text)
     if m:
         ocu_data["출석요건"] = f"{m.group(1)}/{m.group(2)}"
+
+    # OCU 개강일
+    m = _OCU_START_PATTERN.search(full_text)
+    if m:
+        ocu_data["개강일"] = f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+        ocu_data["개강시간"] = f"오전 {m.group(4)}시"
 
     return ocu_data
 
@@ -609,6 +622,12 @@ def build_graph_from_pdf(
 
     # ── 1. 학사일정 ──────────────────────────────────────────
     logger.info("학사일정 파싱 중...")
+    # 기존 학사일정 노드 제거 (다른 학기 데이터 잔존 방지)
+    old_sched = [nid for nid, d in graph.G.nodes(data=True) if d.get("type") == "학사일정"]
+    for nid in old_sched:
+        graph.G.remove_node(nid)
+    if old_sched:
+        logger.info(f"  기존 학사일정 {len(old_sched)}개 삭제")
     sched_pages = [p for p in pages if any(k in (p.text or "") for k in SECTION_KEYS["schedule"])]
     schedule_events = []
 
@@ -643,6 +662,28 @@ def build_graph_from_pdf(
         if schedule_events:
             break
 
+    # ── 2학기 이벤트 제거: 1학기 PDF에서 2학기 일정이 함께 파싱됨
+    if schedule_events and semester_month == 3:
+        before_count = len(schedule_events)
+        schedule_events = [
+            ev for ev in schedule_events
+            if "2학기" not in ev.get("이벤트명", "")
+        ]
+        removed = before_count - len(schedule_events)
+        if removed:
+            logger.info(f"  2학기 이벤트 {removed}개 제거")
+
+    # ── 보충: 학사일정 테이블에서 누락된 핵심 일정 추가 ──────
+    if schedule_events:
+        existing_names = {ev["이벤트명"] for ev in schedule_events}
+        critical_names = {"장바구니신청", "수강신청"}
+        missing = critical_names - existing_names
+        if missing:
+            for fb_ev in _default_schedule_2026_1():
+                if fb_ev["이벤트명"] in missing:
+                    schedule_events.append(fb_ev)
+                    logger.info(f"  보충 일정 추가: {fb_ev['이벤트명']}")
+
     if not schedule_events:
         # 테이블 파싱 실패 시 텍스트 기반 폴백 (2026-1 기본값)
         logger.warning("  학사일정 테이블 파싱 실패 → 기본값 사용")
@@ -656,6 +697,22 @@ def build_graph_from_pdf(
             {"시작일": ev["시작일"], "종료일": ev["종료일"], "비고": ev["비고"]},
         )
     logger.info(f"  학사일정 {len(schedule_events)}개 추가 (학기: {sem})")
+
+    # ── 1-1. 야간수업 교시별 시간표 ──────────────────────────
+    graph.add_schedule(
+        "야간수업시간표",
+        sem,
+        {
+            "시작일": "", "종료일": "",
+            "비고": "야간수업 교시별 수업 시간",
+            "10교시": "18:00~18:45",
+            "11교시": "18:50~19:35",
+            "12교시": "19:40~20:25",
+            "13교시": "20:30~21:15",
+            "14교시": "21:20~22:05",
+        },
+    )
+    logger.info("  야간수업시간표 추가")
 
     # ── 2. 수강신청 규칙 ─────────────────────────────────────
     logger.info("수강신청 규칙 파싱 중...")
@@ -687,6 +744,19 @@ def build_graph_from_pdf(
                 "비고": "OCU 시스템 사용료 납부",
             },
         )
+
+        # OCU 개강일 일정 추가
+        if ocu_data.get("개강일"):
+            graph.add_schedule(
+                "OCU개강일",
+                sem,
+                {
+                    "시작일": ocu_data["개강일"],
+                    "종료일": ocu_data["개강일"],
+                    "비고": f"{ocu_data.get('개강시간', '오전 10시')}부터 수강 가능",
+                },
+            )
+            logger.info(f"  OCU 개강일 추가: {ocu_data['개강일']} {ocu_data.get('개강시간', '')}")
     else:
         logger.warning("  OCU 섹션을 찾을 수 없음")
 

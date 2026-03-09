@@ -44,12 +44,12 @@ class QueryAnalyzer:
             "최대학점", "신청학점", "취소", "최대신청",
             "한국열린사이버대학교", "OCU", "장바구니", "납부",
             "수강신청 정정", "수강정정", "공인결석계",
+            "이수 가능", "신청 가능", "수강 가능",
         ],
         Intent.SCHEDULE: [
             "언제", "기간", "일정", "마감", "시작일", "종료일",
             "중간고사", "기말고사", "개강", "종강", "방학",
             "수강취소", "수업일수", "학사일정",
-            "수강신청 정정", "정정기간", "추가수강",
         ],
         Intent.COURSE_INFO: [
             "과목", "교과목", "수업", "강의",
@@ -96,6 +96,11 @@ class QueryAnalyzer:
             Intent.COURSE_INFO, Intent.MAJOR_CHANGE, Intent.REGISTRATION,
         )
         requires_vector = intent not in (Intent.SCHEDULE, Intent.ALTERNATIVE)
+
+        # SCHEDULE이어도 그래프에 없는 시간표·교시 정보는 벡터 검색 필요
+        _TIMETABLE_KW = ("교시", "야간수업", "시간표", "강의시간")
+        if intent == Intent.SCHEDULE and any(kw in normalized for kw in _TIMETABLE_KW):
+            requires_vector = True
 
         missing_info = []
         if not student_id and intent in (
@@ -204,6 +209,11 @@ class QueryAnalyzer:
                 return stype
         return "내국인"
 
+    # 기간/일정 관련 키워드 (wrong_slot 방지용)
+    _PERIOD_KW = ("언제", "기간", "일정", "날짜", "시작", "종료", "마감", "부터", "까지")
+    # 한도/수치 관련 키워드
+    _LIMIT_KW  = ("최대", "얼마", "몇 학점", "한도", "제한", "이수 가능", "신청 가능", "수강 가능")
+
     def _classify_intent(self, text: str) -> Intent:
         if (
             any(kw in text for kw in ("직전학기", "평점 4.0", "학점이월", "재수강", "장바구니"))
@@ -211,16 +221,6 @@ class QueryAnalyzer:
         ):
             return Intent.REGISTRATION
 
-        # 수강신청/정정 + 기간/일정 질문은 SCHEDULE 우선
-        if (
-            any(kw in text for kw in ("수강신청 정정", "수강신청정정", "수강취소", "수강변경",
-                                       "정정 기간", "정정기간"))
-            or (
-                any(kw in text for kw in ("수강신청", "수강"))
-                and any(kw in text for kw in ("기간", "언제", "일정", "마감", "날짜"))
-            )
-        ):
-            return Intent.SCHEDULE
 
         if (
             any(kw in text for kw in ("전과", "제1·2전공", "제1,2전공", "제2전공"))
@@ -270,7 +270,7 @@ class QueryAnalyzer:
         if m2:
             entities["major_method"] = f"방법{m2.group(1)}"
 
-        if "장바구니" in text:
+        if "장바구니" in text and not any(kw in text for kw in self._PERIOD_KW):
             entities["basket_limit"] = True
 
         if "직전학기" in text or "평점 4.0" in text:
@@ -288,7 +288,13 @@ class QueryAnalyzer:
         if "복수전공" in text and "이수학점" in text:
             entities["second_major_credits"] = True
 
-        if "topik" in text:
+        if "topik" in text.lower():
             entities["graduation_cert"] = "TOPIK"
+
+        # 질문 슬롯 유형 감지 (답변 생성 힌트용)
+        if any(kw in text for kw in self._PERIOD_KW):
+            entities["question_focus"] = "period"
+        elif any(kw in text for kw in self._LIMIT_KW):
+            entities["question_focus"] = "limit"
 
         return entities

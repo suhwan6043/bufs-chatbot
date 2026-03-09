@@ -658,6 +658,7 @@ async def generate_response(question: str) -> str:
         question=question,
         context=merged.formatted_context,
         student_id=analysis.student_id,
+        question_focus=analysis.entities.get("question_focus"),
     )
 
     all_results = search_results["vector_results"] + search_results["graph_results"]
@@ -726,6 +727,7 @@ async def generate_response_stream(question: str, placeholder) -> str:
         question=question,
         context=merged.formatted_context,
         student_id=analysis.student_id,
+        question_focus=analysis.entities.get("question_focus"),
     ):
         full_answer += token
         placeholder.markdown(full_answer + "▌")

@@ -409,6 +409,7 @@ async def evaluate_one(
             question=question,
             context=context if context.strip() else "관련 정보를 찾지 못했습니다.",
             student_id=analysis.student_id,
+            question_focus=analysis.entities.get("question_focus"),
         )
         generation_ms = (time.perf_counter() - t1) * 1000
 

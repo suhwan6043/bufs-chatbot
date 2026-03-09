@@ -32,16 +32,17 @@ def test_intent_registration(analyzer):
     assert result.intent == Intent.REGISTRATION
 
 
-def test_intent_registration_period_is_schedule(analyzer):
-    # 기간/일정 질문 → SCHEDULE (언제인지 묻는 것)
+def test_intent_registration_period_is_registration(analyzer):
+    # "수강신청 기간" → REGISTRATION (벡터 검색 필요, 그래프에 해당 노드 없음)
     result = analyzer.analyze("수강신청 기간 알려줘")
-    assert result.intent == Intent.SCHEDULE
+    assert result.intent == Intent.REGISTRATION
+    assert result.requires_vector is True
 
 
 def test_intent_extra_registration_normalized(analyzer):
-    # 추가 수강신청 → 수강신청 정정 → SCHEDULE
+    # 추가 수강신청 → 수강신청 정정 → REGISTRATION (정정 방법 질문)
     result = analyzer.analyze("추가 수강신청 기간 알려줘")
-    assert result.intent == Intent.SCHEDULE
+    assert result.intent == Intent.REGISTRATION
 
 
 def test_intent_schedule(analyzer):
