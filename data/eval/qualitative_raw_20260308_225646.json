@@ -1,0 +1,257 @@
+{
+  "source": "eval_results_20260308_225505.json",
+  "timestamp": "20260308_225646",
+  "model": "exaone3.5:7.8b",
+  "qual_results": [
+    {
+      "correctness_score": 4,
+      "error_type": "correct",
+      "reasoning": "답변은 정확한 날짜를 제공했으나, 모범 답안에 포함된 구체적인 근거 문장이나 추가 정보(공휴일 대체 휴일 등)는 언급하지 않았습니다."
+    },
+    {
+      "correctness_score": 4,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 정확한 날짜를 제공했으나, 출처를 명확히 하지 않은 점에서 모범 답안과 세부 표현이 약간 다릅니다."
+    },
+    {
+      "correctness_score": 4,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 정확한 날짜 범위를 제공하여 모범 답안과 일치하지만, 출처 표기가 추가되어 세부 표현이 약간 다름."
+    },
+    {
+      "correctness_score": 4,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 모범 답안과 핵심 내용이 일치하지만, '[출처: 페이지 번호]' 부분은 모범 답안에 없는 추가 정보로 정확성에는 영향을 미치지 않으나 완벽한 일치는 아님."
+    },
+    {
+      "correctness_score": 4,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 모범 답안과 핵심 내용이 일치하지만, '[출처: 페이지 번호]' 부분은 모범 답안에 없는 추가 정보로 정확성에는 영향을 미치지 않으나 완벽한 일치는 아님."
+    },
+    {
+      "correctness_score": 4,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 정확한 날짜를 제공하여 모범 답안과 일치하지만, '[출처: 페이지 번호]' 부분은 주어진 정보에 없는 추가 정보입니다."
+    },
+    {
+      "correctness_score": 4,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 날짜 정보가 정확하지만, '[출처: 페이지 번호]' 부분은 주어진 정보에 근거하지 않은 추가 정보로, 정확성은 유지되나 완전한 정확성을 위해 제거되어야 합니다."
+    },
+    {
+      "correctness_score": 1,
+      "error_type": "wrong_slot",
+      "reasoning": "질문은 수강신청 장바구니 신청 기간을 묻고 있지만, AI 응답은 학점 제한에 대한 정보를 제공하여 질문과 관련 없는 내용을 답변했습니다."
+    },
+    {
+      "correctness_score": 1,
+      "error_type": "incomplete",
+      "reasoning": "AI 응답은 수강신청 기간을 제시하지만, 모범 답안과 비교했을 때 기간이 틀리며, 정보가 불완전하여 정확한 답변으로 평가하기 어렵습니다."
+    },
+    {
+      "correctness_score": 2,
+      "error_type": "incomplete",
+      "reasoning": "응답은 로그인 가능 기간을 제공하지만, 질문에서 요구한 '수강신청 시작 전 로그인 가능 시간'에 대한 구체적인 시점(예: 9시 45분)을 누락하고 있어 완전한 정확성에는 부족하다."
+    },
+    {
+      "correctness_score": 1,
+      "error_type": "false_negative",
+      "reasoning": "AI 응답은 정확한 정보를 제공하지 못하고, 확인 가능한 학사일정 정보의 부재를 이유로 제시하며, 실제로는 모범 답안에 명시된 구체적인 취소 기간을 확인할 수 있는 근거 문장이 주어졌음에도 불구하고 이를 활용하지 못했습니다."
+    },
+    {
+      "correctness_score": 4,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 모범 답안과 핵심 내용이 일치하지만, 출처 표기가 추가되어 세부 표현이 다소 다름."
+    },
+    {
+      "correctness_score": 4,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 핵심 정보인 날짜를 정확하게 제공했으나, 출처를 명확히 하지 않은 점이 모범 답안과의 차이점입니다."
+    },
+    {
+      "correctness_score": 5,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 모범 답안과 동일한 날짜 범위를 제공하며, 출처 표기도 적절하게 포함되어 있습니다."
+    },
+    {
+      "correctness_score": 4,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 기간을 정확하게 제공했으나, 출처 표기에서 페이지 번호를 언급하여 모범 답안의 형식과 완벽히 일치하지 않음."
+    },
+    {
+      "correctness_score": 5,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 모범 답안과 완전히 일치하며, 출처 표기도 적절하게 포함되어 있습니다."
+    },
+    {
+      "correctness_score": 5,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 모범 답안과 정확히 일치하며 출처도 적절히 인용했습니다."
+    },
+    {
+      "correctness_score": 4,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 핵심 정보를 정확하게 전달했으나, 출처 명시 부분에서 '페이지 번호'와 같은 구체적인 근거를 제시하지 않아 모범 답안과 세부 표현에서 약간의 차이가 있습니다."
+    },
+    {
+      "correctness_score": 4,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 핵심 정보를 정확하게 전달했으나, 출처 명시 부분에서 '페이지 번호'와 같은 구체적인 근거를 제시하지 않아 모범 답안과 세부 표현에서 약간의 차이가 있습니다."
+    },
+    {
+      "correctness_score": 5,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 모범 답안과 완전히 일치하며, 출처 표기만 추가되었습니다."
+    },
+    {
+      "correctness_score": 5,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 모범 답안과 동일한 정보를 제공하며, 출처 언급도 적절하게 포함되어 있습니다."
+    },
+    {
+      "correctness_score": 3,
+      "error_type": "incomplete",
+      "reasoning": "응답은 학번 적용 범위는 정확하게 제공했으나, 이월 가능한 최대 학점을 '19학점'으로 잘못 언급하고 있으며, 이는 0.5학점 단위 적용이라는 중요한 세부 사항을 누락하고 있습니다. 모범 답안과 비교했을 때 핵심 내용은 맞지만, 중요한 세부 정보가 빠져 있어 완전한 정확성에는 미치지 못합니다."
+    },
+    {
+      "correctness_score": 5,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 모범 답안과 완전히 일치하며, 추가적인 오류나 부정확한 정보를 포함하지 않았습니다."
+    },
+    {
+      "correctness_score": 5,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 모범 답안과 동일한 정보를 제공하며, 출처까지 명시하여 정확성과 신뢰성을 확보했습니다."
+    },
+    {
+      "correctness_score": 4,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 주소를 정확하게 제공했으나, 출처 표기에서 페이지 번호를 추가한 점이 모범 답안과 약간 다르다."
+    },
+    {
+      "correctness_score": 3,
+      "error_type": "incomplete",
+      "reasoning": "AI 응답은 C+ 이하 재수강 가능성을 언급했으나, 'NP' 포함 여부와 재수강 후 최대 학점 제한에 대한 정보는 제공하지 않아 완전한 답변은 아닙니다."
+    },
+    {
+      "correctness_score": 4,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 재수강 후 받을 수 있는 최고 성적이 A라는 핵심 정보를 정확히 전달했으나, 출처 표기가 추가되어 모범 답안과 세부 표현이 약간 다릅니다."
+    },
+    {
+      "correctness_score": 3,
+      "error_type": "incomplete",
+      "reasoning": "AI 응답은 2019학번 기준의 재수강 제한을 정확히 제공했으나, '2019학번 이후 학생'에 대한 구체적인 규정이 명시되지 않은 점에서 완전한 답변을 제공하지 못했습니다."
+    },
+    {
+      "correctness_score": 4,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 핵심 내용을 정확하게 전달하며 모범 답안과 일치하지만, 추가적인 예시 기간 정보를 제공하여 세부 표현이 다소 확장되었다."
+    },
+    {
+      "correctness_score": 5,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 모범 답안과 완전히 일치하며, 제공된 근거 문장에서 정확하게 정보를 추출했습니다."
+    },
+    {
+      "correctness_score": 5,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 모범 답안과 완전히 일치하며, 제공된 근거 문장에 기반한 정확한 정보를 제공했습니다."
+    },
+    {
+      "correctness_score": 2,
+      "error_type": "incomplete",
+      "reasoning": "응답은 복학한 복학생의 수강신청 처리에 대한 핵심적인 정보를 제공하지 못하고, 특정 날짜만 제시하여 전체적인 처리 절차를 설명하지 못합니다."
+    },
+    {
+      "correctness_score": 3,
+      "error_type": "incomplete",
+      "reasoning": "답변은 개강일을 정확히 제공했으나, 수강 가능 시간 정보를 누락했습니다."
+    },
+    {
+      "correctness_score": 1,
+      "error_type": "hallucination",
+      "reasoning": "AI 응답은 제공된 정보와 무관한 날짜를 제시하여 정확한 근거 문장과 일치하지 않으며, 추가적인 정보를 스스로 생성했습니다."
+    },
+    {
+      "correctness_score": 5,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 모범 답안과 동일한 정보를 제공하며, 출처를 명시함으로써 정확성을 유지했습니다."
+    },
+    {
+      "correctness_score": 4,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 모범 답안과 핵심 내용이 일치하지만, 출처 표기가 추가되어 세부 표현이 다소 다름."
+    },
+    {
+      "correctness_score": 5,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 모범 답안과 완전히 일치하며, 추가적인 오류나 부정확한 정보를 포함하지 않았습니다."
+    },
+    {
+      "correctness_score": 5,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 모범 답안과 동일한 정보를 제공하며, 날짜와 기간 표현이 정확합니다."
+    },
+    {
+      "correctness_score": 4,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 모범 답안과 핵심 내용이 일치하지만, 'bufs'의 구체적인 의미 설명이 추가되어 세부 표현이 다소 확장되었습니다."
+    },
+    {
+      "correctness_score": 5,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 모범 답안과 동일한 정보를 제공하며, 출처 표기까지 정확하게 포함하고 있습니다."
+    },
+    {
+      "correctness_score": 4,
+      "error_type": "incomplete",
+      "reasoning": "AI 응답은 핵심 정보인 최소 학점(120학점)을 정확히 제공했으나, 외국인 학생과 편입생에 대한 예외 사항을 언급하면서 전체 규정의 완전한 맥락을 제공하지 못했습니다."
+    },
+    {
+      "correctness_score": 4,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 핵심 정보를 정확하게 전달했으나, 출처 표기에서 구체적인 페이지 번호 대신 '[출처: 페이지 번호 1]'과 같이 일반화된 표현을 사용했습니다."
+    },
+    {
+      "correctness_score": 5,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 모범 답안과 정확히 일치하며, 제공된 근거 문장에 기반하여 정확하게 30학점임을 전달했습니다."
+    },
+    {
+      "correctness_score": 4,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 핵심 정보를 정확하게 전달했으나, 출처 명시 부분에서 '페이지 번호'와 같은 구체적인 정보가 부족하여 완전 정확성에서는 다소 떨어짐."
+    },
+    {
+      "correctness_score": 4,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 핵심 정보를 정확하게 전달했으나, 출처 명시 부분에서 '페이지 번호'와 같은 구체적인 정보가 부족하여 완전 정확성에서는 다소 떨어짐."
+    },
+    {
+      "correctness_score": 3,
+      "error_type": "incomplete",
+      "reasoning": "AI 응답은 TOPIK 4급 이상이라는 핵심 요건을 정확히 전달했으나, 예체능계열 학생의 예외 사항과 영어 모국어 사용자 예외 조건을 포함하면서 전체적인 요건의 완전한 범위를 제공하지 못했습니다."
+    },
+    {
+      "correctness_score": 3,
+      "error_type": "false_negative",
+      "reasoning": "AI 응답은 정확한 정보가 제공되지 않았음을 인정하지만, 모범 답안에서 명확히 제시된 야간수업 10교시 시작 시간인 18시를 직접적으로 언급하지 못했습니다."
+    },
+    {
+      "correctness_score": 3,
+      "error_type": "false_negative",
+      "reasoning": "AI 응답은 정확한 정보가 제공되지 않았음을 인정하지만, 모범 답안에서 명확히 제시된 종료 시간(22시 05분)을 직접적으로 언급하지 않았습니다."
+    },
+    {
+      "correctness_score": 4,
+      "error_type": "incomplete",
+      "reasoning": "AI 응답은 핵심적인 출석 요건을 정확히 전달했으나, '80% 이상'이라는 구체적인 비율 표현은 모범 답안과 모범 답안 근거 문장에서 명확히 제시된 '12/15 이상'의 비율 표현을 약간 다르게 해석한 것으로 보입니다. 또한 출처 표기는 추가 정보로서 포함되었지만, 평가 기준에서는 주요 정확성과 완전성에 초점을 맞추므로 'incomplete'로 판단합니다."
+    },
+    {
+      "correctness_score": 5,
+      "error_type": "correct",
+      "reasoning": "AI 응답은 모범 답안과 완전히 일치하며, 제공된 정보를 정확하게 반영하고 있습니다."
+    }
+  ]
+}
