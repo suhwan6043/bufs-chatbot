@@ -159,10 +159,15 @@ df["인텐트"]    = df["intent"].map(lambda x: INTENT_LABELS.get(x, x))
 df["질문"]      = df["question"]
 df["답변 미리보기"] = df["answer"].str[:60] + "…"
 df["응답(ms)"]  = df["duration_ms"].fillna(0).astype(int)
+if "rating" not in df.columns:
+    df["rating"] = None
+df["별점"] = df["rating"].apply(
+    lambda r: ("★" * int(r) + "☆" * (5 - int(r))) if pd.notna(r) and r else "-"
+)
 
 st.markdown("##### 💬 대화 목록")
 st.dataframe(
-    df[["시간", "학번", "인텐트", "질문", "답변 미리보기", "응답(ms)"]],
+    df[["시간", "학번", "인텐트", "질문", "답변 미리보기", "응답(ms)", "별점"]],
     use_container_width=True,
     hide_index=True,
     height=340,
@@ -181,15 +186,17 @@ for entry in recent:
     sid     = entry.get("student_id", "") or "미기재"
     dur     = entry.get("duration_ms", 0)
 
-    label = f"[{ts}]  {q[:55]}{'…' if len(q) > 55 else ''}  —  {intent}"
+    rating     = entry.get("rating")
+    stars_disp = ("★" * int(rating) + "☆" * (5 - int(rating))) if rating else "미평가"
+    label = f"[{ts}]  {q[:50]}{'…' if len(q) > 50 else ''}  —  {intent}  {'⭐' * int(rating) if rating else ''}"
     with st.expander(label):
         col_q, col_a = st.columns([1, 2])
         with col_q:
-            st.markdown(f"**🙋 질문**")
+            st.markdown("**🙋 질문**")
             st.info(q)
-            st.caption(f"학번: {sid} · 응답: {dur}ms")
+            st.caption(f"학번: {sid} · 응답: {dur}ms · 만족도: {stars_disp}")
         with col_a:
-            st.markdown(f"**🎓 답변**")
+            st.markdown("**🎓 답변**")
             st.markdown(a)
 
 # ── 다운로드 ────────────────────────────────────────
@@ -200,9 +207,9 @@ dl1, dl2 = st.columns(2)
 
 with dl1:
     buf = io.StringIO()
-    dl_df = pd.DataFrame(entries)[
-        ["timestamp", "session_id", "student_id", "intent", "question", "answer", "duration_ms"]
-    ]
+    dl_df = pd.DataFrame(entries)
+    available_cols = ["timestamp", "session_id", "student_id", "intent", "question", "answer", "duration_ms", "rating"]
+    dl_df = dl_df[[c for c in available_cols if c in dl_df.columns]]
     dl_df.to_csv(buf, index=False, encoding="utf-8-sig")
     fname = f"캠챗_로그_{date.today().isoformat()}.csv"
     st.download_button(

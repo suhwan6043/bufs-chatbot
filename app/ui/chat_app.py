@@ -366,6 +366,24 @@ def inject_custom_css():
             box-shadow: var(--shadow-sm);
         }
 
+        /* ── Star rating buttons ── */
+        .star-rating-row .stButton > button {
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            color: #d1d5db !important;
+            font-size: 1.15rem !important;
+            padding: 0 !important;
+            min-height: unset !important;
+            line-height: 1 !important;
+            transition: color 0.1s ease;
+        }
+        .star-rating-row .stButton > button:hover {
+            color: #f59e0b !important;
+            background: transparent !important;
+            border: none !important;
+        }
+
         /* ── Scrollbar ── */
         ::-webkit-scrollbar { width: 5px; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
@@ -461,9 +479,7 @@ def render_sidebar() -> bool:
         st.markdown(
             f'<div style="position:absolute;bottom:0.75rem;left:1rem;right:1rem;'
             f'font-size:0.7rem;color:#cbd5e1;border-top:1px solid #e2e8f0;padding-top:0.6rem;">'
-            f'버전 {APP_VERSION}&nbsp;&nbsp;'
-            f'<a href="/logs" target="_self" style="color:#94a3b8;text-decoration:none;">'
-            f'📊 대화 로그</a></div>',
+            f'버전 {APP_VERSION}</div>',
             unsafe_allow_html=True,
         )
 
@@ -509,6 +525,60 @@ def render_welcome_screen():
         '<div class="wc-hint">위 버튼을 누르거나 아래 입력창에 직접 질문하세요</div>',
         unsafe_allow_html=True,
     )
+
+
+# ── Rating UI ──────────────────────────────────────
+def _render_rating(msg_idx: int, msg: dict) -> None:
+    """마지막 어시스턴트 답변 아래에 1~5점 별점 UI를 표시합니다."""
+    already_rated = msg.get("rated", False)
+    rating_value  = msg.get("rating", 0)
+
+    if already_rated:
+        stars = "★" * rating_value + "☆" * (5 - rating_value)
+        st.markdown(
+            f'<div style="font-size:0.78rem;color:#94a3b8;margin:0.2rem 0 0.6rem 0.2rem;">'
+            f'만족도: <span style="color:#f59e0b;letter-spacing:2px;">{stars}</span>'
+            f'&nbsp;({rating_value}/5)</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    st.markdown(
+        '<div style="font-size:0.78rem;color:#64748b;margin:0.3rem 0 0.4rem 0.2rem;">'
+        '이 답변이 도움이 됐나요?</div>',
+        unsafe_allow_html=True,
+    )
+    cols = st.columns([1, 1, 1, 1, 1, 6])
+    for star in range(1, 6):
+        with cols[star - 1]:
+            if st.button(
+                "★" * star,
+                key=f"star_{msg_idx}_{star}",
+                help=f"{star}점",
+                use_container_width=True,
+            ):
+                # 메시지에 별점 기록
+                st.session_state.messages[msg_idx]["rated"]  = True
+                st.session_state.messages[msg_idx]["rating"] = star
+
+                # 대응하는 질문(바로 앞 user 메시지) 찾기
+                question = ""
+                for i in range(msg_idx - 1, -1, -1):
+                    if st.session_state.messages[i]["role"] == "user":
+                        question = st.session_state.messages[i]["content"]
+                        break
+
+                # 로그 파일에 별점 업데이트
+                try:
+                    st.session_state.chat_logger.update_rating(
+                        session_id=st.session_state.get("session_id", ""),
+                        question=question,
+                        rating=star,
+                    )
+                except Exception:
+                    pass
+
+                st.rerun()
 
 
 # ── Right panel ────────────────────────────────────
@@ -700,25 +770,33 @@ def main():
     with chat_col:
         render_chat_header()
 
-        for msg in st.session_state.messages:
+        messages = st.session_state.messages
+        for idx, msg in enumerate(messages):
             with st.chat_message(
                 msg["role"],
                 avatar="🎓" if msg["role"] == "assistant" else "👤",
             ):
                 st.markdown(msg["content"])
 
-        if not st.session_state.messages and prompt is None:
+            # 마지막 어시스턴트 메시지 아래 별점 UI 표시
+            if (
+                msg["role"] == "assistant"
+                and idx == len(messages) - 1
+            ):
+                _render_rating(idx, msg)
+
+        if not messages and prompt is None:
             render_welcome_screen()
 
         if prompt:
-            st.session_state.messages.append({"role": "user", "content": prompt})
+            messages.append({"role": "user", "content": prompt})
             with st.chat_message("user", avatar="👤"):
                 st.markdown(prompt)
             with st.chat_message("assistant", avatar="🎓"):
                 placeholder = st.empty()
                 answer = asyncio.run(generate_response_stream(prompt, placeholder))
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": answer}
+                messages.append(
+                    {"role": "assistant", "content": answer, "rated": False}
                 )
 
     with right_col:

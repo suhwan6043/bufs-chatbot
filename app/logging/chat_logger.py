@@ -35,6 +35,7 @@ class ChatLogger:
         intent: str = "",
         student_id: Optional[str] = None,
         duration_ms: int = 0,
+        rating: Optional[int] = None,
     ) -> None:
         """Q&A 한 쌍을 오늘 날짜 JSONL 파일에 추가합니다."""
         entry = {
@@ -45,6 +46,7 @@ class ChatLogger:
             "question": question,
             "answer": answer,
             "duration_ms": duration_ms,
+            "rating": rating,
         }
         try:
             with open(self._today_path(), "a", encoding="utf-8") as f:
@@ -80,6 +82,39 @@ class ChatLogger:
         for path in sorted(self.log_dir.glob("chat_*.jsonl")):
             all_entries.extend(self._parse_file(path))
         return all_entries
+
+    def update_rating(self, session_id: str, question: str, rating: int) -> bool:
+        """특정 Q&A 항목의 별점을 업데이트합니다. 성공 여부를 반환합니다."""
+        path = self._today_path()
+        if not path.exists():
+            return False
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+            updated = False
+            new_lines = []
+            for line in reversed(lines):
+                line = line.strip()
+                if not line:
+                    new_lines.insert(0, line)
+                    continue
+                try:
+                    entry = json.loads(line)
+                    if (
+                        not updated
+                        and entry.get("session_id") == session_id
+                        and entry.get("question") == question
+                    ):
+                        entry["rating"] = rating
+                        updated = True
+                    new_lines.insert(0, json.dumps(entry, ensure_ascii=False))
+                except json.JSONDecodeError:
+                    new_lines.insert(0, line)
+            if updated:
+                path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+            return updated
+        except Exception as e:
+            logger.error(f"별점 업데이트 실패: {e}")
+            return False
 
     def list_dates(self) -> list[date]:
         """로그가 존재하는 날짜 목록을 최신 순으로 반환합니다."""

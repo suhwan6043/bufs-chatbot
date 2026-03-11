@@ -22,6 +22,7 @@ class QueryAnalyzer:
     """
 
     STUDENT_ID_PATTERN = re.compile(r"(20[12]\d)학번")
+    STUDENT_ID_SHORT_PATTERN = re.compile(r"\b([12]\d)학번")   # 22학번, 23학번 등 2자리 입력
     STUDENT_ID_RANGE_PATTERN = re.compile(r"(20[12]\d)\s*[~\-]\s*(20[12]\d)학번")
     STUDENT_ID_BOUND_PATTERN = re.compile(r"(20[12]\d)학번\s*(이후|이전)")
 
@@ -112,12 +113,22 @@ class QueryAnalyzer:
             missing_info=missing_info,
         )
 
+    @staticmethod
+    def _short_to_full_year(short: str) -> str:
+        """2자리 학번 → 4자리 연도 변환 (22 → 2022, 17 → 2017)"""
+        return f"20{short}"
+
     def _extract_student_id(
         self, text: str, student_groups: Optional[list] = None
     ) -> Optional[str]:
         match = self.STUDENT_ID_PATTERN.search(text)
         if match:
             return match.group(1)
+
+        # 2자리 학번 처리 (22학번 → 2022)
+        short_match = self.STUDENT_ID_SHORT_PATTERN.search(text)
+        if short_match:
+            return self._short_to_full_year(short_match.group(1))
 
         range_match = self.STUDENT_ID_RANGE_PATTERN.search(text)
         if range_match:
@@ -164,6 +175,11 @@ class QueryAnalyzer:
 
         for year in re.findall(r"(20[12]\d)학번", text):
             add(self._year_to_group(year))
+
+        # 2자리 학번 처리 (22학번 → 2022 → 그룹 매핑)
+        for short in re.findall(r"\b([12]\d)학번", text):
+            full_year = self._short_to_full_year(short)
+            add(self._year_to_group(full_year))
 
         return groups
 

@@ -11,6 +11,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ── Hugging Face 토큰 자동 적용 ──────────────────────
+_hf_token = os.getenv("HF_TOKEN", "")
+if _hf_token and not _hf_token.startswith("여기에"):
+    os.environ["HUGGING_FACE_HUB_TOKEN"] = _hf_token
+    os.environ["HF_TOKEN"] = _hf_token
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 
