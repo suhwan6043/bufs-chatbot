@@ -291,12 +291,16 @@ class AcademicGraph:
         return None
 
     def get_liberal_arts_areas(self, area_type: str = None) -> List[dict]:
-        """교양영역 목록. area_type: '인성체험'|'기초'|'균형'"""
+        """교양영역 목록. area_type 부분 매칭 지원 ('인성체험교양' → '인성체험')."""
         results = []
         for node_id, data in self.G.nodes(data=True):
             if data.get("type") == "교양영역":
-                if area_type is None or data.get("영역구분") == area_type:
+                if area_type is None:
                     results.append({"id": node_id, **data})
+                else:
+                    area_val = data.get("영역구분", "")
+                    if area_val in area_type or area_type in area_val:
+                        results.append({"id": node_id, **data})
         return results
 
     def get_micro_majors(self) -> List[dict]:
@@ -371,6 +375,18 @@ class AcademicGraph:
                 self._query_alternatives(entities.get("course_name", ""))
             )
 
+        # ── 보충 탐색: 교양영역 / 마이크로전공 / 교직 ──
+        if entities.get("liberal_arts_area"):
+            results.extend(self._query_liberal_arts(entities["liberal_arts_area"]))
+
+        if "마이크로전공" in question or "융합전공" in question:
+            results.extend(self._query_micro_majors())
+
+        if "교직" in question:
+            results.extend(
+                self._query_teacher_training(entities.get("department", ""))
+            )
+
         return results
 
     @staticmethod
@@ -392,7 +408,9 @@ class AcademicGraph:
             return ""
         if not end or start == end:
             return self._format_date(start)
-        return f"{self._format_date(start)}부터 {int(end[5:7])}월 {int(end[8:10])}일까지"
+        if len(end) >= 10 and end[4] == "-" and end[7] == "-":
+            return f"{self._format_date(start)}부터 {int(end[5:7])}월 {int(end[8:10])}일까지"
+        return f"{self._format_date(start)}부터 {end}까지"
 
     @staticmethod
     def _make_direct_result(
@@ -507,7 +525,7 @@ class AcademicGraph:
                 items.append(f"{label} {credits}학점")
 
             if items:
-                answer = f"복수전공 이수학점은 {', '.join(items)}입니다. [출처: 페이지 번호]"
+                answer = f"복수전공 이수학점은 {', '.join(items)}입니다."
                 results.append(
                     self._make_direct_result("\n".join(lines), answer, score=1.3)
                 )
@@ -523,7 +541,7 @@ class AcademicGraph:
                         f"{self._group_label(get_student_group(student_id))}이 "
                         f"{entities['major_method']}(주전공+복수전공)으로 졸업할 경우 "
                         f"주전공 {main_credits}학점, 복수전공 {second_credits}학점을 "
-                        f"이수해야 합니다. [출처: 페이지 번호]"
+                        f"이수해야 합니다."
                     )
                     context = "\n".join(
                         [
@@ -542,8 +560,7 @@ class AcademicGraph:
             topik = data.get("졸업인증") if data else None
             if topik:
                 answer = (
-                    f"외국인 학생의 졸업인증 TOPIK 기준은 {topik} 이상입니다. "
-                    f"[출처: 페이지 번호]"
+                    f"외국인 학생의 졸업인증 TOPIK 기준은 {topik} 이상입니다."
                 )
                 results.append(
                     self._make_direct_result(
@@ -554,8 +571,12 @@ class AcademicGraph:
                 )
                 return results
 
-        # 요청 학생유형 우선, 없으면 내국인
+        # 요청 학생유형 우선, 없으면 내국인 (중복 방지)
+        seen_types: set = set()
         for stype in (student_type, "내국인", "외국인", "편입생"):
+            if stype in seen_types:
+                continue
+            seen_types.add(stype)
             data = self.get_graduation_req(student_id, stype)
             if data:
                 text = self._fmt_graduation(student_id, stype, data)
@@ -605,7 +626,7 @@ class AcademicGraph:
                     answer_parts.append(f"{label}부터는 폐지되었습니다.")
                 if carryover_cond:
                     lines.append(f"  조건: {carryover_cond}")
-            answer = " ".join(answer_parts) + " [출처: 페이지 번호]" if answer_parts else ""
+            answer = " ".join(answer_parts) if answer_parts else ""
             return [self._make_direct_result("\n".join(lines), answer, score=1.3)]
 
         if entities.get("gpa_exception"):
@@ -615,7 +636,7 @@ class AcademicGraph:
                 label = "2023학번 이후" if reg_group == "2023이후" else "2022학번 이전"
                 answer = (
                     f"직전학기 평점 4.0 이상인 {label} 학생은 최대 "
-                    f"{limit}학점까지 신청할 수 있습니다. [출처: 페이지 번호]"
+                    f"{limit}학점까지 신청할 수 있습니다."
                 )
                 context = "\n".join(
                     [
@@ -629,8 +650,7 @@ class AcademicGraph:
             basket_limit = rule.get("장바구니최대학점")
             if basket_limit is not None:
                 answer = (
-                    f"장바구니에 담을 수 있는 최대 학점은 {basket_limit}학점입니다. "
-                    f"[출처: 페이지 번호]"
+                    f"장바구니에 담을 수 있는 최대 학점은 {basket_limit}학점입니다."
                 )
                 context = f"[수강신청규칙]\n- 장바구니최대학점: {basket_limit}"
                 return [self._make_direct_result(context, answer, score=1.3)]
@@ -638,11 +658,18 @@ class AcademicGraph:
         if entities.get("registration_deadline"):
             deadline = rule.get("수강취소마감일시")
             if deadline:
-                date_part, time_part = deadline.split()
-                answer = (
-                    f"수강신청 취소는 {self._format_date(date_part)} "
-                    f"{time_part[:2]}시까지 가능합니다. [출처: 페이지 번호]"
-                )
+                parts = deadline.split(maxsplit=1)
+                date_part = parts[0]
+                time_part = parts[1] if len(parts) > 1 else ""
+                if time_part:
+                    answer = (
+                        f"수강신청 취소는 {self._format_date(date_part)} "
+                        f"{time_part[:2]}시까지 가능합니다."
+                    )
+                else:
+                    answer = (
+                        f"수강신청 취소는 {self._format_date(date_part)}까지 가능합니다."
+                    )
                 context = f"[수강신청 취소]\n- 수강취소마감일시: {deadline}"
                 return [self._make_direct_result(context, answer, score=1.3)]
 
@@ -651,7 +678,7 @@ class AcademicGraph:
                 schedule = matches[0]
                 answer = (
                     f"수강신청 취소는 {self._format_date(schedule.get('시작일', ''))}까지 "
-                    f"가능합니다. [출처: 페이지 번호]"
+                    f"가능합니다."
                 )
                 return [self._schedule_to_result(schedule, answer, score=1.25)]
 
@@ -660,8 +687,7 @@ class AcademicGraph:
             end = rule.get("납부종료")
             if start and end:
                 answer = (
-                    f"OCU 시스템 사용료 납부기간은 {self._format_period(start, end)}입니다. "
-                    f"[출처: 페이지 번호]"
+                    f"OCU 시스템 사용료 납부기간은 {self._format_period(start, end)}입니다."
                 )
                 context = f"[OCU 납부기간]\n- 납부기간: {start}~{end}"
                 return [self._make_direct_result(context, answer, score=1.3)]
@@ -685,7 +711,7 @@ class AcademicGraph:
                 bigo = first.get("비고", "")
                 if bigo and ("수강 가능" in bigo or "부터" in bigo):
                     answer += f" {bigo}."
-                answer += " [출처: 페이지 번호]"
+
                 return [self._schedule_to_result(first, answer, score=1.3)]
 
         return [SearchResult(
@@ -716,8 +742,7 @@ class AcademicGraph:
 
             answer = (
                 f"{first.get('이벤트명', '')} 기간은 "
-                f"{self._format_period(first.get('시작일', ''), first.get('종료일', ''))}입니다. "
-                f"[출처: 페이지 번호]"
+                f"{self._format_period(first.get('시작일', ''), first.get('종료일', ''))}입니다."
             )
 
             question_norm = self._normalize_text(question)
@@ -725,28 +750,24 @@ class AcademicGraph:
                 answer = f"OCU 개강일은 {self._format_date(first.get('시작일', ''))}입니다."
                 if first.get("비고"):
                     answer += f" {first['비고']}."
-                answer += " [출처: 페이지 번호]"
+
             elif "개강" in question_norm and "수업시작" not in question_norm:
                 answer = (
-                    f"개강일은 {self._format_date(first.get('시작일', ''))}입니다. "
-                    f"[출처: 페이지 번호]"
+                    f"개강일은 {self._format_date(first.get('시작일', ''))}입니다."
                 )
             elif "수업시작" in question_norm:
                 answer = (
-                    f"수업시작일은 {self._format_date(first.get('시작일', ''))}입니다. "
-                    f"[출처: 페이지 번호]"
+                    f"수업시작일은 {self._format_date(first.get('시작일', ''))}입니다."
                 )
             elif "전과" in question_norm or "제1·2전공" in question or "제1,2전공" in question_norm:
                 answer = (
                     f"제1·2전공 신청 및 변경(전과) 기간은 "
-                    f"{self._format_period(first.get('시작일', ''), first.get('종료일', ''))}입니다. "
-                    f"[출처: 페이지 번호]"
+                    f"{self._format_period(first.get('시작일', ''), first.get('종료일', ''))}입니다."
                 )
             elif "ocu" in question_norm and "납부" in question_norm:
                 answer = (
                     f"OCU 시스템 사용료 납부기간은 "
-                    f"{self._format_period(first.get('시작일', ''), first.get('종료일', ''))}입니다. "
-                    f"[출처: 페이지 번호]"
+                    f"{self._format_period(first.get('시작일', ''), first.get('종료일', ''))}입니다."
                 )
 
             results.append(self._schedule_to_result(first, answer, score=1.3))
@@ -808,6 +829,87 @@ class AcademicGraph:
                     score=0.9,
                     source="graph",
                 ))
+            # 개설한다 엣지 탐색: 학과 → 교과목
+            dept_node = self._find_dept_node(dept)
+            if dept_node:
+                courses = [
+                    dict(self.G.nodes[target])
+                    for _, target, edata in self.G.edges(dept_node, data=True)
+                    if edata.get("relation") == "개설한다"
+                ]
+                if courses:
+                    lines = [f"[{dept} 개설 교과목]"]
+                    for c in courses[:10]:
+                        lines.append(
+                            f"- {c.get('과목번호', '')} {c.get('과목명', '')} "
+                            f"({c.get('학점', '')}학점)"
+                        )
+                    results.append(SearchResult(
+                        text="\n".join(lines), score=0.95, source="graph",
+                    ))
+        return results
+
+    def _find_dept_node(self, dept_name: str) -> Optional[str]:
+        """학과명으로 노드 ID 탐색 (완전 → 부분 매칭)."""
+        node_id = f"dept_{dept_name}"
+        if node_id in self.G.nodes:
+            return node_id
+        for nid, data in self.G.nodes(data=True):
+            if data.get("type") == "학과전공" and dept_name in data.get("전공명", ""):
+                return nid
+        return None
+
+    def _query_liberal_arts(self, area_type: str) -> List[SearchResult]:
+        """교양영역 노드 탐색."""
+        areas = self.get_liberal_arts_areas(area_type)
+        if not areas:
+            return []
+        lines = [f"[교양영역] {area_type}"]
+        for a in areas:
+            name = a.get("영역명", "")
+            lines.append(f"- {name}")
+            # 요구한다 엣지: 교양영역 → 교과목
+            for _, target, edata in self.G.edges(a.get("id", ""), data=True):
+                if edata.get("relation") == "요구한다":
+                    course = self.G.nodes.get(target, {})
+                    lines.append(
+                        f"  · {course.get('과목명', '')} ({course.get('학점', '')}학점)"
+                    )
+        return [SearchResult(text="\n".join(lines), score=1.0, source="graph")]
+
+    def _query_micro_majors(self) -> List[SearchResult]:
+        """마이크로/융합전공 노드 + 구성된다 엣지(교과목) 탐색."""
+        micros = self.get_micro_majors()
+        if not micros:
+            return []
+        lines = ["[마이크로/융합전공]"]
+        for m in micros:
+            lines.append(f"- {m.get('전공명', '')}")
+            # 구성된다 엣지: 마이크로전공 → 교과목
+            for _, target, edata in self.G.edges(m.get("id", ""), data=True):
+                if edata.get("relation") == "구성된다":
+                    course = self.G.nodes.get(target, {})
+                    lines.append(
+                        f"  · {course.get('과목명', '')} ({course.get('학점', '')}학점)"
+                    )
+        return [SearchResult(text="\n".join(lines), score=1.0, source="graph")]
+
+    def _query_teacher_training(self, dept: str = "") -> List[SearchResult]:
+        """교직과정 노드 탐색."""
+        results = []
+        for nid, data in self.G.nodes(data=True):
+            if data.get("type") != "교직":
+                continue
+            if dept and dept not in data.get("설치학과", ""):
+                continue
+            lines = [f"[교직과정] {data.get('설치학과', '')}"]
+            skip_keys = {"type", "설치학과", "id"}
+            for k, v in data.items():
+                if k not in skip_keys and v:
+                    lines.append(f"- {k}: {v}")
+            results.append(SearchResult(
+                text="\n".join(lines), score=1.0, source="graph",
+            ))
         return results
 
     def _query_major_methods(self, student_id: str) -> List[SearchResult]:

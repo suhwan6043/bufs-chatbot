@@ -33,11 +33,25 @@ class QueryAnalyzer:
 
     COURSE_NUMBER_PATTERN = re.compile(r"[A-Z]{2,4}\d{3,4}")
 
+    # 과목명 추출 패턴: "미적분학 대체과목", "영어회화 과목 정보" 등
+    COURSE_NAME_BEFORE_KW = re.compile(
+        r"([가-힣A-Za-z0-9]{2,12})\s*(?:대체과목|동일과목|대체가능|대체|대신|과목\s*정보)"
+    )
+    COURSE_NAME_IN_CONTEXT = re.compile(
+        r"([가-힣A-Za-z0-9]{2,12})\s+(?:과목|수업|강의)\s"
+    )
+    _NON_COURSE_WORDS = frozenset({
+        "어떤", "무슨", "이번", "다른", "해당", "전체", "모든", "각각",
+        "수강신청", "수강", "졸업", "학사", "학점", "성적", "교양",
+        "복수전공", "부전공", "제2전공", "마이크로전공", "융합전공",
+    })
+
     INTENT_KEYWORDS = {
         Intent.GRADUATION_REQ: [
             "졸업", "졸업요건", "졸업학점", "이수학점",
             "몇 학점", "교양", "전공학점", "글로벌소통역량",
             "취업커뮤니티", "NOMAD", "졸업인증", "졸업시험",
+            "학점인정", "선이수", "인정",
         ],
         Intent.REGISTRATION: [
             "수강신청", "수강", "재수강", "학점이월",
@@ -45,6 +59,7 @@ class QueryAnalyzer:
             "한국열린사이버대학교", "OCU", "장바구니", "납부",
             "수강신청 정정", "수강정정", "공인결석계",
             "이수 가능", "신청 가능", "수강 가능",
+            "이수구분",
         ],
         Intent.SCHEDULE: [
             "언제", "기간", "일정", "마감", "시작일", "종료일",
@@ -57,7 +72,7 @@ class QueryAnalyzer:
         ],
         Intent.MAJOR_CHANGE: [
             "복수전공", "부전공", "마이크로전공", "전과",
-            "제2전공", "융합전공", "전공탐색",
+            "제2전공", "융합전공", "전공탐색", "교직",
         ],
         Intent.ALTERNATIVE: [
             "대체", "동일과목", "폐지", "변경", "대신",
@@ -66,16 +81,29 @@ class QueryAnalyzer:
     }
 
     DEPARTMENT_KEYWORDS = [
-        "컴퓨터공학", "컴공", "소프트웨어", "정보통신",
+        # IT·공학
+        "컴퓨터공학", "소프트웨어", "빅데이터", "인공지능",
+        "스마트융합보안", "스마트에너지", "전자",
+        # 어문
         "영어", "일본어", "중국어", "한국어",
-        "경영", "국제통상", "관광", "호텔",
-        "법학", "행정", "사회복지", "미디어",
+        "독일어", "프랑스어", "스페인어", "러시아어",
+        "베트남어", "태국어", "미얀마어", "아랍",
+        "인도네시아", "인도어", "터키어", "이탈리아어",
+        # 사회·경상
+        "경영", "경제", "금융", "회계", "무역", "마케팅",
+        "관광", "호텔", "항공", "외교", "행정",
+        "사회복지", "상담심리", "사이버경찰",
+        # 문화·체육
+        "영상콘텐츠", "체육", "스포츠", "운동건강",
+        # 기타
+        "국제개발", "글로벌창업", "비서",
     ]
 
     LIBERAL_ARTS_KEYWORDS = {
         "인성체험교양": ["채플", "PSC세미나", "사회봉사", "인성체험"],
-        "기초교양": ["글쓰기", "독서와토론", "AI", "IT", "기초교양"],
+        "기초교양": ["글쓰기", "독서와토론", "기초교양"],
         "균형교양": ["역사", "철학", "종교", "문학", "문화", "예술", "균형교양"],
+        "글로벌소통역량": ["글로벌소통", "College English", "AI플러스"],
     }
 
     def __init__(self):
@@ -260,6 +288,15 @@ class QueryAnalyzer:
         m = self.COURSE_NUMBER_PATTERN.search(text)
         if m:
             entities["course_number"] = m.group()
+
+        # course_name 추출 (대체과목/과목정보 앞 명사)
+        for pattern in (self.COURSE_NAME_BEFORE_KW, self.COURSE_NAME_IN_CONTEXT):
+            m_course = pattern.search(text)
+            if m_course:
+                candidate = m_course.group(1).strip()
+                if candidate not in self._NON_COURSE_WORDS and len(candidate) >= 2:
+                    entities["course_name"] = candidate
+                    break
 
         for area, keywords in self.LIBERAL_ARTS_KEYWORDS.items():
             if any(kw in text for kw in keywords):

@@ -10,8 +10,8 @@ from app.models import SearchResult, MergedContext
 
 logger = logging.getLogger(__name__)
 
-# 대략적인 토큰 추정: 한국어 1글자 ≈ 1.5 토큰
-CHARS_PER_TOKEN = 0.67
+# 대략적인 토큰 추정: 한국어 1글자 ≈ 1.5 토큰 (즉 1토큰 ≈ 0.67글자)
+TOKENS_PER_CHAR = 1.5
 MAX_CONTEXT_TOKENS = 1200  # 시스템 프롬프트(~300) + 질문(~100) + 답변(~400) 제외
 
 
@@ -42,7 +42,7 @@ class ContextMerger:
         # 토큰 제한 내에서 컨텍스트 구성
         context_parts = []
         total_chars = 0
-        max_chars = int(MAX_CONTEXT_TOKENS / CHARS_PER_TOKEN)
+        max_chars = int(MAX_CONTEXT_TOKENS / TOKENS_PER_CHAR)
 
         selected_vector = []
         selected_graph = []
@@ -70,7 +70,7 @@ class ContextMerger:
                 selected_vector.append(result)
 
         formatted = "\n\n".join(context_parts)
-        token_estimate = int(len(formatted) * CHARS_PER_TOKEN * 1.5)
+        token_estimate = int(len(formatted) * TOKENS_PER_CHAR)
 
         return MergedContext(
             vector_results=selected_vector,

@@ -997,7 +997,7 @@ def _extract_micro_major_names(pages: List[PageContent]) -> List[Tuple[str, Dict
         txt = page.text or ""
         # "X전공 (N학점)" 패턴
         for m in re.finditer(r"([가-힣A-Za-z·\s]{3,30}(전공|과정))\s*[\(：:]\s*(\d+)학점", txt):
-            name = m.group(1).strip()
+            name = re.sub(r"\s+", "", m.group(1).strip())  # 줄바꿈·공백 제거
             credits = int(m.group(3))
             if name not in seen and ("마이크로" in txt or "융합" in name):
                 seen.add(name)
