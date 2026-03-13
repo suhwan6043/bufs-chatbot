@@ -60,6 +60,8 @@ class QueryAnalyzer:
             "수강신청 정정", "수강정정", "공인결석계",
             "이수 가능", "신청 가능", "수강 가능",
             "이수구분",
+            # 성적선택제도 (A~F / P/NP 선택 신청)
+            "성적선택", "성적포기", "Pass", "P/NP", "등급제",
         ],
         Intent.SCHEDULE: [
             "언제", "기간", "일정", "마감", "시작일", "종료일",
@@ -125,9 +127,20 @@ class QueryAnalyzer:
         )
         requires_vector = intent not in (Intent.SCHEDULE, Intent.ALTERNATIVE)
 
-        # SCHEDULE이어도 그래프에 없는 시간표·교시 정보는 벡터 검색 필요
+        # SCHEDULE이어도 그래프에 없는 정보는 벡터 검색 필요
         _TIMETABLE_KW = ("교시", "야간수업", "시간표", "강의시간")
         if intent == Intent.SCHEDULE and any(kw in normalized for kw in _TIMETABLE_KW):
+            requires_vector = True
+        # SCHEDULE이어도 성적·제도·요건 등 정책 질문이면 벡터 검색 필요
+        _POLICY_KW = ("성적", "제도", "요건", "조건", "규정")
+        if intent == Intent.SCHEDULE and any(kw in normalized for kw in _POLICY_KW):
+            requires_vector = True
+
+        # 성적선택제도·성적포기제도는 그래프 스키마에 없음 → 그래프 탐색 불필요
+        # (그래프 결과 score=1.0이 벡터 결과를 밀어내는 것을 방지)
+        _GRADE_SEL_KW = ("성적선택", "성적포기", "Pass", "P/NP", "등급제")
+        if any(kw in normalized for kw in _GRADE_SEL_KW):
+            requires_graph = False
             requires_vector = True
 
         missing_info = []

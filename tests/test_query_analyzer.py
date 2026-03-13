@@ -105,3 +105,36 @@ def test_extract_student_groups_for_comparison(analyzer):
         "2022",
         "2021",
     ]
+
+
+def test_intent_grading_selection_is_registration(analyzer):
+    """성적선택제(A~F/P/NP) 질문은 REGISTRATION으로 분류, 그래프 OFF·벡터 ON"""
+    result = analyzer.analyze(
+        "A~F로 나오는 성적 등급제와 Pass/Non-Pass로 나오는 성적제도를"
+        " 선택할 수 있는 제도가 있다던데 언제 신청가능한지 요건은 뭔지 알려줘"
+    )
+    assert result.intent == Intent.REGISTRATION
+    assert result.requires_vector is True
+    assert result.requires_graph is False   # 그래프 스키마에 없는 정보
+
+
+def test_intent_grading_selection_pnp_keyword(analyzer):
+    """P/NP 키워드만으로도 그래프 OFF·벡터 ON"""
+    result = analyzer.analyze("P/NP 성적선택 신청 기간 알려줘")
+    assert result.intent == Intent.REGISTRATION
+    assert result.requires_vector is True
+    assert result.requires_graph is False
+
+
+def test_grade_selection_short_query(analyzer):
+    """'패논패 신청일 언제야' → 그래프 OFF, 벡터 ON"""
+    result = analyzer.analyze("패논패 신청일 언제야")
+    assert result.requires_vector is True
+    assert result.requires_graph is False
+
+
+def test_schedule_with_policy_keyword_enables_vector(analyzer):
+    """SCHEDULE 분류여도 성적·제도 키워드가 있으면 벡터 검색 활성화"""
+    result = analyzer.analyze("성적포기 언제까지야")
+    assert result.requires_vector is True
+    assert result.requires_graph is False
