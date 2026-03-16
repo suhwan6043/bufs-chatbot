@@ -40,10 +40,12 @@ class DigitalPDFExtractor:
 
             headers = self._extract_headers(pdf_path, page_num)
 
+            raw_tables = [t for t in tables if t]
             page_content = PageContent(
                 page_number=page_num + 1,
                 text=text.strip(),
-                tables=[self._table_to_markdown(t) for t in tables if t],
+                tables=[self._table_to_markdown(t) for t in raw_tables],
+                raw_tables=raw_tables,
                 headers=headers,
                 source_file=pdf_path,
             )

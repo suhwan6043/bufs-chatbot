@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # ── Brand ──────────────────────────────────────────
 APP_NAME    = "캠챗"
 APP_SUBTITLE = "부산외대 학사 도우미"
-APP_VERSION  = "0.1.0"
+APP_VERSION  = "0.1.2"
 LOGO_PATH    = Path(__file__).parent / "static" / "logo.png"
 
 QUICK_FEATURES = [
