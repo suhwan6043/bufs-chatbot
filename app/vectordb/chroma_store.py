@@ -57,6 +57,9 @@ class ChromaStore:
                 "source_file": c.source_file,
                 "student_id": c.student_id or "",
                 "doc_type": c.doc_type,
+                "cohort_from": c.cohort_from,
+                "cohort_to": c.cohort_to,
+                "semester": c.semester,
                 **{k: str(v) for k, v in c.metadata.items()},
             }
             for c in chunks
@@ -84,12 +87,14 @@ class ChromaStore:
         n_results: int = None,
         student_id: Optional[str] = None,
         doc_type: Optional[str] = None,
+        semester: Optional[str] = None,
+        department: Optional[str] = None,
     ) -> List[SearchResult]:
         """쿼리에 대해 유사 문서를 검색합니다."""
         n_results = n_results or settings.chroma.n_results
         query_embedding = self.embedder.embed_query(query).tolist()
 
-        where_filter = self._build_filter(student_id, doc_type)
+        where_filter = self._build_filter(student_id, doc_type, semester, department)
 
         kwargs = {
             "query_embeddings": [query_embedding],
@@ -119,14 +124,40 @@ class ChromaStore:
 
     @staticmethod
     def _build_filter(
-        student_id: Optional[str], doc_type: Optional[str]
+        student_id: Optional[str],
+        doc_type: Optional[str],
+        semester: Optional[str] = None,
+        department: Optional[str] = None,
     ) -> Optional[dict]:
-        """메타데이터 필터를 구성합니다."""
+        """
+        메타데이터 필터를 구성합니다.
+
+        student_id (학번 연도 문자열, 예: "2024"):
+            exact match 대신 cohort 범위 필터를 사용합니다.
+            cohort_from <= year <= cohort_to 인 청크만 반환.
+        semester (예: "2026-1"):
+            exact match. 빈 문자열("")은 전 학기 공통 청크를 뜻하므로
+            semester 필터가 지정된 경우 해당 학기 OR 공통("") 청크를 반환합니다.
+        department (예: "소프트웨어"):
+            수업시간표 청크의 department 메타데이터와 exact match.
+            COURSE_INFO intent에서만 적용되며, 다른 학과 데이터 혼입을 방지합니다.
+        """
         conditions = []
         if student_id:
-            conditions.append({"student_id": student_id})
+            try:
+                year = int(student_id)
+                conditions.append({"cohort_from": {"$lte": year}})
+                conditions.append({"cohort_to":   {"$gte": year}})
+            except (ValueError, TypeError):
+                logger.warning("student_id '%s'를 정수로 변환할 수 없어 코호트 필터를 건너뜁니다.", student_id)
         if doc_type:
             conditions.append({"doc_type": doc_type})
+        if semester:
+            # 해당 학기 청크 OR 전 학기 공통("") 청크 모두 포함
+            conditions.append({"$or": [{"semester": semester}, {"semester": ""}]})
+        if department:
+            # department 메타데이터가 있는 청크(수업시간표)만 필터링
+            conditions.append({"department": {"$eq": department}})
 
         if not conditions:
             return None

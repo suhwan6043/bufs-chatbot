@@ -74,10 +74,20 @@ class QueryRouter:
             else settings.chroma.n_results
         )
 
+        # COURSE_INFO + department: 수업시간표 전용 필터 적용
+        # - 다른 학과 청크 혼입 방지 (IOT, COM 등 다른 학부 데이터 제거)
+        # - 한 학과의 전체 분반을 가져오기 위해 n_results를 충분히 크게 설정
+        department = None
+        if analysis.intent == Intent.COURSE_INFO:
+            department = analysis.entities.get("department")
+            if department:
+                n_candidates = max(n_candidates, 20)  # 분반 많은 학과 대비
+
         candidates = self.chroma_store.search(
             query=query,
             n_results=n_candidates,
             student_id=analysis.student_id,
+            department=department,
         )
 
         reranker = self.reranker

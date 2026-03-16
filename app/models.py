@@ -28,7 +28,8 @@ class PageContent:
     """PDF에서 추출된 페이지 단위 콘텐츠"""
     page_number: int
     text: str
-    tables: list = field(default_factory=list)
+    tables: list = field(default_factory=list)       # markdown 문자열 리스트
+    raw_tables: list = field(default_factory=list)   # 2D 배열 리스트 (원본)
     headers: list = field(default_factory=list)
     source_file: str = ""
 
@@ -40,8 +41,11 @@ class Chunk:
     text: str
     page_number: int
     source_file: str
-    student_id: Optional[str] = None
+    student_id: Optional[str] = None  # 인제스트 출처 기록용 (필터링 미사용)
     doc_type: str = ""
+    cohort_from: int = 2016  # 이 청크가 적용되는 최소 학번 (포함)
+    cohort_to: int = 2030    # 이 청크가 적용되는 최대 학번 (포함)
+    semester: str = ""       # 학기 (예: "2026-1", "2025-2"), 빈 문자열 = 전 학기 공통
     metadata: dict = field(default_factory=dict)
 
 
