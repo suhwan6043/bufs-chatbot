@@ -81,6 +81,12 @@ class AppConfig:
 
 
 @dataclass
+class AdminConfig:
+    # 관리자 페이지 비밀번호 (.env 에서 ADMIN_PASSWORD=xxx 로 변경 권장)
+    password: str = os.getenv("ADMIN_PASSWORD", "bufs_admin_2025")
+
+
+@dataclass
 class Settings:
     ollama: OllamaConfig = field(default_factory=OllamaConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
@@ -89,6 +95,7 @@ class Settings:
     graph: GraphConfig = field(default_factory=GraphConfig)
     pdf: PDFConfig = field(default_factory=PDFConfig)
     app: AppConfig = field(default_factory=AppConfig)
+    admin: AdminConfig = field(default_factory=AdminConfig)
 
 
 settings = Settings()
