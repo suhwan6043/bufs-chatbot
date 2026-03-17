@@ -1,17 +1,25 @@
 """
 캠챗 대화 로그 뷰어
 사용자 질문·답변 기록을 조회하고 CSV/JSONL로 다운로드합니다.
-접근: http://localhost:8501/logs
+접근: http://localhost:8501/logs  (관리자 비밀번호 필요)
 """
 
+import hashlib
+import hmac
 import io
 import json
+import sys
+import time
 from collections import Counter
 from datetime import date
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pandas as pd
 import streamlit as st
 
+from app.config import settings, _ADMIN_PW_DEFAULT
 from app.logging import ChatLogger
 
 # ── 페이지 설정 ─────────────────────────────────────
@@ -60,6 +68,101 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+# ════════════════════════════════════════════════════
+# 인증 (어드민과 동일한 보안 수칙 적용)
+# ════════════════════════════════════════════════════
+_MAX_ATTEMPTS = settings.admin.max_login_attempts
+_LOCKOUT_SECS = settings.admin.lockout_minutes * 60
+_TIMEOUT_SECS = settings.admin.session_timeout_minutes * 60
+
+
+def _verify_password(input_pw: str) -> bool:
+    a = hashlib.sha256(input_pw.encode("utf-8")).digest()
+    b = hashlib.sha256(settings.admin.password.encode("utf-8")).digest()
+    return hmac.compare_digest(a, b)
+
+
+def _check_session_timeout() -> None:
+    if not st.session_state.get("is_admin"):
+        return
+    last_active = st.session_state.get("admin_last_active", 0.0)
+    if time.time() - last_active > _TIMEOUT_SECS:
+        for key in ("is_admin", "admin_login_time", "admin_last_active"):
+            st.session_state.pop(key, None)
+    st.session_state.admin_last_active = time.time()
+
+
+def _check_auth() -> None:
+    _check_session_timeout()
+
+    if st.session_state.get("is_admin"):
+        return  # 이미 인증됨 (어드민 페이지 로그인 공유)
+
+    # 기본 비밀번호 미설정 시 차단
+    if settings.admin.password == _ADMIN_PW_DEFAULT:
+        st.error(
+            "**로그 페이지 접근 불가**\n\n"
+            "`.env` 파일에 `ADMIN_PASSWORD` 환경변수가 설정되지 않았습니다.\n\n"
+            "```\n# .env\nADMIN_PASSWORD=강력한비밀번호를여기에입력\n```",
+            icon="🚫",
+        )
+        st.stop()
+
+    st.title("🔐 로그 뷰어 로그인")
+    st.markdown("---")
+
+    # 잠금 상태 확인
+    lockout_until = st.session_state.get("admin_lockout_until", 0.0)
+    remaining = lockout_until - time.time()
+    if remaining > 0:
+        mins = int(remaining // 60) + 1
+        st.warning(
+            f"로그인 시도 횟수를 초과했습니다.  \n약 **{mins}분** 후에 다시 시도하세요.",
+            icon="🔒",
+        )
+        st.stop()
+
+    attempts_left = _MAX_ATTEMPTS - st.session_state.get("admin_failed_attempts", 0)
+
+    with st.form("logs_login_form"):
+        pw = st.text_input(
+            "비밀번호",
+            type="password",
+            placeholder="관리자 비밀번호 입력",
+        )
+        submitted = st.form_submit_button("로그인", use_container_width=True)
+
+    if submitted:
+        if _verify_password(pw):
+            st.session_state.is_admin          = True
+            st.session_state.admin_login_time  = time.time()
+            st.session_state.admin_last_active = time.time()
+            st.session_state.pop("admin_failed_attempts", None)
+            st.session_state.pop("admin_lockout_until",   None)
+            st.rerun()
+        else:
+            failed = st.session_state.get("admin_failed_attempts", 0) + 1
+            st.session_state.admin_failed_attempts = failed
+            if failed >= _MAX_ATTEMPTS:
+                st.session_state.admin_lockout_until   = time.time() + _LOCKOUT_SECS
+                st.session_state.admin_failed_attempts = 0
+                st.error(
+                    f"로그인 시도 횟수 {_MAX_ATTEMPTS}회를 초과했습니다.  \n"
+                    f"**{settings.admin.lockout_minutes}분** 동안 잠깁니다.",
+                    icon="🔒",
+                )
+            else:
+                st.error(
+                    f"비밀번호가 올바르지 않습니다. (남은 시도: {_MAX_ATTEMPTS - failed}회)",
+                    icon="❌",
+                )
+        st.stop()
+
+    st.stop()
+
+
+_check_auth()
 
 # ── 헤더 ────────────────────────────────────────────
 st.markdown(
