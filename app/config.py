@@ -80,10 +80,25 @@ class AppConfig:
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
 
 
+_ADMIN_PW_DEFAULT = "bufs_admin_2025"   # 절대 프로덕션에서 사용 금지
+
+
 @dataclass
 class AdminConfig:
-    # 관리자 페이지 비밀번호 (.env 에서 ADMIN_PASSWORD=xxx 로 변경 권장)
-    password: str = os.getenv("ADMIN_PASSWORD", "bufs_admin_2025")
+    # ── 비밀번호 ────────────────────────────────────────────────
+    # 반드시 .env 에서 ADMIN_PASSWORD=강력한비밀번호 로 변경하세요.
+    # 미설정 시 기본값이 사용되며, 관리자 페이지에 경고 배너가 표시됩니다.
+    password: str = os.getenv("ADMIN_PASSWORD", _ADMIN_PW_DEFAULT)
+
+    # ── 브루트포스 방지 ─────────────────────────────────────────
+    # 연속 로그인 실패 허용 횟수 (초과 시 세션 잠금)
+    max_login_attempts: int = int(os.getenv("ADMIN_MAX_ATTEMPTS", "5"))
+    # 잠금 유지 시간 (분)
+    lockout_minutes: int = int(os.getenv("ADMIN_LOCKOUT_MINUTES", "15"))
+
+    # ── 세션 타임아웃 ───────────────────────────────────────────
+    # 마지막 활동 후 자동 로그아웃 시간 (분)
+    session_timeout_minutes: int = int(os.getenv("ADMIN_SESSION_TIMEOUT", "30"))
 
 
 @dataclass
