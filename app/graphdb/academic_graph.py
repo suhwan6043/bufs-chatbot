@@ -70,6 +70,7 @@ class AcademicGraph:
         "학과전공", "교과목", "교양영역", "졸업요건",
         "전공이수방법", "수강신청규칙", "학사일정",
         "마이크로전공", "교직",
+        "조기졸업",       # 조기졸업 신청자격·졸업기준·기타사항
     ]
 
     EDGE_TYPES = [
@@ -80,12 +81,14 @@ class AcademicGraph:
         "적용된다",       # 전공이수방법 → 학과전공 / 수강신청규칙 → 교과목
         "연결된다",       # 학과전공 → 마이크로전공
         "제약한다",       # 수강신청규칙 → 졸업요건
-        "기간정한다",     # 학사일정 → 수강신청규칙
+        "기간정한다",     # 학사일정 → 수강신청규칙 / 학사일정 → 조기졸업
         "설치된다",       # 교직 → 학과전공
         "대체과목",       # 교과목 → 교과목
         "동일과목",       # 교과목 → 교과목
         "구성된다",       # 마이크로전공 → 교과목
         "교양전공상호인정", # 교과목 → 학과전공
+        "신청자격적용",   # 조기졸업(신청자격) → 조기졸업(기준)
+        "졸업기준적용",   # 조기졸업(기준) → 졸업요건
     ]
 
     def __init__(self, graph_path: str = None):
@@ -205,6 +208,17 @@ class AcademicGraph:
         """교직과정 노드."""
         node_id = f"teacher_{department}"
         attrs = self._merge({"type": "교직", "설치학과": department}, data)
+        self.G.add_node(node_id, **attrs)
+        return node_id
+
+    def add_early_graduation(self, node_key: str, data: dict) -> str:
+        """
+        조기졸업 노드.
+        node_key 예시: '신청자격' | '기준_2022이전' | '기준_2023이후' | '기타사항'
+        ID = early_grad_{node_key}
+        """
+        node_id = f"early_grad_{node_key}"
+        attrs = self._merge({"type": "조기졸업", "구분": node_key}, data)
         self.G.add_node(node_id, **attrs)
         return node_id
 
@@ -370,6 +384,9 @@ class AcademicGraph:
             if student_id:
                 results.extend(self._query_major_methods(student_id))
 
+        elif intent == "EARLY_GRADUATION":
+            results.extend(self._query_early_graduation(student_id, question))
+
         elif intent == "ALTERNATIVE":
             results.extend(
                 self._query_alternatives(entities.get("course_name", ""))
@@ -447,6 +464,12 @@ class AcademicGraph:
 
         question_norm = self._normalize_text(question)
         trigger_map = [
+            (
+                lambda q: "조기졸업" in q and any(
+                    kw in q for kw in ("기간", "언제", "신청", "일정", "마감")
+                ),
+                ["조기졸업신청"],
+            ),
             (lambda q: "수강신청취소" in q or ("취소" in q and "까지" in q), ["수업일수1/4선"]),
             (lambda q: "수업시작일" in q or "수업시작" in q, ["수업시작일"]),
             (lambda q: "ocu" in q and "개강" in q, ["ocu개강일"]),
@@ -922,6 +945,89 @@ class AcademicGraph:
             for m in self.get_major_methods(student_id)
         ]
 
+    def _query_early_graduation(
+        self, student_id: str, question: str = ""
+    ) -> List[SearchResult]:
+        """
+        조기졸업 관련 그래프 탐색.
+        - 신청기간 질문 → 학사일정 우선
+        - 학번 있으면 해당 학번 기준학점 우선, 없으면 전 그룹 반환
+        """
+        results: List[SearchResult] = []
+        question_norm = self._normalize_text(question)
+        is_period_q = any(
+            kw in question_norm
+            for kw in ("기간", "언제", "일정", "마감", "신청")
+        )
+
+        # ① 신청기간 (학사일정 노드 활용)
+        if is_period_q:
+            matches = self._find_schedule_matches(question or "조기졸업신청기간언제")
+            if not matches:
+                # trigger_map 미적중 시 직접 탐색
+                for nid, data in self.G.nodes(data=True):
+                    if data.get("type") == "학사일정" and "조기졸업" in data.get("이벤트명", ""):
+                        matches.append({"id": nid, **data})
+            if matches:
+                first = matches[0]
+                period = self._format_period(
+                    first.get("시작일", ""), first.get("종료일", "")
+                )
+                method = first.get("신청방법", "")
+                answer = f"조기졸업 신청기간은 {period}입니다."
+                if method:
+                    answer += f" 신청방법: {method}"
+                results.append(self._schedule_to_result(first, answer, score=1.3))
+
+        # ② 신청자격
+        if "early_grad_신청자격" in self.G.nodes:
+            elig = dict(self.G.nodes["early_grad_신청자격"])
+            results.append(SearchResult(
+                text=self._fmt_early_graduation_eligibility(elig),
+                score=1.15,
+                source="graph",
+            ))
+
+        # ③ 학번별 졸업기준
+        if student_id:
+            try:
+                grad_group = "2022이전" if int(student_id) <= 2022 else "2023이후"
+            except (ValueError, TypeError):
+                grad_group = "2023이후"
+            node_id = f"early_grad_기준_{grad_group}"
+            if node_id in self.G.nodes:
+                results.append(SearchResult(
+                    text=self._fmt_early_graduation_criteria(
+                        dict(self.G.nodes[node_id])
+                    ),
+                    score=1.2,
+                    source="graph",
+                ))
+        else:
+            # 학번 미입력 → 전 그룹 기준 모두 반환
+            for grad_group in ("2022이전", "2023이후"):
+                node_id = f"early_grad_기준_{grad_group}"
+                if node_id in self.G.nodes:
+                    results.append(SearchResult(
+                        text=self._fmt_early_graduation_criteria(
+                            dict(self.G.nodes[node_id])
+                        ),
+                        score=1.1,
+                        source="graph",
+                    ))
+
+        # ④ 기타사항
+        if "early_grad_기타사항" in self.G.nodes:
+            results.append(SearchResult(
+                text=self._fmt_early_graduation_notes(
+                    dict(self.G.nodes["early_grad_기타사항"])
+                ),
+                score=0.95,
+                source="graph",
+            ))
+
+        return results
+
     def _query_alternatives(self, course_name: str) -> List[SearchResult]:
         if not course_name:
             return []
@@ -1001,4 +1107,48 @@ class AcademicGraph:
         for key in ("단과대학", "전공유형", "제1전공_이수학점", "전화번호", "사무실위치"):
             if key in data:
                 lines.append(f"- {key}: {data[key]}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _fmt_early_graduation_eligibility(data: dict) -> str:
+        """조기졸업 신청자격 노드 포맷팅."""
+        lines = ["[조기졸업 신청자격]"]
+        if data.get("신청학기"):
+            lines.append(f"- 신청대상: {data['신청학기']}")
+        if data.get("편입생_신청불가"):
+            lines.append("- 편입생은 신청 불가")
+        lines.append("- 평점평균 기준 (신청일 기준):")
+        for key, label in (
+            ("평점기준_2005이전", "2005학번 이전"),
+            ("평점기준_2006", "2006학번"),
+            ("평점기준_2007이후", "2007학번 이후"),
+        ):
+            if data.get(key):
+                lines.append(f"  · {label}: {data[key]}")
+        if data.get("글로벌미래융합학부"):
+            lines.append(f"- 글로벌미래융합학부: {data['글로벌미래융합학부']}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _fmt_early_graduation_criteria(data: dict) -> str:
+        """조기졸업 졸업기준 노드 포맷팅 (학번별)."""
+        lines = [f"[조기졸업 졸업기준] {data.get('적용대상', '')}"]
+        if data.get("기준학점"):
+            lines.append(f"- 기준학점: {data['기준학점']}학점 이상")
+        if data.get("비고"):
+            lines.append(f"- 비고: {data['비고']}")
+        if data.get("이수조건"):
+            lines.append(f"- 이수조건: {data['이수조건']}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _fmt_early_graduation_notes(data: dict) -> str:
+        """조기졸업 기타사항 노드 포맷팅."""
+        lines = ["[조기졸업 기타사항]"]
+        if data.get("탈락자처리"):
+            lines.append(f"- 탈락자: {data['탈락자처리']}")
+        if data.get("합격자졸업유예"):
+            lines.append(f"- 합격자 졸업유예 신청: {data['합격자졸업유예']}")
+        if data.get("7학기등록주의"):
+            lines.append(f"- 7학기 등록 학생 주의사항: {data['7학기등록주의']}")
         return "\n".join(lines)

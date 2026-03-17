@@ -47,6 +47,14 @@ class QueryAnalyzer:
     })
 
     INTENT_KEYWORDS = {
+        Intent.EARLY_GRADUATION: [
+            "조기졸업", "조기 졸업",
+            "7학기 졸업", "6학기 졸업",
+            "7학기만에", "6학기만에",
+            "조기졸업 신청", "조기졸업 자격", "조기졸업 조건",
+            "조기졸업 기준", "조기졸업 학점", "조기졸업 신청기간",
+            "빨리 졸업", "일찍 졸업",
+        ],
         Intent.GRADUATION_REQ: [
             "졸업", "졸업요건", "졸업학점", "이수학점",
             "몇 학점", "교양", "전공학점", "글로벌소통역량",
@@ -122,7 +130,8 @@ class QueryAnalyzer:
             entities["student_groups"] = student_groups
 
         requires_graph = intent in (
-            Intent.GRADUATION_REQ, Intent.ALTERNATIVE, Intent.SCHEDULE,
+            Intent.GRADUATION_REQ, Intent.EARLY_GRADUATION,
+            Intent.ALTERNATIVE, Intent.SCHEDULE,
             Intent.COURSE_INFO, Intent.MAJOR_CHANGE, Intent.REGISTRATION,
         )
         requires_vector = intent not in (Intent.SCHEDULE, Intent.ALTERNATIVE)
@@ -256,6 +265,11 @@ class QueryAnalyzer:
     _LIMIT_KW  = ("최대", "얼마", "몇 학점", "한도", "제한", "이수 가능", "신청 가능", "수강 가능")
 
     def _classify_intent(self, text: str) -> Intent:
+        # 조기졸업은 매우 구체적인 복합어 → glossary 정규화 후에도 남아있으면 우선 처리
+        # (SCHEDULE "기간"+"언제" 등에 밀리지 않도록 조기 리턴)
+        if "조기졸업" in text:
+            return Intent.EARLY_GRADUATION
+
         if (
             any(kw in text for kw in ("직전학기", "평점 4.0", "학점이월", "재수강", "장바구니"))
             or ("ocu" in text and any(kw in text for kw in ("납부", "사용료", "출석", "id")))
@@ -279,7 +293,7 @@ class QueryAnalyzer:
             return Intent.GENERAL
 
         priority = [
-            Intent.ALTERNATIVE, Intent.GRADUATION_REQ,
+            Intent.ALTERNATIVE, Intent.EARLY_GRADUATION, Intent.GRADUATION_REQ,
             Intent.REGISTRATION, Intent.SCHEDULE,
             Intent.MAJOR_CHANGE, Intent.COURSE_INFO,
         ]

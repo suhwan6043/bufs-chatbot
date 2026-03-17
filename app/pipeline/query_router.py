@@ -107,7 +107,11 @@ class QueryRouter:
         NetworkX 그래프에서 의도 + 엔티티 기반 탐색.
         SCHEDULE, ALTERNATIVE는 student_id 없어도 동작.
         """
-        no_id_intents = (Intent.SCHEDULE, Intent.ALTERNATIVE, Intent.REGISTRATION)
+        # EARLY_GRADUATION: 학번 없어도 일반 자격·일정 안내 가능
+        no_id_intents = (
+            Intent.SCHEDULE, Intent.ALTERNATIVE,
+            Intent.REGISTRATION, Intent.EARLY_GRADUATION,
+        )
 
         if analysis.intent not in no_id_intents and not analysis.student_id:
             # 특정 엔티티가 있으면 기본 student_id로 그래프 탐색 허용

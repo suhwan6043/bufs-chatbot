@@ -10,6 +10,7 @@ from enum import Enum
 
 class Intent(str, Enum):
     GRADUATION_REQ = "GRADUATION_REQ"
+    EARLY_GRADUATION = "EARLY_GRADUATION"   # 조기졸업 신청·자격·기준
     REGISTRATION = "REGISTRATION"
     SCHEDULE = "SCHEDULE"
     COURSE_INFO = "COURSE_INFO"
