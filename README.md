@@ -1,4 +1,4 @@
-# BUFS Academic Chatbot
+# BUFS Academic Chatbot (캠챗)
 
 부산외국어대학교 학사 안내 RAG 챗봇입니다.
 로컬 LLM(Ollama)과 하이브리드 검색(Vector DB + Knowledge Graph)을 사용하여 학사 관련 질문에 답변합니다.
@@ -11,19 +11,22 @@
     ▼
 QueryAnalyzer       → 의도(Intent) + 엔티티 추출, 학번 파싱
     │
-    ├──▶ ChromaDB (Vector)   → BGE-M3 임베딩 + 상위 15개 후보
-    │        │
+    ├──▶ ChromaDB (Vector)   → BGE-M3 임베딩 + 상위 15~20개 후보
+    │        │                  (수업시간표: department 필터 적용)
     │        └──▶ Reranker   → BGE-Reranker-v2-m3으로 상위 5개 선택
     │
     └──▶ AcademicGraph (NetworkX) → 학사일정, 졸업요건, 학과 구조 탐색
                 │
-ContextMerger ◀──┘  → Vector + Graph 결과 병합 (토큰 예산 관리)
+ ContextMerger ◀──┘  → Vector + Graph 결과 병합 (토큰 예산 관리)
     │
     ▼
 AnswerGenerator     → Ollama(exaone3.5) LLM으로 최종 답변 생성
     │
     ▼
 ResponseValidator   → 답변 품질 검증
+    │
+    ▼
+ChatLogger          → 대화 로그 JSONL 저장 (data/logs/)
 ```
 
 ## 주요 기술 스택
@@ -36,7 +39,8 @@ ResponseValidator   → 답변 품질 검증
 | 벡터 DB | ChromaDB (SQLite 기반 로컬 파일) |
 | 지식 그래프 | NetworkX (pkl 파일) |
 | PDF 처리 | PyMuPDF + pdfplumber |
-| UI | Streamlit |
+| 수업시간표 파싱 | timetable_parser (교시→시각 변환, 학과명 정규화) |
+| UI | Streamlit (멀티페이지: 챗봇 + 로그 뷰어) |
 
 ## 설치
 
@@ -89,9 +93,23 @@ CHROMA_N_RESULTS=15
 ### PDF 인제스트 (Vector DB)
 
 ```bash
-# PDF를 data/pdfs/ 폴더에 저장 후 실행
-python scripts/ingest_pdf.py
+# 학사안내 PDF 인제스트 (내국인 기준)
+python scripts/ingest_pdf.py --pdf data/pdfs/학사안내.pdf --doc-type domestic --student-id 2023
+
+# 수업시간표 PDF 인제스트
+python scripts/ingest_pdf.py --pdf data/pdfs/수업시간표.pdf --doc-type timetable --semester 2026-1
+
+# 디렉토리 일괄 인제스트
+python scripts/ingest_pdf.py --dir data/pdfs/
+
+# DB 현황 확인
+python scripts/ingest_pdf.py --status
+
+# 추출 결과 JSON 저장 (디버깅용)
+python scripts/ingest_pdf.py --pdf data/pdfs/파일.pdf --save-json
 ```
+
+`--doc-type` 선택지: `domestic` (내국인, 기본값) / `foreign` (외국인) / `transfer` (편입생) / `schedule` (학사일정) / `timetable` (수업시간표)
 
 ### 지식 그래프 구축
 
@@ -108,11 +126,8 @@ python scripts/pdf_to_graph.py --pdf data/pdfs/2025학년도2학기학사안내.
 BGE-M3로 모델을 변경한 경우 기존 ChromaDB 데이터를 삭제 후 재인제스트해야 합니다:
 
 ```bash
-# 기존 ChromaDB 데이터 삭제
 rm -rf data/chromadb/
-
-# 재인제스트
-python scripts/ingest_pdf.py
+python scripts/ingest_pdf.py --pdf data/pdfs/파일.pdf
 ```
 
 ## 실행
@@ -121,113 +136,136 @@ python scripts/ingest_pdf.py
 streamlit run main.py
 ```
 
-브라우저에서 `http://localhost:8501` 접속
+| 페이지 | URL | 설명 |
+|--------|-----|------|
+| 챗봇 (메인) | `http://localhost:8501` | 학사 질문 답변 |
+| 로그 뷰어 | `http://localhost:8501/logs` | 대화 기록 조회·CSV 다운로드 |
 
 ## 프로젝트 구조
 
 ```
 챗봇/
 ├── app/
-│   ├── config.py           # 환경 변수 및 설정 관리
-│   ├── models.py           # Pydantic 데이터 모델
+│   ├── config.py               # 환경 변수 및 설정 관리
+│   ├── models.py               # Pydantic 데이터 모델 (Chunk에 semester 필드 포함)
 │   ├── embedding/
-│   │   └── embedder.py     # BGE-M3 임베딩 래퍼
+│   │   └── embedder.py         # BGE-M3 임베딩 래퍼
 │   ├── pipeline/
 │   │   ├── query_analyzer.py   # 의도 분류 + 엔티티 추출
-│   │   ├── query_router.py     # Vector/Graph 라우팅
+│   │   ├── query_router.py     # Vector/Graph 라우팅 (department 필터)
 │   │   ├── reranker.py         # BGE-Reranker-v2-m3 리랭킹
 │   │   ├── context_merger.py   # 검색 결과 병합
 │   │   ├── answer_generator.py # LLM 답변 생성
+│   │   ├── glossary.py         # 도메인 용어 정규화
 │   │   └── response_validator.py
 │   ├── vectordb/
-│   │   └── chroma_store.py # ChromaDB CRUD
+│   │   └── chroma_store.py     # ChromaDB CRUD (department 필터 지원)
 │   ├── graphdb/
 │   │   └── academic_graph.py   # NetworkX 지식 그래프
 │   ├── pdf/
-│   │   └── pdf_processor.py    # PDF 파싱 + 청킹
+│   │   ├── detector.py         # PDF 유형 자동 감지
+│   │   ├── digital_extractor.py# 디지털 PDF 파싱 + 청킹
+│   │   ├── ocr_extractor.py    # 스캔 PDF OCR
+│   │   └── timetable_parser.py # 수업시간표 전용 파서
+│   ├── logging/
+│   │   └── chat_logger.py      # 대화 로그 저장 (data/logs/ JSONL)
 │   └── ui/
-│       └── chat_app.py     # Streamlit 채팅 UI
+│       └── chat_app.py         # Streamlit 채팅 UI
+├── pages/
+│   └── logs.py                 # 로그 뷰어 페이지
 ├── scripts/
-│   ├── ingest_pdf.py       # PDF → ChromaDB 인제스트
-│   ├── build_graph.py      # 지식 그래프 빌드
-│   ├── pdf_to_graph.py     # PDF에서 학사 데이터 자동 파싱
-│   ├── make_eval_dataset.py# 평가용 JSONL 생성
-│   └── evaluate.py         # 자동 평가 + LLM-as-a-Judge
+│   ├── ingest_pdf.py           # PDF → ChromaDB 인제스트
+│   ├── build_graph.py          # 지식 그래프 빌드
+│   ├── pdf_to_graph.py         # PDF에서 학사 데이터 자동 파싱
+│   ├── make_eval_dataset.py    # 평가용 JSONL 생성
+│   ├── evaluate.py             # 자동 평가 + LLM-as-a-Judge
+│   ├── qualitative_judge.py    # 정성적 Judge (0-5 척도)
+│   ├── compare_eval.py         # 평가 결과 비교
+│   └── make_report.py          # 평가 보고서 생성
 ├── data/
-│   ├── pdfs/               # 학사 안내 PDF 파일
-│   ├── chromadb/           # ChromaDB 영구 저장소
-│   ├── graphs/             # academic_graph.pkl
-│   └── eval/               # 평가 데이터셋/결과
-├── tests/
+│   ├── pdfs/                   # 학사 안내 PDF 파일
+│   ├── chromadb/               # ChromaDB 영구 저장소
+│   ├── graphs/                 # academic_graph.pkl
+│   ├── logs/                   # 대화 로그 (chat_YYYY-MM-DD.jsonl)
+│   └── eval/                   # 평가 데이터셋/결과
+├── tests/                      # 52개 테스트
 ├── requirements.txt
 └── main.py
 ```
+
+## 주요 기능
+
+| 기능 | 설명 |
+|------|------|
+| 하이브리드 검색 | Vector(ChromaDB) + Graph(NetworkX) 결과 병합 |
+| 학과별 수업시간표 | `department` 필터로 타 학과 청크 혼입 방지 |
+| 별점 피드백 | 답변 하단 1~5점 평가, 로그에 함께 저장 |
+| 대화 로그 | 날짜별 JSONL 저장, 웹 UI에서 CSV 다운로드 |
+| 로딩 애니메이션 | 답변 생성 중 책 넘기는 애니메이션 표시 |
+| 학번 인식 | 질문 내 학번 자동 파싱 → 맞춤 졸업요건 답변 |
+| 도메인 용어 정규화 | 한국어 약어/별칭 → 정규 명칭 변환 |
+| 포털 링크 | 오른쪽 패널에 학사 포털 바로가기 |
 
 ## 평가
 
 ### 평가 실행
 
 ```bash
-# 2026학년도 1학기 데이터셋 평가
+# 자동 평가 (Hit Rate, Contains GT)
 python scripts/evaluate.py --dataset data/eval/rag_eval_dataset_2026_1.jsonl
 
 # 빠른 확인용 (Judge, Reranker 비활성화)
 python scripts/evaluate.py --dataset data/eval/rag_eval_dataset_2026_1.jsonl --no-judge --no-rerank
+
+# 정성적 Judge (0-5 척도, 기존 결과 JSON 재활용)
+python scripts/qualitative_judge.py data/eval/eval_results_XXXXXXXX_XXXXXX.json
 ```
 
-주요 산출물:
-
-- `data/eval/rag_eval_dataset_2026_1.jsonl`: 2026학년도 1학기 평가셋
-- `data/eval/eval_results_20260308_002116.json`: 50문항 자동 평가 결과
-- `eval_results_20260308_2026_1_judge.json`: 기존 응답에 Judge 점수를 후처리한 요약 결과
-
-### 최신 평가 요약 (2026-03-08, 2026학년도 1학기 50문항)
+### 최신 평가 요약 (2026-03-09, 2026학년도 1학기 50문항)
 
 | 지표 | 값 |
 |------|----|
 | Hit Rate | 100.0% |
-| Contains GT | 54.0% |
-| LLM Judge Correctness | 81.6% (`n=49`) |
-| LLM Judge Relevance | 4.58 / 5 |
-| LLM Judge Faithfulness | 4.04 / 5 |
-| 평균 검색 시간 | 12.2초 |
-| 평균 생성 시간 | 2.6초 |
-| 평균 전체 응답 시간 | 14.8초 |
+| Contains GT | 74.0% |
+| LLM Judge Correctness (정확성) | **94.0%** (47/50 정답) |
+| 정성 Judge 평균 정확성 | **4.8 / 5** |
 | 답변 정상률 / 출처 표기율 | 100.0% / 100.0% |
+| 평균 검색 시간 | 약 17초 |
+| 평균 생성 시간 | 약 1.8초 |
 
-난이도별 Judge Correctness:
+난이도별 정확성:
 
-- `easy`: 90.3%
-- `medium`: 73.3%
-- `hard`: 33.3%
+| 난이도 | 정확성 | n |
+|--------|--------|---|
+| easy | 4.77 / 5 | 31 |
+| medium | 4.81 / 5 | 16 |
+| hard | 5.0 / 5 | 3 |
 
-해석:
+오류 유형 (3건):
 
-- 쉬운 단일 사실 질의는 안정적이지만, 학번별 규정 비교나 복수 조건을 묻는 질문에서 성능이 크게 떨어집니다.
-- `contains_gt`가 낮은 이유는 날짜/시간 표현 차이도 있지만, 실제로 정답 근거가 있는데도 `확인되지 않는 정보입니다`로 응답한 케이스가 포함되어 있기 때문입니다.
-- Judge 기준 오답 9건은 `q001`, `q011`, `q018`, `q019`, `q020`, `q031`, `q038`, `q045`, `q050`입니다.
+- `incomplete` (3건): 정답 일부 포함, 조건/예외 누락 수준
 
-### 오답 9건 기준 수정 우선순위
+### 평가 산출물
 
-| 우선순위 | 대상 오답 | 문제 유형 | 수정 방향 |
-|----------|-----------|-----------|-----------|
-| P0 | `q018`, `q019`, `q020`, `q031`, `q038`, `q050` | PDF 근거가 있는데도 그래프/검색 커버리지 부족으로 `확인되지 않는 정보` 응답 | `scripts/pdf_to_graph.py`에서 GPA 예외학점, 장바구니 최대학점, 전공 신청/변경 기간, OCU 납부기간, 학번별 복수전공 이수학점을 구조화해 그래프에 넣고, `query_router`에서 해당 유형은 그래프 결과를 우선 사용 |
-| P1 | `q001`, `q011` | 일정 질문에서 이벤트 의미를 잘못 고름 | `개강`과 `수업시작일`을 분리하고, `언제까지` 질문은 중간 설명보다 최종 마감 시점을 우선 답하도록 일정 답변 템플릿 보정 |
-| P1 | `q045`, `q050` | 졸업요건 조합형 질문에서 수치 조합/비교를 LLM이 추론하다가 오류 발생 | 졸업요건/제2전공 질의는 생성 전에 규칙 기반 formatter로 학번별 값을 조합하고, LLM은 문장화만 담당 |
+- `data/eval/rag_eval_dataset_2026_1.jsonl`: 2026학년도 1학기 평가셋 (50문항)
+- `data/eval/rag_eval_dataset_100.jsonl`: 100문항 확장 평가셋
+- `data/eval/eval_results_*.json`: 자동 평가 결과
+- `data/eval/qualitative_report_*.md`: 정성적 Judge 보고서
 
-우선순위 판단 근거:
+## 테스트
 
-- 오답 9건 중 6건은 "정보가 없다고 잘못 판단"한 커버리지 문제입니다.
-- 나머지 3건 중 2건은 일정 의미 구분 실패, 1건은 졸업요건 수치 조합 오류입니다.
-- 현재 `확인되지 않는 정보입니다`가 포함된 응답 5건은 모두 Judge 기준 오답이므로, 이 문구는 안전장치보다 파싱/검색 누락 신호로 보는 것이 맞습니다.
+```bash
+cd "C:\Users\User\Desktop\챗봇"
+.venv/Scripts/pytest tests/ -v  # 52개 테스트
+```
 
 ## 성능 특성
 
 | 항목 | 설명 |
 |------|------|
 | 임베딩 | BGE-M3 (1024차원, CPU ~2-5초/배치) |
-| 리랭킹 | Cross-Encoder (후보 15개 → 상위 5개, CPU ~1-2초) |
-| LLM 응답 | exaone3.5:7.8b (CPU ~20-60초) |
+| 리랭킹 | Cross-Encoder (후보 15-20개 → 상위 5개, CPU ~1-2초) |
+| LLM 응답 | exaone3.5:7.8b (GPU 스트리밍) |
 | 그래프 탐색 | NetworkX (즉시, <10ms) |
 
 ## 환경 변수 전체 목록
