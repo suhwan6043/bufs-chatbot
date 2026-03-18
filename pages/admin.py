@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import streamlit as st
 
 from app.config import settings, _ADMIN_PW_DEFAULT
-from app.graphdb.academic_graph import AcademicGraph, get_student_group, GROUP_LABELS
+from app.graphdb.academic_graph import AcademicGraph, get_student_group, GROUP_LABELS, _DEPT_TREE
 
 # ── 페이지 설정 (반드시 첫 번째 st 호출) ──────────────
 st.set_page_config(
@@ -269,6 +269,13 @@ _GRAD_GROUP_OPTIONS: dict[str, str] = {
 }
 _STUDENT_TYPES = ["내국인", "외국인", "편입생"]
 
+# ── 전공 선택 옵션 빌드 (공통 + 학부별 전공) ──────────────
+# { 표시 레이블: 전공 키(None이면 공통) }
+_MAJOR_OPTIONS: dict[str, str | None] = {"공통 (전공무관)": None}
+for _dept, _majors in _DEPT_TREE.items():
+    for _major in _majors:
+        _MAJOR_OPTIONS[f"{_dept} › {_major}"] = _major
+
 # ── 졸업요건 필드 정의 ─────────────────────────────────
 # (key, 레이블, 타입, 기본값)
 # 타입: "int_req" = 필수 정수, "int_opt" = 선택 정수, "text" = 문자열, "bool" = 불리언
@@ -318,6 +325,7 @@ with tab_grad:
     # ── 전체 현황 테이블 ────────────────────────────────
     with st.expander("📊 전체 졸업요건 현황 보기", expanded=False):
         rows = []
+        # 공통(전공무관) 노드
         for grp, grp_label in _GRAD_GROUP_OPTIONS.items():
             for stype in _STUDENT_TYPES:
                 nid = f"grad_{grp}_{stype}"
@@ -327,6 +335,7 @@ with tab_grad:
                 rows.append({
                     "학번그룹":   grp_label,
                     "유형":       stype,
+                    "전공":       "공통",
                     "졸업학점":   d.get("졸업학점", "-"),
                     "교양":       d.get("교양이수학점", "-"),
                     "글로벌소통": d.get("글로벌소통역량학점", "-"),
@@ -336,6 +345,28 @@ with tab_grad:
                     "복수전공":   d.get("복수전공이수학점", "-"),
                     "부전공":     d.get("부전공이수학점", "-"),
                 })
+        # 전공별 노드 (grad_{group}_{type}_{major} 형식)
+        for nid, d in graph.G.nodes(data=True):
+            if d.get("type") != "졸업요건":
+                continue
+            major_val = d.get("전공")
+            if not major_val:
+                continue  # 공통 노드는 이미 위에서 처리
+            grp = d.get("적용학번그룹", "")
+            stype = d.get("학생유형", "")
+            rows.append({
+                "학번그룹":   _GRAD_GROUP_OPTIONS.get(grp, grp),
+                "유형":       stype,
+                "전공":       major_val,
+                "졸업학점":   d.get("졸업학점", "-"),
+                "교양":       d.get("교양이수학점", "-"),
+                "글로벌소통": d.get("글로벌소통역량학점", "-"),
+                "취업커뮤":   d.get("취업커뮤니티요건", "-"),
+                "졸업시험":   "있음" if d.get("졸업시험여부") else "없음",
+                "졸업인증":   d.get("졸업인증", "-") or "-",
+                "복수전공":   d.get("복수전공이수학점", "-"),
+                "부전공":     d.get("부전공이수학점", "-"),
+            })
         if rows:
             import pandas as _pd
             st.dataframe(_pd.DataFrame(rows), use_container_width=True, hide_index=True)
@@ -344,8 +375,8 @@ with tab_grad:
 
     st.markdown("---")
 
-    # ── 그룹 / 유형 선택 ────────────────────────────────
-    col_g, col_t = st.columns(2)
+    # ── 그룹 / 유형 / 전공 선택 ─────────────────────────
+    col_g, col_t, col_m = st.columns(3)
     with col_g:
         sel_group = st.selectbox(
             "학번 그룹",
@@ -359,15 +390,30 @@ with tab_grad:
             _STUDENT_TYPES,
             key="grad_sel_type",
         )
+    with col_m:
+        sel_major_label = st.selectbox(
+            "전공",
+            list(_MAJOR_OPTIONS.keys()),
+            key="grad_sel_major",
+            help="공통(전공무관)은 학과 지정 없이 학번그룹·학생유형으로만 저장됩니다.",
+        )
+    sel_major: str | None = _MAJOR_OPTIONS[sel_major_label]
 
     node_id = f"grad_{sel_group}_{sel_type}"
+    if sel_major:
+        node_id = f"{node_id}_{sel_major}"
+
     cur = {k: v for k, v in dict(graph.G.nodes.get(node_id, {})).items()
-           if k not in ("type", "적용학번그룹", "학생유형")}
+           if k not in ("type", "적용학번그룹", "학생유형", "전공")}
+
+    disp_label = f"{_GRAD_GROUP_OPTIONS[sel_group]} / {sel_type}"
+    if sel_major:
+        disp_label += f" / {sel_major}"
 
     if cur:
-        st.success(f"기존 데이터 로드: **{_GRAD_GROUP_OPTIONS[sel_group]} / {sel_type}**", icon="✅")
+        st.success(f"기존 데이터 로드: **{disp_label}**", icon="✅")
     else:
-        st.warning(f"데이터 없음: **{_GRAD_GROUP_OPTIONS[sel_group]} / {sel_type}** — 저장하면 새로 생성됩니다.", icon="⚠️")
+        st.warning(f"데이터 없음: **{disp_label}** — 저장하면 새로 생성됩니다.", icon="⚠️")
 
     # ── 입력 폼 ─────────────────────────────────────────
     with st.form(f"form_grad_req"):
@@ -455,11 +501,14 @@ with tab_grad:
         v = _int_or_none(f_micro);     new_data["마이크로전공이수학점"] = v
         v = _int_or_none(f_minor);     new_data["부전공이수학점"]      = v
 
-        graph.add_graduation_req(sel_group, sel_type, new_data)
+        graph.add_graduation_req(sel_group, sel_type, new_data, major=sel_major)
         graph.save()
-        _audit("SAVE_GRAD_REQ", f"group={sel_group}, type={sel_type}")
+        audit_detail = f"group={sel_group}, type={sel_type}"
+        if sel_major:
+            audit_detail += f", major={sel_major}"
+        _audit("SAVE_GRAD_REQ", audit_detail)
         st.success(
-            f"저장 완료: **{_GRAD_GROUP_OPTIONS[sel_group]} / {sel_type}**  \n"
+            f"저장 완료: **{disp_label}**  \n"
             f"채팅에 반영하려면 [그래프 현황] 탭 → '채팅 세션 초기화' 버튼을 누르세요."
         )
         st.session_state.pop("admin_graph", None)

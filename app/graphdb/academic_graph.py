@@ -57,6 +57,41 @@ GROUP_LABELS = {
     "2016_before": "2016학번 이전",
 }
 
+# ── 학부/전공 트리 ────────────────────────────────────────────
+# 구조: { 학부/학과명: [전공명, ...] }
+# 전공명은 그래프 노드 키에 그대로 사용됩니다.
+# 단일 전공 학과도 리스트로 통일 (단, 학과명 == 전공명)
+_DEPT_TREE: dict[str, list[str]] = {
+    "영어학부":                ["영어", "영어통번역"],
+    "독일어과":                ["독일어"],
+    "일본어융합학부":          ["한일문화콘텐츠", "일본IT", "비즈니스일본어"],
+    "중국학부":                ["중국어", "중국지역통상"],
+    "국제문화비즈니스학부":    ["인도지역통상", "G2문화비즈니스"],
+    "경영학부":                ["경영", "회계"],
+    "국제마케팅학과":          ["국제마케팅"],
+    "국제무역·경제금융학부":   ["국제무역", "경제금융"],
+    "호텔·관광학부":           ["국제문화관광", "호텔·컨벤션", "국제비서"],
+    "스페인어과":              ["스페인어"],
+    "유럽학부":                ["프랑스어", "포르투갈(브라질)어", "이탈리아어", "유럽지역통상"],
+    "러시아어학과":            ["러시아어"],
+    "아세안학부":              ["태국어", "인도네시아·말레이시아", "베트남어", "미얀마어", "인도어"],
+    "중동학부":                ["아랍어", "터키어"],
+    "국제학부":                ["글로벌자율", "글로벌한국학", "외교"],
+    "글로벌미래융합학부":      ["글로벌미래융합"],
+    "사회복지학과":            ["사회복지"],
+    "상담심리학과":            ["상담심리"],
+    "경찰행정학과":            ["경찰행정"],
+    "사이버경찰행정학과":      ["사이버경찰행정"],
+    "사회체육학과":            ["사회체육"],
+    "스포츠재활학과":          ["스포츠재활"],
+    "항공서비스학과":          ["항공서비스"],
+    "영상콘텐츠융합학과":      ["영상콘텐츠융합"],
+    "글로벌웹툰콘텐츠학과":    ["글로벌웹툰콘텐츠"],
+    "컴퓨터공학부":            ["컴퓨터공학", "빅데이터"],
+    "소프트웨어학부":          ["소프트웨어", "사물인터넷(IoT)"],
+    "전자로봇·보안학부":       ["전자로봇", "스마트융합보안"],
+}
+
 
 class AcademicGraph:
     """
@@ -146,12 +181,13 @@ class AcademicGraph:
         return node_id
 
     def add_graduation_req(
-        self, student_id: str, student_type: str, data: dict
+        self, student_id: str, student_type: str, data: dict, major: str = None
     ) -> str:
         """
         졸업요건 노드. student_id는 4자리 연도 또는 그룹 키 허용.
         내부적으로 그룹 키로 정규화하여 저장.
         student_type: '내국인' | '외국인' | '편입생'
+        major: 전공명 (지정 시 전공별 요건 노드 생성, 미지정 시 공통 노드)
         """
         group = (
             get_student_group(student_id)
@@ -159,10 +195,12 @@ class AcademicGraph:
             else student_id
         )
         node_id = f"grad_{group}_{student_type}"
-        attrs = self._merge(
-            {"type": "졸업요건", "적용학번그룹": group, "학생유형": student_type},
-            data,
-        )
+        if major:
+            node_id = f"{node_id}_{major}"
+        base_attrs = {"type": "졸업요건", "적용학번그룹": group, "학생유형": student_type}
+        if major:
+            base_attrs["전공"] = major
+        attrs = self._merge(base_attrs, data)
         self.G.add_node(node_id, **attrs)
         return node_id
 
@@ -236,14 +274,23 @@ class AcademicGraph:
     # ── 조회 메서드 ───────────────────────────────────────────
 
     def get_graduation_req(
-        self, student_id: str, student_type: str = "내국인"
+        self, student_id: str, student_type: str = "내국인", major: str = None
     ) -> Optional[dict]:
-        """학번 + 학생유형 기반 졸업요건 조회."""
+        """
+        학번 + 학생유형 기반 졸업요건 조회.
+        major 지정 시: 전공별 노드 우선 조회 → 없으면 공통 노드 폴백
+        """
         group = (
             get_student_group(student_id)
             if len(student_id) == 4 and student_id.isdigit()
             else student_id
         )
+        # 전공별 노드 우선 조회
+        if major:
+            major_node_id = f"grad_{group}_{student_type}_{major}"
+            if major_node_id in self.G.nodes:
+                return dict(self.G.nodes[major_node_id])
+        # 공통 노드 조회
         node_id = f"grad_{group}_{student_type}"
         if node_id in self.G.nodes:
             return dict(self.G.nodes[node_id])
@@ -594,13 +641,17 @@ class AcademicGraph:
                 )
                 return results
 
+        # 전공 엔티티 추출 (학과별 졸업요건 우선 조회)
+        department = entities.get("department")
+
         # 요청 학생유형 우선, 없으면 내국인 (중복 방지)
         seen_types: set = set()
         for stype in (student_type, "내국인", "외국인", "편입생"):
             if stype in seen_types:
                 continue
             seen_types.add(stype)
-            data = self.get_graduation_req(student_id, stype)
+            # 전공별 노드 우선, 없으면 공통 노드 폴백
+            data = self.get_graduation_req(student_id, stype, major=department)
             if data:
                 text = self._fmt_graduation(student_id, stype, data)
                 score = 1.0 if stype == student_type else 0.8
@@ -1046,8 +1097,16 @@ class AcademicGraph:
 
     @staticmethod
     def _fmt_graduation(student_id: str, student_type: str, data: dict) -> str:
-        group = get_student_group(student_id)
-        lines = [f"[졸업요건] {group}학번 {student_type}"]
+        group = (
+            get_student_group(student_id)
+            if student_id.isdigit() and len(student_id) == 4
+            else student_id
+        )
+        major = data.get("전공", "")
+        header = f"[졸업요건] {group}학번 {student_type}"
+        if major:
+            header += f" ({major}전공)"
+        lines = [header]
         for key in (
             "졸업학점", "교양이수학점", "글로벌소통역량학점",
             "취업커뮤니티요건", "NOMAD비교과지수",
