@@ -1054,8 +1054,12 @@ class AcademicGraph:
             "졸업시험여부", "졸업인증", "복수전공이수학점",
             "융합전공이수학점", "마이크로전공이수학점", "부전공이수학점",
         ):
-            if key in data:
-                lines.append(f"- {key}: {data[key]}")
+            val = data.get(key)
+            if val is None:                          # 해당 학번에 없는 항목 → 스킵
+                continue
+            if isinstance(val, bool):                # True/False → 한국어
+                val = "있음" if val else "없음"
+            lines.append(f"- {key}: {val}")
         return "\n".join(lines)
 
     @staticmethod
