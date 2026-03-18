@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import streamlit as st
 
 from app.config import settings, _ADMIN_PW_DEFAULT
-from app.graphdb.academic_graph import AcademicGraph
+from app.graphdb.academic_graph import AcademicGraph, get_student_group, GROUP_LABELS
 
 # ── 페이지 설정 (반드시 첫 번째 st 호출) ──────────────
 st.set_page_config(
@@ -246,11 +246,224 @@ st.divider()
 # ════════════════════════════════════════════════════
 # 탭 구성
 # ════════════════════════════════════════════════════
-tab_early, tab_schedule, tab_status = st.tabs([
+tab_grad, tab_early, tab_schedule, tab_status = st.tabs([
+    "📋 졸업요건 관리",
     "🎓 조기졸업 관리",
     "📅 학사일정 관리",
     "📊 그래프 현황",
 ])
+
+
+# ════════════════════════════════════════════════════
+# Tab 0 : 졸업요건 관리
+# ════════════════════════════════════════════════════
+
+# ── 학번 그룹 목록 (그래프 키 → 표시 레이블) ──────────
+_GRAD_GROUP_OPTIONS: dict[str, str] = {
+    "2024_2025": "2024학번 이후",
+    "2023":      "2023학번",
+    "2022":      "2022학번",
+    "2021":      "2021학번",
+    "2017_2020": "2017~2020학번",
+    "2016_before": "2016학번 이전",
+}
+_STUDENT_TYPES = ["내국인", "외국인", "편입생"]
+
+# ── 졸업요건 필드 정의 ─────────────────────────────────
+# (key, 레이블, 타입, 기본값)
+# 타입: "int_req" = 필수 정수, "int_opt" = 선택 정수, "text" = 문자열, "bool" = 불리언
+_GRAD_FIELDS = [
+    ("졸업학점",           "졸업학점",           "int_req", 120),
+    ("교양이수학점",        "교양이수학점",        "int_req",  30),
+    ("글로벌소통역량학점",  "글로벌소통역량학점",  "int_req",   6),
+    ("진로탐색학점",        "진로탐색학점",        "int_opt",   None),
+    ("전공탐색학점",        "전공탐색학점",        "int_opt",   None),
+    ("취업커뮤니티요건",    "취업커뮤니티요건",    "text",    "2학점"),
+    ("NOMAD비교과지수",     "NOMAD비교과지수",     "text",    ""),
+    ("졸업시험여부",        "졸업시험 있음",       "bool",    False),
+    ("졸업인증",            "졸업인증",            "text",    ""),
+    ("제2전공방법",         "제2전공방법",         "text",    ""),
+    ("복수전공이수학점",    "복수전공이수학점",    "int_opt",  None),
+    ("융합전공이수학점",    "융합전공이수학점",    "int_opt",  None),
+    ("마이크로전공이수학점","마이크로전공이수학점","int_opt",  None),
+    ("부전공이수학점",      "부전공이수학점",      "int_opt",  None),
+]
+
+
+def _int_or_none(s: str):
+    """빈 문자열 → None, 숫자 문자열 → int"""
+    try:
+        return int(s.strip()) if s.strip() else None
+    except (ValueError, AttributeError):
+        return None
+
+
+def _cur_int(cur: dict, key: str, default: int) -> int:
+    """그래프 노드에서 정수 값을 안전하게 읽습니다."""
+    v = cur.get(key)
+    try:
+        return int(v) if v is not None else default
+    except (ValueError, TypeError):
+        return default
+
+
+with tab_grad:
+    st.subheader("📋 졸업요건 관리")
+    st.info(
+        "학번 그룹과 학생 유형을 선택해 졸업요건을 입력·수정하세요.  \n"
+        "저장 후 **[그래프 현황] 탭 → '채팅 세션 초기화'** 버튼을 눌러야 채팅에 반영됩니다.",
+        icon="ℹ️",
+    )
+
+    # ── 전체 현황 테이블 ────────────────────────────────
+    with st.expander("📊 전체 졸업요건 현황 보기", expanded=False):
+        rows = []
+        for grp, grp_label in _GRAD_GROUP_OPTIONS.items():
+            for stype in _STUDENT_TYPES:
+                nid = f"grad_{grp}_{stype}"
+                d = dict(graph.G.nodes[nid]) if nid in graph.G.nodes else {}
+                if not d:
+                    continue
+                rows.append({
+                    "학번그룹":   grp_label,
+                    "유형":       stype,
+                    "졸업학점":   d.get("졸업학점", "-"),
+                    "교양":       d.get("교양이수학점", "-"),
+                    "글로벌소통": d.get("글로벌소통역량학점", "-"),
+                    "취업커뮤":   d.get("취업커뮤니티요건", "-"),
+                    "졸업시험":   "있음" if d.get("졸업시험여부") else "없음",
+                    "졸업인증":   d.get("졸업인증", "-") or "-",
+                    "복수전공":   d.get("복수전공이수학점", "-"),
+                    "부전공":     d.get("부전공이수학점", "-"),
+                })
+        if rows:
+            import pandas as _pd
+            st.dataframe(_pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        else:
+            st.warning("아직 졸업요건 데이터가 없습니다.")
+
+    st.markdown("---")
+
+    # ── 그룹 / 유형 선택 ────────────────────────────────
+    col_g, col_t = st.columns(2)
+    with col_g:
+        sel_group = st.selectbox(
+            "학번 그룹",
+            list(_GRAD_GROUP_OPTIONS.keys()),
+            format_func=lambda k: _GRAD_GROUP_OPTIONS[k],
+            key="grad_sel_group",
+        )
+    with col_t:
+        sel_type = st.selectbox(
+            "학생 유형",
+            _STUDENT_TYPES,
+            key="grad_sel_type",
+        )
+
+    node_id = f"grad_{sel_group}_{sel_type}"
+    cur = {k: v for k, v in dict(graph.G.nodes.get(node_id, {})).items()
+           if k not in ("type", "적용학번그룹", "학생유형")}
+
+    if cur:
+        st.success(f"기존 데이터 로드: **{_GRAD_GROUP_OPTIONS[sel_group]} / {sel_type}**", icon="✅")
+    else:
+        st.warning(f"데이터 없음: **{_GRAD_GROUP_OPTIONS[sel_group]} / {sel_type}** — 저장하면 새로 생성됩니다.", icon="⚠️")
+
+    # ── 입력 폼 ─────────────────────────────────────────
+    with st.form(f"form_grad_req"):
+        st.markdown("#### 필수 항목")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            f_grad    = st.number_input("졸업학점",          min_value=60, max_value=200,
+                                        value=_cur_int(cur, "졸업학점",          120), step=1)
+        with c2:
+            f_liberal = st.number_input("교양이수학점",      min_value=0,  max_value=100,
+                                        value=_cur_int(cur, "교양이수학점",      30),  step=1)
+        with c3:
+            f_global  = st.number_input("글로벌소통역량학점",min_value=0,  max_value=30,
+                                        value=_cur_int(cur, "글로벌소통역량학점", 6),   step=1)
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            f_community = st.text_input("취업커뮤니티요건",
+                                        value=cur.get("취업커뮤니티요건", "2학점"))
+        with c2:
+            f_exam = st.checkbox("졸업시험 있음",
+                                 value=bool(cur.get("졸업시험여부", False)))
+        with c3:
+            f_cert = st.text_input("졸업인증",
+                                   value=cur.get("졸업인증", "") or "",
+                                   placeholder="예: TOPIK 4급, 없음")
+
+        st.markdown("#### 선택 항목 (해당없으면 빈칸)")
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            f_nomad   = st.text_input("NOMAD비교과지수",
+                                      value=cur.get("NOMAD비교과지수", "") or "",
+                                      placeholder="예: 미적용")
+        with c2:
+            f_career  = st.text_input("진로탐색학점",
+                                      value=str(cur["진로탐색학점"]) if cur.get("진로탐색학점") is not None else "",
+                                      placeholder="예: 2")
+        with c3:
+            f_major_exp = st.text_input("전공탐색학점",
+                                        value=str(cur["전공탐색학점"]) if cur.get("전공탐색학점") is not None else "",
+                                        placeholder="예: 3")
+
+        f_second = st.text_area("제2전공방법",
+                                value=cur.get("제2전공방법", "") or "",
+                                height=60,
+                                placeholder="예: [방법1]복수·융합전공 30학점 / [방법2]마이크로전공 9학점")
+
+        st.markdown("#### 전공 이수학점 (해당없으면 빈칸)")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            f_double  = st.text_input("복수전공이수학점",
+                                      value=str(cur["복수전공이수학점"]) if cur.get("복수전공이수학점") is not None else "",
+                                      placeholder="예: 30")
+        with c2:
+            f_fusion  = st.text_input("융합전공이수학점",
+                                      value=str(cur["융합전공이수학점"]) if cur.get("융합전공이수학점") is not None else "",
+                                      placeholder="예: 30")
+        with c3:
+            f_micro   = st.text_input("마이크로전공이수학점",
+                                      value=str(cur["마이크로전공이수학점"]) if cur.get("마이크로전공이수학점") is not None else "",
+                                      placeholder="예: 9")
+        with c4:
+            f_minor   = st.text_input("부전공이수학점",
+                                      value=str(cur["부전공이수학점"]) if cur.get("부전공이수학점") is not None else "",
+                                      placeholder="예: 18")
+
+        submitted = st.form_submit_button("💾 졸업요건 저장", use_container_width=True, type="primary")
+
+    if submitted:
+        new_data: dict = {
+            "졸업학점":          f_grad,
+            "교양이수학점":      f_liberal,
+            "글로벌소통역량학점": f_global,
+            "취업커뮤니티요건":  f_community,
+            "졸업시험여부":      f_exam,
+        }
+        # 선택 항목 — 값 있을 때만 추가
+        if f_cert.strip():     new_data["졸업인증"]            = f_cert.strip()
+        if f_nomad.strip():    new_data["NOMAD비교과지수"]      = f_nomad.strip()
+        if f_second.strip():   new_data["제2전공방법"]          = f_second.strip()
+        v = _int_or_none(f_career);    new_data["진로탐색학점"]        = v  # None 허용
+        v = _int_or_none(f_major_exp); new_data["전공탐색학점"]        = v
+        v = _int_or_none(f_double);    new_data["복수전공이수학점"]    = v
+        v = _int_or_none(f_fusion);    new_data["융합전공이수학점"]    = v
+        v = _int_or_none(f_micro);     new_data["마이크로전공이수학점"] = v
+        v = _int_or_none(f_minor);     new_data["부전공이수학점"]      = v
+
+        graph.add_graduation_req(sel_group, sel_type, new_data)
+        graph.save()
+        _audit("SAVE_GRAD_REQ", f"group={sel_group}, type={sel_type}")
+        st.success(
+            f"저장 완료: **{_GRAD_GROUP_OPTIONS[sel_group]} / {sel_type}**  \n"
+            f"채팅에 반영하려면 [그래프 현황] 탭 → '채팅 세션 초기화' 버튼을 누르세요."
+        )
+        st.session_state.pop("admin_graph", None)
+        st.rerun()
 
 
 # ════════════════════════════════════════════════════
