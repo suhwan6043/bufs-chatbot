@@ -72,13 +72,52 @@ class ContextMerger:
         formatted = "\n\n".join(context_parts)
         token_estimate = int(len(formatted) * TOKENS_PER_CHAR)
 
+        # 공지사항 출처 URL 수집 (중복 제거)
+        source_urls = self._collect_source_urls(selected_vector + selected_graph)
+
         return MergedContext(
             vector_results=selected_vector,
             graph_results=selected_graph,
             formatted_context=formatted,
             total_tokens_estimate=token_estimate,
             direct_answer=direct_answer,
+            source_urls=source_urls,
         )
+
+    @staticmethod
+    def _collect_source_urls(results: list) -> list:
+        """
+        검색 결과에서 공지사항 출처 URL을 수집합니다.
+
+        doc_type 이 "notice" 또는 "notice_attachment" 인 결과만 대상으로 하며
+        동일 URL의 중복 항목은 제거합니다.
+
+        Returns:
+            [{"title": "공지 제목", "url": "https://..."}, ...]
+        """
+        _NOTICE_TYPES = {"notice", "notice_attachment"}
+        seen: set = set()
+        urls: list = []
+
+        for result in results:
+            meta = result.metadata or {}
+            doc_type = meta.get("doc_type", "")
+            url = meta.get("source_url", "")
+
+            if doc_type not in _NOTICE_TYPES:
+                continue
+            if not url or not url.startswith("http"):
+                continue
+            if url in seen:
+                continue
+
+            seen.add(url)
+            urls.append({
+                "title": meta.get("title", "") or url,
+                "url": url,
+            })
+
+        return urls
 
     @staticmethod
     def _format_result(result: SearchResult, text: str = None) -> str:

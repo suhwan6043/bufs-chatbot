@@ -80,6 +80,8 @@ class MergedContext:
     formatted_context: str = ""
     total_tokens_estimate: int = 0
     direct_answer: str = ""
+    source_urls: list = field(default_factory=list)
+    # source_urls 형식: [{"title": "공지 제목", "url": "https://..."}, ...]
 
 
 @dataclass

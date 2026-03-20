@@ -165,6 +165,57 @@ class ChromaStore:
             return conditions[0]
         return {"$and": conditions}
 
+    def delete_by_source(self, source_identifier: str) -> int:
+        """
+        source_file 또는 source_url 메타데이터가 일치하는 청크를 모두 삭제합니다.
+
+        PDF 경로(source_file)와 웹 URL(metadata.source_url) 두 가지를 모두 지원합니다.
+        Returns:
+            삭제된 청크 수
+        """
+        if not source_identifier:
+            return 0
+
+        matched_ids: list[str] = []
+
+        # 1차: source_file 필드로 검색 (PDF 청크)
+        try:
+            result = self.collection.get(
+                where={"source_file": {"$eq": source_identifier}},
+                include=[],
+            )
+            if result and result.get("ids"):
+                matched_ids.extend(result["ids"])
+        except Exception as e:
+            logger.warning("source_file 필터 검색 실패: %s", e)
+
+        # 2차: source_url 메타데이터로 검색 (웹 크롤링 청크)
+        if not matched_ids:
+            try:
+                result = self.collection.get(
+                    where={"source_url": {"$eq": source_identifier}},
+                    include=[],
+                )
+                if result and result.get("ids"):
+                    matched_ids.extend(result["ids"])
+            except Exception as e:
+                logger.warning("source_url 필터 검색 실패: %s", e)
+
+        if not matched_ids:
+            logger.info("삭제할 청크 없음: %s", source_identifier)
+            return 0
+
+        # 배치 삭제 (500개씩)
+        batch_size = 500
+        deleted = 0
+        for i in range(0, len(matched_ids), batch_size):
+            batch = matched_ids[i : i + batch_size]
+            self.collection.delete(ids=batch)
+            deleted += len(batch)
+
+        logger.info("ChromaDB에서 %d개 청크 삭제 완료: %s", deleted, source_identifier)
+        return deleted
+
     def count(self) -> int:
         """저장된 문서 수를 반환합니다."""
         return self.collection.count()

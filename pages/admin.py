@@ -15,6 +15,7 @@
 
 import hashlib
 import hmac
+import json
 import sys
 import time
 from collections import Counter
@@ -246,11 +247,14 @@ st.divider()
 # ════════════════════════════════════════════════════
 # 탭 구성
 # ════════════════════════════════════════════════════
-tab_grad, tab_early, tab_schedule, tab_status = st.tabs([
+tab_grad, tab_early, tab_schedule, tab_status, tab_crawler, tab_history, tab_contacts = st.tabs([
     "📋 졸업요건 관리",
     "🎓 조기졸업 관리",
     "📅 학사일정 관리",
     "📊 그래프 현황",
+    "🕷️ 크롤러 관리",
+    "📋 크롤 히스토리",
+    "📞 연락처 관리",
 ])
 
 
@@ -866,3 +870,279 @@ with tab_status:
         st.caption("아직 감사 로그가 없습니다.")
 
     st.caption(f"그래프 파일: `{settings.graph.graph_path}`")
+
+
+# ════════════════════════════════════════════════════
+# Tab 4 : 크롤러 관리
+# ════════════════════════════════════════════════════
+_CRAWL_META = Path(settings.graph.graph_path).parent.parent / "crawl_meta"
+_HASH_FILE  = _CRAWL_META / "content_hashes.json"
+_HIST_FILE  = _CRAWL_META / "crawl_history.jsonl"
+
+with tab_crawler:
+    st.subheader("크롤러 관리")
+
+    # ── 실시간 스케줄러 상태 ──────────────────────────
+    from app.scheduler import get_scheduler
+    _sched = get_scheduler()
+    _jobs  = _sched.get_jobs_info()
+
+    enabled  = settings.crawler.enabled
+    interval = settings.crawler.notice_interval_minutes
+    notice_count = len(json.loads(_HASH_FILE.read_text(encoding="utf-8"))) if _HASH_FILE.exists() else 0
+
+    # 다음 실행 시각 (실제 스케줄러에서 조회)
+    _next_run = "—"
+    for j in _jobs:
+        if j.get("id") == "notice_crawl":
+            _next_run = j.get("next_run", "—")
+            break
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric(
+        "스케줄러 상태",
+        "실행 중" if _sched.is_running() else ("대기" if enabled else "비활성"),
+        delta="자동 크롤링 ON" if _sched.is_running() else None,
+        delta_color="normal" if _sched.is_running() else "off",
+    )
+    m2.metric("크롤링 주기", f"{interval}분")
+    m3.metric("다음 실행 예정", _next_run if _next_run != "—" else "미설정")
+    m4.metric("추적 중인 공지", f"{notice_count}건")
+
+    if not enabled:
+        st.info(
+            "자동 크롤링이 비활성화되어 있습니다.  \n"
+            "`.env` 에 `CRAWLER_ENABLED=true` 를 설정하면 자동 실행됩니다.",
+            icon="ℹ️",
+        )
+
+    st.divider()
+
+    # ── 수동 즉시 실행 + 해시 초기화 ────────────────
+    st.markdown("**공지사항 즉시 수집**")
+    st.caption("BUFS 학사공지 게시판을 지금 바로 크롤링하여 변경된 내용을 ChromaDB에 반영합니다.")
+
+    btn_col1, btn_col2 = st.columns([2, 1])
+    with btn_col1:
+        if st.button("▶ 지금 크롤링 실행", type="primary", use_container_width=True):
+            _audit("CRAWL_TRIGGERED", "manual trigger from admin")
+            with st.spinner("크롤링 중... (약 30~60초 소요)"):
+                _sched.trigger_notice_now()
+            st.success("크롤링 완료.")
+            st.rerun()
+
+    with btn_col2:
+        if st.button("🔄 해시 초기화 (전체 재수집)", use_container_width=True,
+                     help="저장된 해시를 지워 다음 크롤링 시 모든 공지를 NEW로 처리합니다."):
+            if _HASH_FILE.exists():
+                _HASH_FILE.write_text("{}", encoding="utf-8")
+            _audit("HASH_RESET", "manual hash reset from admin")
+            st.success("해시 초기화 완료. 다음 크롤링 시 전체 재수집됩니다.")
+            st.rerun()
+
+    st.divider()
+
+    # ── 수집된 공지 목록 ──────────────────────────────
+    st.markdown("**현재 추적 중인 공지 목록**")
+
+    if _HASH_FILE.exists():
+        hashes: dict = json.loads(_HASH_FILE.read_text(encoding="utf-8"))
+        if hashes:
+            rows = []
+            for url, val in sorted(
+                hashes.items(),
+                key=lambda x: x[1].get("metadata", {}).get("post_date", ""),
+                reverse=True,
+            ):
+                meta = val.get("metadata", {})
+                rows.append({
+                    "제목":       val.get("title", ""),
+                    "게시일":     meta.get("post_date", ""),
+                    "학기":       meta.get("semester", ""),
+                    "최초 수집":  val.get("first_seen", "")[:10],
+                    "최근 확인":  val.get("last_seen",  "")[:10],
+                    "URL":        url,
+                })
+            st.dataframe(rows, use_container_width=True, hide_index=True)
+        else:
+            st.info("수집된 공지가 없습니다. '지금 크롤링 실행'을 눌러 수집하세요.")
+    else:
+        st.info("아직 크롤링을 실행한 적이 없습니다.")
+
+    st.divider()
+
+    # ── 첨부파일 다운로드 현황 ────────────────────────
+    st.markdown("**첨부파일 다운로드 현황**")
+
+    from app.config import DATA_DIR as _DATA_DIR
+    _attach_dirs = {
+        "PDF": _DATA_DIR / "pdfs" / "crawled",
+        "HWP": _DATA_DIR / "attachments" / "hwp",
+        "기타": _DATA_DIR / "attachments" / "other",
+    }
+
+    af1, af2, af3 = st.columns(3)
+    for col, (label, adir) in zip([af1, af2, af3], _attach_dirs.items()):
+        files = list(adir.glob("*")) if adir.exists() else []
+        files = [f for f in files if f.is_file()]
+        total_kb = sum(f.stat().st_size for f in files) // 1024
+        col.metric(f"{label} 파일", f"{len(files)}개", delta=f"{total_kb}KB")
+
+    # 파일 목록 expander
+    all_files = []
+    for label, adir in _attach_dirs.items():
+        if adir.exists():
+            for f in sorted(adir.glob("*"), key=lambda x: x.stat().st_mtime, reverse=True):
+                if f.is_file():
+                    all_files.append({
+                        "종류": label,
+                        "파일명": f.name,
+                        "크기(KB)": round(f.stat().st_size / 1024, 1),
+                        "다운로드": f.stat().st_mtime,
+                    })
+
+    if all_files:
+        with st.expander(f"첨부파일 목록 ({len(all_files)}개)", expanded=False):
+            for f in all_files:
+                f["다운로드"] = datetime.fromtimestamp(f["다운로드"]).strftime("%Y-%m-%d %H:%M")
+            st.dataframe(all_files, use_container_width=True, hide_index=True)
+    else:
+        st.caption("다운로드된 첨부파일이 없습니다.")
+
+
+# ════════════════════════════════════════════════════
+# Tab 5 : 크롤 히스토리
+# ════════════════════════════════════════════════════
+with tab_history:
+    st.subheader("크롤 히스토리")
+
+    if _HIST_FILE.exists():
+        raw_lines = _HIST_FILE.read_text(encoding="utf-8").strip().splitlines()
+        if raw_lines:
+            records = [json.loads(l) for l in raw_lines if l.strip()]
+            records.reverse()  # 최신순
+
+            # ── 요약 지표 ──────────────────────────────
+            last = records[0]
+            h1, h2, h3, h4 = st.columns(4)
+            h1.metric("총 실행 횟수", len(records))
+            h2.metric("마지막 실행", last.get("timestamp", "")[:16])
+            h3.metric("마지막 추가", f"{last.get('added', 0) + last.get('updated', 0)}건")
+            h4.metric("마지막 오류", f"{len(last.get('errors', []))}건",
+                      delta_color="inverse" if last.get("errors") else "off")
+
+            st.divider()
+
+            # ── 이력 테이블 ────────────────────────────
+            st.markdown("**실행 이력 (최신순)**")
+            rows = []
+            for r in records[:20]:
+                err_count = len(r.get("errors", []))
+                rows.append({
+                    "시각":   r.get("timestamp", "")[:16],
+                    "잡ID":   r.get("job_id", ""),
+                    "추가":   r.get("added", 0),
+                    "수정":   r.get("updated", 0),
+                    "삭제":   r.get("deleted", 0),
+                    "건너뜀": r.get("skipped", 0),
+                    "오류":   err_count,
+                    "소요(초)": round(r.get("duration_ms", 0) / 1000, 1),
+                })
+            st.dataframe(rows, use_container_width=True, hide_index=True)
+
+            # ── 오류 상세 ──────────────────────────────
+            error_records = [r for r in records[:10] if r.get("errors")]
+            if error_records:
+                st.divider()
+                with st.expander(f"⚠️ 최근 오류 상세 ({len(error_records)}건)", expanded=False):
+                    for r in error_records:
+                        st.markdown(f"**{r.get('timestamp', '')[:16]}**")
+                        for e in r.get("errors", []):
+                            st.caption(f"- {e[:120]}")
+        else:
+            st.info("크롤 히스토리가 없습니다.")
+    else:
+        st.info("아직 크롤링을 실행한 적이 없습니다.")
+
+# ════════════════════════════════════════════════════
+with tab_contacts:
+    st.subheader("학과/부서 연락처 관리")
+
+    _CONTACTS_FILE = Path(__file__).resolve().parent.parent / "data" / "contacts" / "departments.json"
+
+    try:
+        from app.contacts import get_dept_searcher
+        searcher = get_dept_searcher()
+        flat = searcher._flat
+
+        st.info(f"총 **{len(flat)}개** 학과/부서 항목이 로드되어 있습니다.")
+
+        # ── 연락처 검색 테스트 ──────────────────────────
+        st.divider()
+        st.markdown("**🔍 연락처 검색 테스트**")
+        test_q = st.text_input("질문 입력 (예: 영어학부 전화번호)", key="contact_test_q")
+        if test_q:
+            results = searcher.search(test_q, top_k=5)
+            is_c = searcher.is_contact_query(test_q)
+            st.write(f"연락처 쿼리 감지: **{'✅ YES' if is_c else '❌ NO'}**")
+            if results:
+                rows = [
+                    {
+                        "부서명": r.name,
+                        "단과대학": r.college or "-",
+                        "내선번호": r.extension,
+                        "전화번호": r.phone,
+                        "사무실": r.office or "-",
+                        "매칭유형": r.match_type,
+                    }
+                    for r in results
+                ]
+                st.dataframe(rows, use_container_width=True, hide_index=True)
+            else:
+                st.warning("매칭 결과 없음")
+
+        # ── 전체 연락처 목록 ────────────────────────────
+        st.divider()
+        with st.expander(f"📋 전체 연락처 목록 ({len(flat)}개)", expanded=False):
+            rows_all = [
+                {
+                    "부서명": e["name"],
+                    "단과대학": e.get("college") or "-",
+                    "내선번호": e["extension"],
+                    "전화번호": e["phone"],
+                    "사무실": e.get("office") or "-",
+                }
+                for e in flat
+            ]
+            st.dataframe(rows_all, use_container_width=True, hide_index=True)
+
+        # ── JSON 편집 ────────────────────────────────────
+        st.divider()
+        st.markdown("**✏️ departments.json 직접 편집**")
+        if _CONTACTS_FILE.exists():
+            current_json = _CONTACTS_FILE.read_text(encoding="utf-8")
+            edited_json = st.text_area(
+                "departments.json 내용",
+                value=current_json,
+                height=400,
+                key="contacts_json_editor",
+            )
+            if st.button("💾 저장", key="save_contacts_json"):
+                try:
+                    # JSON 유효성 검사
+                    json.loads(edited_json)
+                    _CONTACTS_FILE.write_text(edited_json, encoding="utf-8")
+                    # 싱글턴 리셋 (다음 호출 시 재로드)
+                    import app.contacts.dept_search as _ds
+                    _ds._searcher = None
+                    st.success("✅ departments.json 저장 완료. 다음 검색 시 자동 반영됩니다.")
+                    st.rerun()
+                except json.JSONDecodeError as e:
+                    st.error(f"JSON 형식 오류: {e}")
+                except Exception as e:
+                    st.error(f"저장 실패: {e}")
+        else:
+            st.error(f"파일을 찾을 수 없습니다: {_CONTACTS_FILE}")
+
+    except Exception as e:
+        st.error(f"연락처 모듈 로드 실패: {e}")

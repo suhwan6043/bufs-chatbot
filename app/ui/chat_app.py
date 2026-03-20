@@ -12,8 +12,7 @@ import streamlit as st
 
 from app.config import settings
 from app.logging import ChatLogger
-from app.embedding import Embedder
-from app.vectordb import ChromaStore
+from app.shared_resources import get_embedder, get_chroma_store
 from app.graphdb import AcademicGraph
 from app.pipeline import (
     QueryAnalyzer,
@@ -22,6 +21,8 @@ from app.pipeline import (
     AnswerGenerator,
     ResponseValidator,
 )
+from app.scheduler import get_scheduler
+from app.contacts import get_dept_searcher
 
 logger = logging.getLogger(__name__)
 
@@ -610,8 +611,7 @@ def render_right_panel():
 def init_components():
     if "initialized" not in st.session_state:
         with st.spinner("시스템 초기화 중..."):
-            embedder    = Embedder()
-            chroma_store = ChromaStore(embedder=embedder)
+            chroma_store   = get_chroma_store()   # 공유 싱글톤 (스케줄러와 동일 인스턴스)
             academic_graph = AcademicGraph()
 
             st.session_state.analyzer  = QueryAnalyzer()
@@ -627,6 +627,50 @@ def init_components():
             st.session_state.session_id  = uuid.uuid4().hex[:12]
             st.session_state.messages    = []
             st.session_state.initialized = True
+
+
+def _format_contact_answer(question: str) -> str:
+    """
+    연락처 쿼리를 감지하면 DeptSearcher로 전화번호를 조회하여
+    LLM 없이 즉시 답변을 생성합니다.
+
+    매칭되는 학과/부서가 없으면 빈 문자열 반환 → 일반 RAG 파이프라인으로 fallback.
+    """
+    searcher = get_dept_searcher()
+    if not searcher.is_contact_query(question):
+        return ""
+
+    results = searcher.search(question, top_k=3)
+    if not results:
+        return ""
+
+    lines = ["📞 **연락처 안내**\n"]
+    for r in results:
+        college_info = f" ({r.college})" if r.college else ""
+        office_info = f", {r.office}" if r.office else ""
+        lines.append(
+            f"- **{r.name}**{college_info}: "
+            f"`내선 {r.extension}` / {r.phone}{office_info}"
+        )
+
+    lines.append("\n> 운영시간: 평일 09:00 ~ 18:00 (점심 12:00 ~ 13:00 제외)")
+    return "\n".join(lines)
+
+
+def _render_source_urls(source_urls: list) -> None:
+    """
+    답변 아래에 관련 공지사항 출처 링크를 표시합니다.
+
+    공지 doc_type 청크가 컨텍스트에 포함된 경우에만 호출됩니다.
+    """
+    lines = []
+    for item in source_urls:
+        title = item.get("title", "공지 원문")
+        url   = item.get("url", "")
+        if url:
+            lines.append(f"- [{title}]({url})")
+    if lines:
+        st.caption("📌 **관련 공지**\n" + "\n".join(lines))
 
 
 async def generate_response(question: str) -> str:
@@ -679,6 +723,23 @@ async def generate_response_stream(question: str, placeholder) -> str:
     placeholder.markdown(THINKING_HTML, unsafe_allow_html=True)
     _t0 = time.monotonic()
 
+    # ── 연락처 쿼리 단락 처리 (LLM 없이 즉시 응답) ───────────────
+    contact_answer = _format_contact_answer(question)
+    if contact_answer:
+        placeholder.markdown(contact_answer)
+        try:
+            st.session_state.chat_logger.log(
+                question=question,
+                answer=contact_answer,
+                session_id=st.session_state.get("session_id", ""),
+                intent="CONTACT",
+                student_id=None,
+                duration_ms=int((time.monotonic() - _t0) * 1000),
+            )
+        except Exception:
+            pass
+        return contact_answer, []
+
     analyzer  = st.session_state.analyzer
     router    = st.session_state.router
     merger    = st.session_state.merger
@@ -715,12 +776,12 @@ async def generate_response_stream(question: str, placeholder) -> str:
         )
         placeholder.markdown(msg)
         _log(msg)
-        return msg
+        return msg, []
 
     if merged.direct_answer:
         placeholder.markdown(merged.direct_answer)
         _log(merged.direct_answer)
-        return merged.direct_answer
+        return merged.direct_answer, merged.source_urls
 
     full_answer = ""
     async for token in generator.generate(
@@ -746,7 +807,7 @@ async def generate_response_stream(question: str, placeholder) -> str:
         placeholder.markdown(full_answer)
 
     _log(full_answer)
-    return full_answer
+    return full_answer, merged.source_urls
 
 
 # ── Main ───────────────────────────────────────────
@@ -756,6 +817,9 @@ def main():
         page_icon="🎓",
         layout="wide",
     )
+
+    # 크롤링 스케줄러 싱글톤 시작 (CRAWLER_ENABLED=false면 no-op)
+    get_scheduler()
 
     inject_custom_css()
 
@@ -796,7 +860,11 @@ def main():
                 st.markdown(prompt)
             with st.chat_message("assistant", avatar="🎓"):
                 placeholder = st.empty()
-                answer = asyncio.run(generate_response_stream(prompt, placeholder))
+                answer, source_urls = asyncio.run(
+                    generate_response_stream(prompt, placeholder)
+                )
+                if source_urls:
+                    _render_source_urls(source_urls)
                 messages.append(
                     {"role": "assistant", "content": answer, "rated": False}
                 )

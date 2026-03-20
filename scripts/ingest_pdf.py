@@ -17,11 +17,9 @@ PDF → 추출 → 청킹 → 임베딩 → ChromaDB 저장까지 한 번에 처
 """
 
 import sys
-import re
 import json
 import argparse
 import logging
-import hashlib
 from datetime import datetime
 from dataclasses import asdict
 from pathlib import Path
@@ -36,60 +34,21 @@ from app.pdf.digital_extractor import DigitalPDFExtractor
 from app.pdf import timetable_parser
 from app.embedding import Embedder
 from app.vectordb import ChromaStore
+from app.ingestion.chunking import (
+    detect_cohort,
+    sliding_window as _sliding_window_fn,
+    force_split as _force_split_fn,
+    make_chunk_id as _make_id_fn,
+    CHUNK_SIZE,
+    CHUNK_OVERLAP,
+    MIN_CHUNK_LEN,
+)
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 logger = logging.getLogger(__name__)
-
-
-# ── 청킹 설정 ──────────────────────────────────────────────
-CHUNK_SIZE = 500       # 청크당 최대 글자 수 (한국어 기준 ~250 토큰)
-CHUNK_OVERLAP = 80     # 청크 간 겹침 글자 수 (문맥 연속성)
-MIN_CHUNK_LEN = 50     # 이 이하 청크는 버림
-
-# ── 학번 범위 감지 ──────────────────────────────────────────
-_COHORT_MIN = 2016  # 지원하는 학번 최솟값
-_COHORT_MAX = 2030  # 공통 콘텐츠 상한 (미래 학번 포함)
-
-
-def detect_cohort(text: str) -> Tuple[int, int]:
-    """
-    청크 텍스트에서 적용 학번 범위를 감지합니다.
-
-    매칭 우선순위:
-      1. 범위 패턴   "2021~2023학번", "2021·2023학번"
-      2. 방향 패턴   "2024학번 이후/부터", "2023학번 이전/까지"
-      3. 복수 단일   "2023학번 … 2024학번" → (2023, 2024)
-      4. 단일        "2024학번" → (2024, 2024)
-      5. 미감지      공통 콘텐츠로 간주 → (2016, 2030)
-
-    Returns:
-        (cohort_from, cohort_to) 정수 튜플
-    """
-    # 1. 범위 패턴
-    m = re.search(r'(20\d{2})[~·](20\d{2})학번', text)
-    if m:
-        return (int(m.group(1)), int(m.group(2)))
-
-    # 2. 방향 패턴 (이후/부터)
-    m = re.search(r'(20\d{2})학번\s*(?:이후|부터)', text)
-    if m:
-        return (int(m.group(1)), _COHORT_MAX)
-
-    # 2. 방향 패턴 (이전/까지)
-    m = re.search(r'(20\d{2})학번\s*(?:이전|까지)', text)
-    if m:
-        return (_COHORT_MIN, int(m.group(1)))
-
-    # 3·4. 단일 학번 열거 (201x ~ 202x 범위만 유효)
-    years = sorted({int(y) for y in re.findall(r'(201[6-9]|202[0-9])학번', text)})
-    if years:
-        return (years[0], years[-1])
-
-    # 5. 공통 콘텐츠
-    return (_COHORT_MIN, _COHORT_MAX)
 
 
 def make_chunks(
@@ -176,56 +135,18 @@ def make_chunks(
 
 
 def _sliding_window(text: str) -> List[str]:
-    """
-    텍스트를 CHUNK_SIZE 글자씩, CHUNK_OVERLAP 겹침으로 분할합니다.
-    줄바꿈 기준으로 문단 경계를 최대한 보존합니다.
-    """
-    # 빈 줄 기준으로 문단 분리
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-
-    chunks = []
-    current = ""
-
-    for para in paragraphs:
-        # 현재 청크에 문단을 추가해도 CHUNK_SIZE 이내이면 합침
-        candidate = (current + "\n\n" + para).strip() if current else para
-        if len(candidate) <= CHUNK_SIZE:
-            current = candidate
-        else:
-            # 현재 청크 저장
-            if current:
-                chunks.append(current)
-            # 문단 자체가 CHUNK_SIZE보다 크면 강제 분할
-            if len(para) > CHUNK_SIZE:
-                sub_chunks = _force_split(para)
-                chunks.extend(sub_chunks[:-1])
-                current = sub_chunks[-1] if sub_chunks else ""
-            else:
-                # overlap: 이전 청크 끝 CHUNK_OVERLAP 글자를 가져옴
-                overlap_text = chunks[-1][-CHUNK_OVERLAP:] if chunks else ""
-                current = (overlap_text + "\n\n" + para).strip() if overlap_text else para
-
-    if current:
-        chunks.append(current)
-
-    return chunks
+    """app/ingestion/chunking.py의 sliding_window()를 호출합니다."""
+    return _sliding_window_fn(text)
 
 
 def _force_split(text: str) -> List[str]:
-    """CHUNK_SIZE보다 큰 텍스트를 강제 분할합니다."""
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = start + CHUNK_SIZE
-        chunks.append(text[start:end])
-        start = end - CHUNK_OVERLAP  # overlap 적용
-    return [c for c in chunks if c.strip()]
+    """app/ingestion/chunking.py의 force_split()을 호출합니다."""
+    return _force_split_fn(text)
 
 
 def _make_id(source_file: str, page_num: int, suffix: str, text: str) -> str:
-    """중복 방지용 청크 ID를 생성합니다."""
-    content = f"{source_file}:{page_num}:{suffix}:{text[:50]}"
-    return hashlib.md5(content.encode()).hexdigest()
+    """app/ingestion/chunking.py의 make_chunk_id()를 호출합니다."""
+    return _make_id_fn(source_file, page_num, suffix, text)
 
 
 def _save_json(

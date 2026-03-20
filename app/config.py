@@ -80,6 +80,24 @@ class AppConfig:
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
 
 
+@dataclass
+class CrawlerConfig:
+    # 크롤러 활성화 여부 (기본: 비활성 — .env에서 명시적으로 켜야 함)
+    enabled: bool = os.getenv("CRAWLER_ENABLED", "false").lower() == "true"
+    # 공지사항 크롤링 주기 (분)
+    notice_interval_minutes: int = int(os.getenv("CRAWLER_NOTICE_INTERVAL", "30"))
+    # 학사안내 PDF 체크 시각 (시, 0~23)
+    guide_cron_hour: int = int(os.getenv("CRAWLER_GUIDE_HOUR", "2"))
+    # 수업시간표 PDF 체크 시각 (시, 0~23)
+    timetable_cron_hour: int = int(os.getenv("CRAWLER_TIMETABLE_HOUR", "3"))
+    # HTTP 요청 타임아웃 (초)
+    request_timeout: int = int(os.getenv("CRAWLER_TIMEOUT", "30"))
+    # 게시판 목록 최대 순회 페이지 수
+    max_pages_per_board: int = int(os.getenv("CRAWLER_MAX_PAGES", "5"))
+    # 크롤러 User-Agent
+    user_agent: str = os.getenv("CRAWLER_USER_AGENT", "BUFS-CamChat-Bot/1.0")
+
+
 _ADMIN_PW_DEFAULT = "bufs_admin_2025"   # 절대 프로덕션에서 사용 금지
 
 
@@ -111,6 +129,7 @@ class Settings:
     pdf: PDFConfig = field(default_factory=PDFConfig)
     app: AppConfig = field(default_factory=AppConfig)
     admin: AdminConfig = field(default_factory=AdminConfig)
+    crawler: CrawlerConfig = field(default_factory=CrawlerConfig)
 
 
 settings = Settings()

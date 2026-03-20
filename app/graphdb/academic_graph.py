@@ -644,6 +644,16 @@ class AcademicGraph:
         # 전공 엔티티 추출 (학과별 졸업요건 우선 조회)
         department = entities.get("department")
 
+        # ── 학과별 졸업시험 요건 탐색 ──────────────────────────────────
+        # "졸업시험", "졸업요건", "졸업논문" 등 키워드 + 학과명이 함께 있을 때 우선 반환
+        _EXAM_KW = ("졸업시험", "졸업요건", "졸업논문", "자격증", "대체", "면제", "합격")
+        dept_kw = department or ""
+        if dept_kw or any(kw in question for kw in _EXAM_KW):
+            dept_results = self._query_dept_grad_exam(question, dept_kw)
+            if dept_results:
+                results = dept_results + results   # 학과 졸업시험을 앞에 배치
+                return results
+
         # 요청 학생유형 우선, 없으면 내국인 (중복 방지)
         seen_types: set = set()
         for stype in (student_type, "내국인", "외국인", "편입생"):
@@ -660,6 +670,42 @@ class AcademicGraph:
         for m in self.get_major_methods(student_id):
             text = self._fmt_major_method(m)
             results.append(SearchResult(text=text, score=0.95, source="graph"))
+        return results
+
+    def _query_dept_grad_exam(self, question: str, dept_hint: str = "") -> List[SearchResult]:
+        """
+        질문 또는 dept_hint와 매칭되는 학과의 졸업시험 요건을 반환합니다.
+        """
+        results: List[SearchResult] = []
+        q_norm = re.sub(r"[\s\-\.,:()\[\]/~·]", "", question or "").lower()
+
+        for nid, data in self.G.nodes(data=True):
+            if data.get("type") != "학과전공":
+                continue
+            if not data.get("졸업시험_요건"):
+                continue
+
+            dept_name = data.get("전공명", nid.replace("dept_", ""))
+            name_norm = re.sub(r"[\s\-\.,:()\[\]/~·]", "", dept_name).lower()
+
+            # 매칭: dept_hint 또는 질문 안에 학과명 포함
+            matched = False
+            if dept_hint and dept_hint in dept_name:
+                matched = True
+            elif name_norm and name_norm in q_norm:
+                matched = True
+            elif dept_name and dept_name in question:
+                matched = True
+
+            if matched:
+                text = self._fmt_department(data)
+                results.append(SearchResult(
+                    text=text,
+                    score=1.1,
+                    source="graph",
+                    metadata={"dept_name": dept_name},
+                ))
+
         return results
 
     def _query_registration(
@@ -1170,6 +1216,15 @@ class AcademicGraph:
         for key in ("단과대학", "전공유형", "제1전공_이수학점", "전화번호", "사무실위치"):
             if key in data:
                 lines.append(f"- {key}: {data[key]}")
+        # 학과별 졸업시험 요건 출력
+        if data.get("졸업시험_요건"):
+            lines.append(f"- 졸업시험·요건: {data['졸업시험_요건']}")
+        if data.get("졸업시험_과목"):
+            lines.append(f"- 졸업시험 과목: {data['졸업시험_과목']}")
+        if data.get("졸업시험_합격기준"):
+            lines.append(f"- 합격기준: {data['졸업시험_합격기준']}")
+        if data.get("졸업시험_대체방법"):
+            lines.append(f"- 대체방법: {data['졸업시험_대체방법']}")
         return "\n".join(lines)
 
     @staticmethod

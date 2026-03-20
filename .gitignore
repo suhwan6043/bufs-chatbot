@@ -53,3 +53,15 @@ eval_results_*.json
 
 # Pytest
 .pytest_cache/
+
+# Temp / analysis files
+cells_out.txt
+section_headers.txt
+*.jpg
+*.msi
+
+# Crawled / generated data
+data/attachments/
+data/crawl_meta/
+data/extracted/
+data/pdfs/crawled/

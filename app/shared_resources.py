@@ -1,0 +1,64 @@
+"""
+프로세스 전역 공유 리소스 싱글톤
+
+목적:
+  Streamlit 메인 스레드(chat_app.py)와 APScheduler 백그라운드 스레드(crawl_scheduler.py)가
+  ChromaStore / Embedder를 동일한 인스턴스로 공유합니다.
+
+문제:
+  각 스레드가 별도의 ChromaStore 인스턴스를 만들면 같은 data/chromadb/ 디렉토리에
+  동시에 접근하게 되어 HNSW lock 충돌이 발생합니다.
+    RuntimeError: Could not add to HNSW index
+
+해결:
+  Embedder와 ChromaStore 각각 별도 락 사용 (공유 락 사용 시 데드락 발생).
+  get_chroma_store() 가 get_embedder() 를 내부 호출하므로 락이 달라야 합니다.
+"""
+
+import logging
+import threading
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.embedding import Embedder
+    from app.vectordb import ChromaStore
+
+logger = logging.getLogger(__name__)
+
+_embedder_lock = threading.Lock()
+_chroma_lock = threading.Lock()
+_embedder = None
+_chroma_store = None
+
+
+def get_embedder() -> "Embedder":
+    """프로세스 전역 Embedder 싱글톤을 반환합니다."""
+    global _embedder
+    if _embedder is None:
+        with _embedder_lock:
+            if _embedder is None:
+                logger.info("[shared] Embedder 초기화 중...")
+                from app.embedding import Embedder
+                _embedder = Embedder()
+                logger.info("[shared] Embedder 초기화 완료")
+    return _embedder
+
+
+def get_chroma_store() -> "ChromaStore":
+    """
+    프로세스 전역 ChromaStore 싱글톤을 반환합니다.
+
+    주의: _chroma_lock 바깥에서 get_embedder()를 먼저 호출합니다.
+    이렇게 해야 get_chroma_store() → get_embedder() 호출 시
+    두 함수가 서로 다른 락을 사용하여 데드락이 발생하지 않습니다.
+    """
+    global _chroma_store
+    if _chroma_store is None:
+        embedder = get_embedder()          # _chroma_lock 밖에서 먼저 확보
+        with _chroma_lock:
+            if _chroma_store is None:      # double-check
+                logger.info("[shared] ChromaStore 초기화 중...")
+                from app.vectordb import ChromaStore
+                _chroma_store = ChromaStore(embedder=embedder)
+                logger.info("[shared] ChromaStore 초기화 완료")
+    return _chroma_store
