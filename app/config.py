@@ -46,8 +46,8 @@ class RerankerConfig:
     model_name: str = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
     device: str = os.getenv("RERANKER_DEVICE", "cpu")
     enabled: bool = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
-    top_k: int = int(os.getenv("RERANKER_TOP_K", "5"))
-    candidate_k: int = int(os.getenv("RERANKER_CANDIDATE_K", "15"))
+    top_k: int = int(os.getenv("RERANKER_TOP_K", "7"))
+    candidate_k: int = int(os.getenv("RERANKER_CANDIDATE_K", "20"))
 
 
 @dataclass

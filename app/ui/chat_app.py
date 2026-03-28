@@ -45,6 +45,22 @@ PORTAL_LINKS = [
     {"icon": "📅", "label": "학사일정 달력",     "url": "https://m.bufs.ac.kr/popup/Haksa_Iljeong.aspx?gbn="},
 ]
 
+# 학과 목록 (QueryAnalyzer.DEPARTMENT_KEYWORDS 기반)
+DEPARTMENTS = [
+    "컴퓨터공학", "소프트웨어", "빅데이터", "인공지능",
+    "스마트융합보안", "스마트에너지",
+    "영어", "일본어", "중국어", "한국어",
+    "독일어", "프랑스어", "스페인어", "러시아어",
+    "베트남어", "태국어", "미얀마어", "아랍",
+    "인도네시아", "인도어", "터키어", "이탈리아어",
+    "경영", "경제", "금융", "회계", "무역", "마케팅",
+    "관광", "호텔", "항공서비스",
+    "외교", "행정",
+    "사회복지", "상담심리", "사이버경찰",
+    "영상콘텐츠", "체육", "스포츠",
+    "국제개발협력", "글로벌창업", "비서",
+]
+
 # ── Loading animation (답변 생성 중 표시) ───────────
 THINKING_HTML = """
 <style>
@@ -493,6 +509,100 @@ def inject_custom_css():
     )
 
 
+# ── Onboarding ─────────────────────────────────────
+def render_onboarding() -> None:
+    """최초 접속 시 표시하는 사용자 프로필 설정 화면."""
+    _, center, _ = st.columns([1, 2, 1])
+    with center:
+        st.markdown(
+            '<div style="text-align:center;padding:2.5rem 0 1.2rem;">'
+            '<div style="font-size:2.8rem;">🎓</div>'
+            '<div style="font-size:1.25rem;font-weight:700;color:#1e3a5f;margin:0.5rem 0 0.3rem;">'
+            '캠챗에 오신 것을 환영합니다</div>'
+            '<div style="font-size:0.84rem;color:#64748b;line-height:1.6;">'
+            '맞춤 학사 안내를 위해 기본 정보를 입력해주세요.<br>'
+            '입력한 정보는 질문에 자동으로 반영됩니다.</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        with st.form("onboarding_form", border=True):
+            year = st.selectbox(
+                "📅 입학연도",
+                options=list(range(2026, 2015, -1)),
+                format_func=lambda y: f"{y}학번",
+                index=3,  # 기본값: 2023학번
+            )
+            dept = st.selectbox(
+                "🏫 학과 / 전공",
+                options=["선택 안 함"] + sorted(DEPARTMENTS),
+            )
+            stype = st.radio(
+                "👤 학생 유형",
+                options=["내국인", "외국인", "편입생"],
+                horizontal=True,
+            )
+
+            c_start, c_skip = st.columns([3, 2])
+            with c_start:
+                submitted = st.form_submit_button(
+                    "시작하기", use_container_width=True, type="primary"
+                )
+            with c_skip:
+                skipped = st.form_submit_button(
+                    "나중에 설정", use_container_width=True
+                )
+
+        if submitted:
+            st.session_state.user_profile = {
+                "student_id": str(year),
+                "department": dept if dept != "선택 안 함" else "",
+                "student_type": stype,
+            }
+            st.rerun()
+        if skipped:
+            # 빈 dict: 온보딩 건너뜀, 프로필 미설정 상태
+            st.session_state.user_profile = {}
+            st.rerun()
+
+
+# ── Profile sidebar card ────────────────────────────
+def _render_profile_sidebar() -> None:
+    """사이드바 내 현재 사용자 프로필 표시 + 수정 버튼."""
+    profile = st.session_state.get("user_profile") or {}
+
+    st.markdown(
+        '<p style="font-size:0.7rem;font-weight:700;color:#94a3b8;'
+        'text-transform:uppercase;letter-spacing:0.5px;margin:0.2rem 0 0.4rem;">내 정보</p>',
+        unsafe_allow_html=True,
+    )
+
+    if profile.get("student_id"):
+        dept_txt  = profile.get("department") or "학과 미설정"
+        stype_txt = profile.get("student_type", "내국인")
+        st.markdown(
+            f'<div style="padding:0.5rem 0.65rem;border-radius:7px;'
+            f'background:#eef2ff;border:1px solid #c7d2fe;margin-bottom:0.3rem;">'
+            f'<span style="font-size:0.85rem;font-weight:700;color:#3730a3;">'
+            f'{profile["student_id"]}학번</span>'
+            f'<span style="font-size:0.77rem;color:#4f46e5;margin-left:0.45rem;">'
+            f'{dept_txt}</span>'
+            f'<span style="font-size:0.73rem;color:#818cf8;margin-left:0.3rem;">· {stype_txt}</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div style="font-size:0.79rem;color:#94a3b8;padding:0.2rem 0 0.3rem;">'
+            '정보 미설정</div>',
+            unsafe_allow_html=True,
+        )
+
+    if st.button("✏️  정보 수정", key="edit_profile_btn", use_container_width=True):
+        st.session_state.user_profile = None  # 온보딩으로 복귀
+        st.rerun()
+
+
 # ── Sidebar ────────────────────────────────────────
 def render_sidebar() -> bool:
     with st.sidebar:
@@ -524,6 +634,11 @@ def render_sidebar() -> bool:
         except Exception:
             st.error("서비스를 준비 중입니다. 잠시 후 다시 시도해주세요.")
             return False
+
+        # ── 내 정보 ────────────────────────────────
+        _render_profile_sidebar()
+
+        st.divider()
 
         # ── 빠른 기능 ──────────────────────────────
         st.markdown(
@@ -677,6 +792,22 @@ def _render_rating(msg_idx: int, msg: dict) -> None:
                 st.rerun()
 
 
+# ── Feedback save helper ────────────────────────────
+def _save_feedback(text: str) -> None:
+    """사용자 자유 피드백을 data/feedback/feedback.jsonl 에 저장합니다."""
+    import json
+    from datetime import datetime
+    feedback_dir = Path(__file__).resolve().parent.parent.parent / "data" / "feedback"
+    feedback_dir.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "text": text,
+        "timestamp": datetime.now().isoformat(),
+        "session_id": st.session_state.get("session_id", ""),
+    }
+    with open(feedback_dir / "feedback.jsonl", "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
 # ── Right panel ────────────────────────────────────
 def render_right_panel():
     # 모바일에서 이 컬럼 전체를 숨기기 위한 마커 (CSS :has(#rp-marker) 대상)
@@ -702,6 +833,24 @@ def render_right_panel():
         '</div>',
         unsafe_allow_html=True,
     )
+
+    st.markdown(
+        '<div style="margin-top:1.2rem;" class="rp-section">피드백</div>',
+        unsafe_allow_html=True,
+    )
+    with st.form("feedback_form", clear_on_submit=True, border=False):
+        fb_text = st.text_area(
+            "의견",
+            placeholder="불편한 점, 개선 제안, 칭찬 등 자유롭게 작성해 주세요.",
+            height=110,
+            label_visibility="collapsed",
+        )
+        if st.form_submit_button("전송", use_container_width=True):
+            if fb_text.strip():
+                _save_feedback(fb_text.strip())
+                st.success("피드백이 전송됐습니다. 감사합니다!")
+            else:
+                st.warning("내용을 입력해 주세요.")
 
 
 # ── Pipeline (UNCHANGED) ───────────────────────────
@@ -754,16 +903,50 @@ def _format_contact_answer(question: str) -> str:
     return "\n".join(lines)
 
 
+def _get_contact_footer(intent, entities: dict, question: str) -> str:
+    """
+    답변 마지막에 붙일 연락처 꼬리말을 반환합니다.
+    - 학과별 졸업시험/과 행사 질문 → 해당 학과 사무실 번호
+    - 학사 일반 질문 → 학사지원팀 (051-509-5181)
+    """
+    from app.models import Intent
+
+    # 학과별 졸업시험 / 과 행사 → 해당 학과 사무실
+    _DEPT_KW = ("졸업시험", "과 행사", "학과 행사", "과행사", "학과행사")
+    if any(kw in question for kw in _DEPT_KW):
+        dept = entities.get("department", "")
+        if dept:
+            results = get_dept_searcher().search(dept, top_k=1)
+            if results:
+                r = results[0]
+                return f"\n\n---\n📞 **{r.name}** 문의: `{r.phone}`"
+
+    # 학사 일반 질문 → 학사지원팀
+    _ACADEMIC = {
+        Intent.GRADUATION_REQ, Intent.EARLY_GRADUATION,
+        Intent.REGISTRATION, Intent.SCHEDULE,
+        Intent.COURSE_INFO, Intent.MAJOR_CHANGE,
+        Intent.ALTERNATIVE,
+    }
+    if intent in _ACADEMIC:
+        return "\n\n---\n📞 학사 문의: **학사지원팀** `051-509-5181`"
+
+    return ""
+
+
 @st.cache_data(show_spinner=False)
 def _render_pdf_page(source_file: str, page_num: int, chunk_text: str) -> bytes | None:
     """PDF 지정 페이지를 렌더링하고 chunk_text 위치를 노란색 하이라이트합니다."""
     try:
         import fitz  # PyMuPDF
 
+        # 경로 resolve: __file__을 절대경로로 확정한 뒤 project root 산출
         path = Path(source_file)
         if not path.is_absolute():
-            path = Path(__file__).parent.parent.parent / source_file
+            project_root = Path(__file__).resolve().parent.parent.parent
+            path = (project_root / source_file).resolve()
         if not path.exists():
+            logger.warning("PDF 파일 없음: %s", path)
             return None
 
         doc = fitz.open(str(path))
@@ -772,21 +955,24 @@ def _render_pdf_page(source_file: str, page_num: int, chunk_text: str) -> bytes 
             return None
         page = doc[page_idx]
 
-        # 청크 텍스트에서 6단어 창으로 검색하여 하이라이트
-        words = chunk_text.split()
-        step = 6
-        for i in range(0, len(words), step):
-            fragment = " ".join(words[i:i + step])
-            if len(fragment) < 10:
-                continue
-            for rect in page.search_for(fragment):
-                highlight = page.add_highlight_annot(rect)
-                highlight.set_colors(stroke=(1, 0.9, 0))  # 노란색
-                highlight.update()
+        # ── 하이라이트 (실패해도 페이지 렌더링은 계속) ────────────
+        try:
+            words = chunk_text.split()
+            for i in range(0, len(words), 6):
+                fragment = " ".join(words[i:i + 6])
+                if len(fragment) < 10:
+                    continue
+                for rect in page.search_for(fragment):
+                    h = page.add_highlight_annot(rect)
+                    h.set_colors(stroke=(1, 0.9, 0))  # 노란색
+                    h.update()
+        except Exception as e:
+            logger.debug("하이라이트 실패 (렌더링 계속): %s", e)
 
         pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
         return pix.tobytes("png")
-    except Exception:
+    except Exception as e:
+        logger.warning("PDF 렌더링 실패 (%s p.%d): %s", source_file, page_num, e)
         return None
 
 
@@ -825,7 +1011,7 @@ def _render_source_panel(results: list) -> None:
                 if page_img:
                     st.image(page_img, use_container_width=True)
                 else:
-                    st.code(r.text[:300], language=None)
+                    st.markdown(r.text[:300])
             else:
                 title = r.metadata.get("title", "공지사항")
                 url   = r.metadata.get("source_url", "") or r.metadata.get("source_notice_url", "")
@@ -930,7 +1116,20 @@ async def generate_response_stream(question: str, placeholder) -> str:
     generator = st.session_state.generator
     validator = st.session_state.validator
 
-    analysis       = analyzer.analyze(question)
+    analysis = analyzer.analyze(question)
+
+    # ── 사용자 프로필 폴백 주입 ─────────────────────────────────────
+    # 질문에 학번·학과·학생유형이 명시되지 않은 경우 프로필 값으로 보완
+    _profile = st.session_state.get("user_profile") or {}
+    if analysis.student_id is None and _profile.get("student_id"):
+        analysis.student_id = _profile["student_id"]
+        if "student_id" in analysis.missing_info:
+            analysis.missing_info.remove("student_id")
+    if not analysis.entities.get("department") and _profile.get("department"):
+        analysis.entities["department"] = _profile["department"]
+    if _profile.get("student_type") and _profile["student_type"] != "내국인":
+        analysis.student_type = _profile["student_type"]
+
     search_results = router.route_and_search(question, analysis)
     merged         = merger.merge(
         vector_results=search_results["vector_results"],
@@ -990,6 +1189,12 @@ async def generate_response_stream(question: str, placeholder) -> str:
         full_answer += f"\n\n---\n*검증 경고:*\n{warning_text}"
         placeholder.markdown(full_answer)
 
+    # 연락처 꼬리말 추가 (학사 질문 → 학사지원팀 / 학과 졸업시험·과행사 → 학과 사무실)
+    footer = _get_contact_footer(analysis.intent, analysis.entities, question)
+    if footer:
+        full_answer += footer
+        placeholder.markdown(full_answer)
+
     _log(full_answer)
     return full_answer, merged.source_urls, merged.vector_results + merged.graph_results
 
@@ -1008,6 +1213,11 @@ def main():
     inject_custom_css()
 
     if not render_sidebar():
+        return
+
+    # ── 온보딩 게이트: 프로필 미설정 시 입력 화면 표시 ────────────
+    if "user_profile" not in st.session_state:
+        render_onboarding()
         return
 
     pending    = st.session_state.pop("pending_question", None)
@@ -1032,11 +1242,9 @@ def main():
                         _render_source_urls(msg["source_urls"])
                     _render_source_panel(msg.get("results", []))
 
-            # 마지막 어시스턴트 메시지 아래 별점 UI 표시
-            if (
-                msg["role"] == "assistant"
-                and idx == len(messages) - 1
-            ):
+            # 모든 어시스턴트 메시지 아래 별점 UI 표시
+            # (스트리밍 중에는 prompt가 있으므로 숨김 → rerun 충돌 방지)
+            if msg["role"] == "assistant" and prompt is None:
                 _render_rating(idx, msg)
 
         if not messages and prompt is None:
