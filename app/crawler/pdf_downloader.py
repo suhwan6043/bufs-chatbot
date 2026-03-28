@@ -187,12 +187,12 @@ class PDFDownloader:
                     dest_dir = OTHER_DIR
                 dest = dest_dir / filename
 
-                # 크기 동일하면 스킵
+                # 크기 동일하면 재다운로드 생략 (파일 경로는 반환 — 인제스트용)
                 cl = resp.headers.get("Content-Length")
                 if dest.exists() and cl:
                     if dest.stat().st_size == int(cl):
-                        logger.debug("스킵 (동일): %s", filename)
-                        return None
+                        logger.debug("스킵 (이미 존재, 경로 반환): %s", filename)
+                        return dest
 
                 # 스트리밍 저장
                 total = 0

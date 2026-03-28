@@ -86,7 +86,14 @@ class TestSemesterHelpers:
             mock_date.today.return_value = date(2026, 3, 19)
             mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
             start = _current_semester_start()
-            assert start == date(2026, 3, 1)
+            assert start == date(2026, 2, 20)
+
+    def test_spring_semester_february(self):
+        with patch("app.crawler.notice_crawler.date") as mock_date:
+            mock_date.today.return_value = date(2026, 2, 25)
+            mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
+            start = _current_semester_start()
+            assert start == date(2026, 2, 20)
 
     def test_fall_semester_october(self):
         with patch("app.crawler.notice_crawler.date") as mock_date:
@@ -307,8 +314,11 @@ class TestNoticeCrawlerFullCrawl:
                 return list_html_p2
             return list_html_p1
 
+        # 단일 게시판만 테스트 (일반공지 추가로 인한 중복 방지)
+        single_target = [crawler.DEFAULT_TARGETS[0]]
         with patch("app.crawler.notice_crawler.date") as mock_date, \
-             patch.object(crawler, "_fetch", side_effect=mock_fetch):
+             patch.object(crawler, "_fetch", side_effect=mock_fetch), \
+             patch.object(crawler, "get_targets", return_value=single_target):
             mock_date.today.return_value = date(2026, 3, 19)
             mock_date.side_effect = lambda *a, **kw: date(*a, **kw)
 

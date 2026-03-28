@@ -24,16 +24,16 @@ logger = logging.getLogger(__name__)
 def _current_semester_start() -> date:
     """
     현재 학기 시작일을 반환합니다.
-      - 1학기 (3월~8월): 해당 연도 3월 1일
-      - 2학기 (9월~2월): 해당 연도 9월 1일
+      - 1학기 (2월 20일~8월): 해당 연도 2월 20일
+      - 2학기 (9월~1월): 해당 연도 9월 1일
     """
     today = date.today()
     if today.month >= 9:
         return date(today.year, 9, 1)
-    elif today.month >= 3:
-        return date(today.year, 3, 1)
+    elif today.month >= 2:
+        return date(today.year, 2, 20)
     else:
-        # 1~2월: 직전 연도 2학기
+        # 1월: 직전 연도 2학기
         return date(today.year - 1, 9, 1)
 
 
@@ -42,7 +42,7 @@ def _current_semester_label() -> str:
     today = date.today()
     if today.month >= 9:
         return f"{today.year}-2"
-    elif today.month >= 3:
+    elif today.month >= 2:
         return f"{today.year}-1"
     else:
         return f"{today.year - 1}-2"
@@ -90,6 +90,12 @@ class NoticeCrawler(BaseCrawler):
             "name": "학사공지",
             "list_url": f"{BUFS_BASE_URL}/bbs/board.php?bo_table=notice_aca",
             "bo_table": "notice_aca",
+            "content_type": "notice",
+        },
+        {
+            "name": "일반공지",
+            "list_url": f"{BUFS_BASE_URL}/bbs/board.php?bo_table=notice",
+            "bo_table": "notice",
             "content_type": "notice",
         },
     ]
@@ -246,8 +252,23 @@ class NoticeCrawler(BaseCrawler):
             title = title_tag.get_text(strip=True) or title
 
         # ── 본문 ──────────────────────────────────────────────────
-        # 그누보드5: #bo_v_atc
+        # 그누보드5 기본 선택자로 시도, 없으면 폴백 체인
         content_tag = soup.select_one("#bo_v_atc")
+
+        # 기본 선택자가 없거나 텍스트가 너무 짧으면 폴백 시도
+        _MIN_BODY_LEN = 30
+        if not content_tag or len(content_tag.get_text(strip=True)) < _MIN_BODY_LEN:
+            original = content_tag  # 원본 보존
+            for selector in (".bo_v_atc", "#bo_v_con", ".view-content", "article"):
+                candidate = soup.select_one(selector)
+                if candidate and len(candidate.get_text(strip=True)) >= _MIN_BODY_LEN:
+                    content_tag = candidate
+                    break
+            else:
+                # 폴백에서도 못 찾으면 원본(짧더라도) 사용
+                if original:
+                    content_tag = original
+
         if not content_tag:
             logger.warning("본문 없음: %s", url)
             return None

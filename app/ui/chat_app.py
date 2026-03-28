@@ -120,6 +120,11 @@ THINKING_HTML = """
 
 # ── CSS ────────────────────────────────────────────
 def inject_custom_css():
+    # 뷰포트 메타태그: iOS Safari 자동 축소 방지
+    st.markdown(
+        '<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0">',
+        unsafe_allow_html=True,
+    )
     st.markdown(
         """
         <style>
@@ -392,6 +397,96 @@ def inject_custom_css():
 
         /* Streamlit 자동 페이지 내비 숨김 (커스텀 사이드바 보호) */
         [data-testid="stSidebarNav"] { display: none !important; }
+
+        /* ═══════════════════════════════════════
+           📱 MOBILE RESPONSIVE  (≤ 768 px)
+           ═══════════════════════════════════════ */
+        @media (max-width: 768px) {
+
+            /* 메인 컨테이너 패딩 축소 */
+            .main .block-container {
+                padding-left: 0.6rem !important;
+                padding-right: 0.6rem !important;
+                padding-top: 0.5rem !important;
+                max-width: 100% !important;
+            }
+
+            /* 오른쪽 패널(#rp-marker 포함 컬럼) 숨김 */
+            [data-testid="stColumn"]:has(#rp-marker) {
+                display: none !important;
+            }
+            /* 채팅 컬럼 전체 너비로 확장 */
+            [data-testid="stHorizontalBlock"]:has(#rp-marker) {
+                flex-wrap: wrap !important;
+            }
+            [data-testid="stHorizontalBlock"]:has(#rp-marker) > [data-testid="stColumn"]:first-child {
+                min-width: 100% !important;
+                width: 100% !important;
+                flex: 1 1 100% !important;
+            }
+
+            /* 채팅 헤더: 배지 숨김·패딩 축소 */
+            .chat-hdr {
+                padding: 0.55rem 0.75rem !important;
+                border-radius: 10px !important;
+            }
+            .chat-hdr-badge { display: none !important; }
+            .chat-hdr h2   { font-size: 0.88rem !important; }
+            .chat-hdr p    { font-size: 0.68rem !important; }
+
+            /* 메시지 말풍선 너비 확대 */
+            [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) .stMarkdown {
+                max-width: 92% !important;
+            }
+            [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) .stMarkdown {
+                max-width: 98% !important;
+            }
+
+            /* 채팅 입력창: iOS 자동 줌 방지 (font ≥ 16px 필수) */
+            [data-testid="stChatInput"] textarea {
+                font-size: 1rem !important;
+            }
+
+            /* 웰컴 화면 상단 여백 축소 */
+            .wc-wrap { padding-top: 1.5rem !important; }
+            .wc-title { font-size: 1.1rem !important; }
+
+            /* 사이드바 토글 버튼 위치 조정 */
+            [data-testid="stExpandSidebarButton"] {
+                top: 0.3rem !important;
+                left: 0.3rem !important;
+            }
+        }
+
+        /* ═══════════════════════════════════════
+           📱 SMALL PHONE  (≤ 480 px)
+           ═══════════════════════════════════════ */
+        @media (max-width: 480px) {
+
+            .main .block-container {
+                padding-left: 0.4rem !important;
+                padding-right: 0.4rem !important;
+            }
+
+            /* 웰컴 버튼 2열 → 1열 (메인 영역만 대상) */
+            section[data-testid="stMainBlockContainer"]
+              [data-testid="stHorizontalBlock"]:not(:has(#rp-marker))
+              [data-testid="stColumn"] {
+                min-width: 100% !important;
+                flex: 1 1 100% !important;
+            }
+
+            /* 헤더 추가 축소 */
+            .chat-hdr h2 { font-size: 0.82rem !important; }
+
+            /* 채팅 아바타 크기 */
+            [data-testid="chatAvatarIcon-user"],
+            [data-testid="chatAvatarIcon-assistant"] {
+                width: 1.6rem !important;
+                height: 1.6rem !important;
+                font-size: 0.9rem !important;
+            }
+        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -584,6 +679,8 @@ def _render_rating(msg_idx: int, msg: dict) -> None:
 
 # ── Right panel ────────────────────────────────────
 def render_right_panel():
+    # 모바일에서 이 컬럼 전체를 숨기기 위한 마커 (CSS :has(#rp-marker) 대상)
+    st.markdown('<div id="rp-marker"></div>', unsafe_allow_html=True)
     st.markdown('<div class="rp-section">유용한 도구</div>', unsafe_allow_html=True)
     for lnk in PORTAL_LINKS:
         st.markdown(
@@ -655,6 +752,93 @@ def _format_contact_answer(question: str) -> str:
 
     lines.append("\n> 운영시간: 평일 09:00 ~ 18:00 (점심 12:00 ~ 13:00 제외)")
     return "\n".join(lines)
+
+
+@st.cache_data(show_spinner=False)
+def _render_pdf_page(source_file: str, page_num: int, chunk_text: str) -> bytes | None:
+    """PDF 지정 페이지를 렌더링하고 chunk_text 위치를 노란색 하이라이트합니다."""
+    try:
+        import fitz  # PyMuPDF
+
+        path = Path(source_file)
+        if not path.is_absolute():
+            path = Path(__file__).parent.parent.parent / source_file
+        if not path.exists():
+            return None
+
+        doc = fitz.open(str(path))
+        page_idx = max(0, page_num - 1)  # 1-indexed → 0-indexed
+        if page_idx >= len(doc):
+            return None
+        page = doc[page_idx]
+
+        # 청크 텍스트에서 6단어 창으로 검색하여 하이라이트
+        words = chunk_text.split()
+        step = 6
+        for i in range(0, len(words), step):
+            fragment = " ".join(words[i:i + step])
+            if len(fragment) < 10:
+                continue
+            for rect in page.search_for(fragment):
+                highlight = page.add_highlight_annot(rect)
+                highlight.set_colors(stroke=(1, 0.9, 0))  # 노란색
+                highlight.update()
+
+        pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5))
+        return pix.tobytes("png")
+    except Exception:
+        return None
+
+
+def _render_source_panel(results: list) -> None:
+    """답변 근거 문서(PDF 페이지 또는 공지 카드)를 expander로 표시합니다."""
+    if not results:
+        return
+
+    # 출처별로 그룹화 (PDF: source:page, 공지: source_url), 최대 3개
+    seen: set = set()
+    items: list = []
+    for r in results:
+        doc_type = r.metadata.get("doc_type", "")
+        if doc_type in ("notice", "notice_attachment"):
+            key = r.metadata.get("source_url", "") or r.metadata.get("source_notice_url", "")
+            if key and key not in seen:
+                seen.add(key)
+                items.append(("notice", r))
+        elif r.source:
+            key = f"{r.source}:{r.page_number}"
+            if key not in seen:
+                seen.add(key)
+                items.append(("pdf", r))
+        if len(items) >= 3:
+            break
+
+    if not items:
+        return
+
+    with st.expander("📄 근거 문서 확인", expanded=False):
+        for kind, r in items:
+            if kind == "pdf":
+                page_img = _render_pdf_page(r.source, r.page_number, r.text)
+                fname = Path(r.source).name
+                st.caption(f"📑 **{fname}** — {r.page_number}페이지")
+                if page_img:
+                    st.image(page_img, use_container_width=True)
+                else:
+                    st.code(r.text[:300], language=None)
+            else:
+                title = r.metadata.get("title", "공지사항")
+                url   = r.metadata.get("source_url", "") or r.metadata.get("source_notice_url", "")
+                date  = r.metadata.get("post_date", "")
+                st.markdown(
+                    f'**{title}**'
+                    + (f' <span style="color:#64748b;font-size:0.85em">({date})</span>' if date else ""),
+                    unsafe_allow_html=True,
+                )
+                st.caption(r.text[:200] + ("..." if len(r.text) > 200 else ""))
+                if url:
+                    st.markdown(f"[원문 보기 →]({url})")
+                st.divider()
 
 
 def _render_source_urls(source_urls: list) -> None:
@@ -738,7 +922,7 @@ async def generate_response_stream(question: str, placeholder) -> str:
             )
         except Exception:
             pass
-        return contact_answer, []
+        return contact_answer, [], []
 
     analyzer  = st.session_state.analyzer
     router    = st.session_state.router
@@ -776,12 +960,12 @@ async def generate_response_stream(question: str, placeholder) -> str:
         )
         placeholder.markdown(msg)
         _log(msg)
-        return msg, []
+        return msg, [], []
 
     if merged.direct_answer:
         placeholder.markdown(merged.direct_answer)
         _log(merged.direct_answer)
-        return merged.direct_answer, merged.source_urls
+        return merged.direct_answer, merged.source_urls, merged.vector_results + merged.graph_results
 
     full_answer = ""
     async for token in generator.generate(
@@ -807,7 +991,7 @@ async def generate_response_stream(question: str, placeholder) -> str:
         placeholder.markdown(full_answer)
 
     _log(full_answer)
-    return full_answer, merged.source_urls
+    return full_answer, merged.source_urls, merged.vector_results + merged.graph_results
 
 
 # ── Main ───────────────────────────────────────────
@@ -843,6 +1027,10 @@ def main():
                 avatar="🎓" if msg["role"] == "assistant" else "👤",
             ):
                 st.markdown(msg["content"])
+                if msg["role"] == "assistant":
+                    if msg.get("source_urls"):
+                        _render_source_urls(msg["source_urls"])
+                    _render_source_panel(msg.get("results", []))
 
             # 마지막 어시스턴트 메시지 아래 별점 UI 표시
             if (
@@ -860,13 +1048,15 @@ def main():
                 st.markdown(prompt)
             with st.chat_message("assistant", avatar="🎓"):
                 placeholder = st.empty()
-                answer, source_urls = asyncio.run(
+                answer, source_urls, results = asyncio.run(
                     generate_response_stream(prompt, placeholder)
                 )
                 if source_urls:
                     _render_source_urls(source_urls)
+                _render_source_panel(results)
                 messages.append(
-                    {"role": "assistant", "content": answer, "rated": False}
+                    {"role": "assistant", "content": answer, "rated": False,
+                     "source_urls": source_urls, "results": results}
                 )
 
     with right_col:

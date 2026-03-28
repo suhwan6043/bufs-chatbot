@@ -124,8 +124,16 @@ class ContextMerger:
         """검색 결과를 포맷팅합니다."""
         text = text or result.text
         source_info = ""
-        if result.page_number:
+
+        doc_type = result.metadata.get("doc_type", "")
+        source_url = result.metadata.get("source_url", "")
+
+        if doc_type in ("notice", "notice_attachment") and source_url:
+            # 공지사항: URL을 출처로 표시하여 LLM이 참조 가능하게 함
+            source_info = f" [{source_url}]"
+        elif result.page_number:
             source_info = f" [p.{result.page_number}]"
         elif result.source:
             source_info = f" [{result.source}]"
+
         return f"---{source_info}\n{text}"

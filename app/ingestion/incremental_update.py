@@ -129,10 +129,18 @@ class IncrementalUpdater:
 
     def _ingest_attachments(self, event: ChangeEvent) -> int:
         """
-        이벤트의 첨부파일 URL을 다운로드하고 PDF는 ChromaDB에 인제스트합니다.
+        이벤트의 첨부파일 URL을 다운로드하고 텍스트 추출 가능한 파일을 ChromaDB에 인제스트합니다.
 
-        - PDF: 다운로드 → DigitalPDFExtractor → pages_to_chunks → ChromaDB upsert
-        - HWP: 다운로드만 (data/attachments/hwp/에 저장, 텍스트 추출 불가)
+        처리 방식:
+          PDF   → DigitalPDFExtractor → pages_to_chunks → ChromaDB upsert
+          HWP/HWPX → HwpExtractor     → pages_to_chunks → ChromaDB upsert
+          DOCX  → DocxExtractor       → pages_to_chunks → ChromaDB upsert
+          XLSX/XLS → XlsxExtractor    → pages_to_chunks → ChromaDB upsert
+          ZIP   → 저장만 (내부 파일 재귀 처리 생략)
+
+        메타데이터 공통 필드:
+          source_notice_url, source_url, title, post_date,
+          source_name, semester, crawled_at, filename, file_type
 
         Returns:
             인제스트된 청크 수
@@ -143,31 +151,39 @@ class IncrementalUpdater:
         from app.crawler.pdf_downloader import PDFDownloader
         from app.pdf.digital_extractor import DigitalPDFExtractor
         from app.pdf.detector import PDFTypeDetector, PDFType
+        from app.ingestion.hwp_extractor import HwpExtractor
+        from app.ingestion.docx_extractor import DocxExtractor
+        from app.ingestion.xlsx_extractor import XlsxExtractor
 
         downloader = PDFDownloader()
         paths = downloader.download_attachments(event.attachments, source_url=event.source_id)
 
-        hwp_count = len(paths.get("hwp", []))
-        if hwp_count:
-            logger.info("HWP 저장됨 (텍스트 추출 생략): %d건", hwp_count)
+        # 공통 메타데이터 (모든 파일 형식 공유)
+        common_meta = {
+            _NOTICE_URL_KEY: event.source_id,
+            "source_url": event.source_id,
+            "title": event.title or "",
+            "post_date": event.metadata.get("post_date", ""),
+            "source_name": event.metadata.get("source_name", ""),
+            "crawled_at": event.metadata.get("crawled_at", ""),
+            "bo_table": event.metadata.get("bo_table", ""),
+        }
+        semester = event.metadata.get("semester", "")
 
-        pdf_paths = paths.get("pdf", [])
-        if not pdf_paths:
-            return 0
-
-        extractor = DigitalPDFExtractor()
-        detector = PDFTypeDetector()
         total_chunks = 0
 
-        for pdf_path in pdf_paths:
+        # ── PDF 처리 ─────────────────────────────────────────
+        extractor_pdf = DigitalPDFExtractor()
+        detector = PDFTypeDetector()
+
+        for pdf_path in paths.get("pdf", []):
             try:
-                # 스캔 PDF는 건너뜀 (OCR 없이 텍스트 추출 불가)
                 pdf_type = detector.detect(str(pdf_path))
                 if pdf_type == PDFType.SCANNED:
                     logger.info("스캔 PDF 건너뜀 (OCR 불가): %s", pdf_path.name)
                     continue
 
-                pages = extractor.extract(str(pdf_path))
+                pages = extractor_pdf.extract(str(pdf_path))
                 if not pages:
                     continue
 
@@ -175,25 +191,92 @@ class IncrementalUpdater:
                     pages=pages,
                     source_file=str(pdf_path),
                     doc_type=_ATTACH_TYPE,
-                    semester=event.metadata.get("semester", ""),
+                    semester=semester,
                     extra_metadata={
-                        _NOTICE_URL_KEY: event.source_id,   # 공지 URL (삭제 연동)
-                        "source_url": event.source_id,
-                        "title": event.title or "",
-                        "crawled_at": event.metadata.get("crawled_at", ""),
+                        **common_meta,
                         "filename": pdf_path.name,
+                        "file_type": "pdf",
                     },
                 )
+                if chunks:
+                    self.chroma.add_chunks(chunks)
+                    total_chunks += len(chunks)
+                    logger.info("첨부 PDF 인제스트: %s (%d청크)", pdf_path.name, len(chunks))
 
+            except Exception as e:
+                logger.warning("첨부 PDF 처리 실패 [%s]: %s", pdf_path.name, e)
+
+        # ── HWP/HWPX 처리 ─────────────────────────────────────
+        extractor_hwp = HwpExtractor()
+
+        for hwp_path in paths.get("hwp", []):
+            try:
+                pages = extractor_hwp.extract(str(hwp_path))
+                if not pages:
+                    logger.info("HWP 텍스트 없음 (저장만): %s", hwp_path.name)
+                    continue
+
+                chunks = pages_to_chunks(
+                    pages=pages,
+                    source_file=str(hwp_path),
+                    doc_type=_ATTACH_TYPE,
+                    semester=semester,
+                    extra_metadata={
+                        **common_meta,
+                        "filename": hwp_path.name,
+                        "file_type": hwp_path.suffix.lower().lstrip("."),
+                    },
+                )
+                if chunks:
+                    self.chroma.add_chunks(chunks)
+                    total_chunks += len(chunks)
+                    logger.info("첨부 HWP 인제스트: %s (%d청크)", hwp_path.name, len(chunks))
+
+            except Exception as e:
+                logger.warning("첨부 HWP 처리 실패 [%s]: %s", hwp_path.name, e)
+
+        # ── DOCX / XLSX 처리 (other 카테고리) ──────────────────
+        extractor_docx = DocxExtractor()
+        extractor_xlsx = XlsxExtractor()
+
+        for other_path in paths.get("other", []):
+            ext = other_path.suffix.lower()
+            try:
+                if ext == ".docx":
+                    pages = extractor_docx.extract(str(other_path))
+                    file_type = "docx"
+                elif ext in (".xlsx", ".xls"):
+                    pages = extractor_xlsx.extract(str(other_path))
+                    file_type = "xlsx"
+                else:
+                    logger.debug("기타 첨부 저장만: %s", other_path.name)
+                    continue
+
+                if not pages:
+                    logger.info("%s 텍스트 없음 (저장만): %s", ext, other_path.name)
+                    continue
+
+                chunks = pages_to_chunks(
+                    pages=pages,
+                    source_file=str(other_path),
+                    doc_type=_ATTACH_TYPE,
+                    semester=semester,
+                    extra_metadata={
+                        **common_meta,
+                        "filename": other_path.name,
+                        "file_type": file_type,
+                    },
+                )
                 if chunks:
                     self.chroma.add_chunks(chunks)
                     total_chunks += len(chunks)
                     logger.info(
-                        "첨부 PDF 인제스트: %s (%d청크)", pdf_path.name, len(chunks)
+                        "첨부 %s 인제스트: %s (%d청크)",
+                        ext.upper(), other_path.name, len(chunks),
                     )
 
             except Exception as e:
-                logger.warning("첨부 PDF 처리 실패 [%s]: %s", pdf_path.name, e)
+                logger.warning("첨부 %s 처리 실패 [%s]: %s", ext, other_path.name, e)
 
         return total_chunks
 
@@ -258,6 +341,10 @@ class IncrementalUpdater:
                     "source_name": event.metadata.get("source_name", ""),
                     "crawled_at": event.metadata.get("crawled_at", ""),
                     "chunk_index": idx,
+                    "post_date": event.metadata.get("post_date", ""),
+                    "semester": event.metadata.get("semester", ""),
+                    "bo_table": event.metadata.get("bo_table", ""),
+                    "is_table": False,
                 },
             ))
 

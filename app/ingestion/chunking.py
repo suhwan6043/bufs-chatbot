@@ -156,14 +156,18 @@ def pages_to_chunks(
                         "source_file": source_file,
                         "page_number": page_num,
                         "doc_type": doc_type,
+                        "is_table": False,
                         **extra_metadata,
                     },
                 ))
 
         # ── 테이블 청크 ──────────────────────────────────
+        _MAX_TABLE_CHARS = CHUNK_SIZE * 3  # 1500자: 컨텍스트 예산 초과 방지
         for tidx, table_md in enumerate(page.tables or []):
             if not table_md or len(table_md.strip()) < MIN_CHUNK_LEN:
                 continue
+            if len(table_md) > _MAX_TABLE_CHARS:
+                table_md = table_md[:_MAX_TABLE_CHARS] + "\n…(표 생략)"
             cohort_from, cohort_to = detect_cohort(table_md)
             chunks.append(Chunk(
                 chunk_id=make_chunk_id(source_file, page_num, f"table_{tidx}", table_md),
