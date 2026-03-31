@@ -106,6 +106,8 @@ class AcademicGraph:
         "전공이수방법", "수강신청규칙", "학사일정",
         "마이크로전공", "교직",
         "조기졸업",       # 조기졸업 신청자격·졸업기준·기타사항
+        "장학금",         # 교내·국가·외부 장학금 정보
+        "휴복학",         # 휴학/복학 안내 (일반·군입대·창업·질병·출산·육아·복학)
     ]
 
     EDGE_TYPES = [
@@ -257,6 +259,58 @@ class AcademicGraph:
         """
         node_id = f"early_grad_{node_key}"
         attrs = self._merge({"type": "조기졸업", "구분": node_key}, data)
+        self.G.add_node(node_id, **attrs)
+        return node_id
+
+    def add_scholarship(self, name: str, data: dict) -> str:
+        """
+        장학금 노드. ID = scholarship_{name}
+        data 예시: {
+            "장학금명": "...", "지급액": "...", "선발기준": "...",
+            "신청방법": "...", "신청기간": "...", "문의처": "...",
+            "종류": "...",    # 하위 유형 설명 (국가장학금 I/II유형 등)
+            "신청처": "...",  # 외부 기관 신청 URL
+        }
+        """
+        node_id = f"scholarship_{name}"
+        attrs = self._merge({"type": "장학금", "장학금명": name}, data)
+        self.G.add_node(node_id, **attrs)
+        return node_id
+
+    @staticmethod
+    def _sanitize_node_key(title: str) -> str:
+        """한글 섹션 제목을 node_id에 사용 가능한 안전한 키로 변환."""
+        key = re.sub(r"\(.*?\)", "", title)
+        key = re.sub(r"[\s·\-/,\.]+", "_", key)
+        key = re.sub(r"[^\w가-힣]", "", key)
+        key = key.strip("_")[:40]
+        if not key:
+            import hashlib as _hl
+            key = _hl.md5(title.encode()).hexdigest()[:8]
+        return key
+
+    def add_leave_info(self, name: str, data: dict) -> str:
+        """
+        휴복학 정보 노드. ID = leave_info_{sanitized_name}
+        name: 섹션 제목 (예: "일반휴학", "군입대 휴학", "복학 안내")
+        data: 섹션에서 추출된 필드 딕셔너리 (키 하드코딩 없음)
+        """
+        node_key = self._sanitize_node_key(name)
+        node_id = f"leave_info_{node_key}"
+        attrs = self._merge({"type": "휴복학", "구분": name}, data)
+        self.G.add_node(node_id, **attrs)
+        return node_id
+
+    def add_scholarship_page_info(self, name: str, data: dict) -> str:
+        """
+        정적 페이지에서 크롤링된 장학금 안내 노드. ID = sch_info_{sanitized_name}
+        build_graph.py의 scholarship_ 노드와 구분되어 공존.
+        name: 섹션 제목 (예: "교내장학금 > 신청방법", "국가장학금")
+        data: 섹션에서 추출된 필드 딕셔너리 (키 하드코딩 없음)
+        """
+        node_key = self._sanitize_node_key(name)
+        node_id = f"sch_info_{node_key}"
+        attrs = self._merge({"type": "장학금", "구분": name}, data)
         self.G.add_node(node_id, **attrs)
         return node_id
 
@@ -438,6 +492,12 @@ class AcademicGraph:
             results.extend(
                 self._query_alternatives(entities.get("course_name", ""))
             )
+
+        elif intent == "SCHOLARSHIP":
+            results.extend(self._query_scholarship(entities, question))
+
+        elif intent == "LEAVE_OF_ABSENCE":
+            results.extend(self._query_leave_of_absence(entities, question))
 
         # ── 보충 탐색: 교양영역 / 마이크로전공 / 교직 ──
         if entities.get("liberal_arts_area"):
@@ -1125,6 +1185,117 @@ class AcademicGraph:
 
         return results
 
+    def _query_scholarship(
+        self, entities: dict, question: str = ""
+    ) -> List[SearchResult]:
+        """
+        장학금 관련 그래프 탐색.
+        - 특정 장학금명 언급 → 해당 노드 우선 반환
+        - 언급 없으면 전체 장학금 목록 반환
+        """
+        results: List[SearchResult] = []
+        question_norm = self._normalize_text(question)
+
+        # 특정 장학금 키워드 매칭
+        scholarship_keywords = {
+            "교내장학금": ["교내장학금"],
+            "근로장학금": ["근로장학금"],
+            "국가장학금": ["국가장학금", "한국장학재단"],
+            "외부장학금": ["외부장학금", "민간장학금"],
+            "성적우수장학금": ["성적우수"],
+            "긴급장학금": ["긴급장학금", "긴급생활비", "긴급지원"],
+            "신입생장학금": ["신입생장학금", "입학장학금", "글로벌챌린저", "수능우수"],
+            "외국인장학금": ["외국인장학금", "유학생장학금", "topik", "토픽"],
+        }
+
+        matched_names = []
+        for name, keywords in scholarship_keywords.items():
+            if any(kw in question_norm for kw in [self._normalize_text(k) for k in keywords]):
+                node_id = f"scholarship_{name}"
+                if node_id in self.G.nodes:
+                    matched_names.append(name)
+                    results.append(SearchResult(
+                        text=self._fmt_scholarship(dict(self.G.nodes[node_id])),
+                        score=1.2,
+                        source="graph",
+                    ))
+
+        # 특정 장학금 미매칭 시 전체 목록 반환
+        if not matched_names:
+            all_scholarships = [
+                data for _, data in self.G.nodes(data=True)
+                if data.get("type") == "장학금"
+            ]
+            for s_data in all_scholarships:
+                results.append(SearchResult(
+                    text=self._fmt_scholarship(s_data),
+                    score=1.0,
+                    source="graph",
+                ))
+
+        return results
+
+    def _query_leave_of_absence(
+        self, entities: dict, question: str = ""
+    ) -> List[SearchResult]:
+        """
+        휴복학 관련 그래프 탐색.
+        - 특정 휴학 유형 키워드 → 해당 노드 우선 반환 (score=1.2)
+        - 키워드 없으면 전체 휴복학 노드 반환 (score=1.0)
+        """
+        results: List[SearchResult] = []
+        question_norm = self._normalize_text(question)
+
+        # 그래프에서 휴복학 노드 동적 수집
+        all_leave_nodes = [
+            (nid, data)
+            for nid, data in self.G.nodes(data=True)
+            if data.get("type") == "휴복학"
+        ]
+        if not all_leave_nodes:
+            return []
+
+        # 유형별 키워드 매핑
+        TYPE_KEYWORDS: dict[str, list[str]] = {
+            "군입대": ["군입대", "군대", "입대", "군휴학"],
+            "창업": ["창업"],
+            "질병": ["질병", "병원", "의료"],
+            "출산": ["출산", "육아", "임신"],
+            "복학": ["복학", "복귀"],
+            "일반": ["일반휴학", "일반"],
+            "전부": ["전부", "전과", "전학과", "학과변경", "학부변경"],
+            "재입학": ["재입학"],
+            "자퇴": ["자퇴", "중도이탈"],
+            "제적": ["제적", "중도이탈"],
+        }
+
+        matched_nids: set[str] = set()
+        for group, keywords in TYPE_KEYWORDS.items():
+            norm_kws = [self._normalize_text(k) for k in keywords]
+            if any(kw in question_norm for kw in norm_kws):
+                for nid, data in all_leave_nodes:
+                    section_norm = self._normalize_text(data.get("구분", ""))
+                    if group in section_norm or any(kw in section_norm for kw in norm_kws):
+                        matched_nids.add(nid)
+
+        if matched_nids:
+            for nid in matched_nids:
+                data = dict(self.G.nodes[nid])
+                results.append(SearchResult(
+                    text=self._fmt_leave_of_absence(data),
+                    score=1.2,
+                    source="graph",
+                ))
+        else:
+            for nid, data in all_leave_nodes:
+                results.append(SearchResult(
+                    text=self._fmt_leave_of_absence(data),
+                    score=1.0,
+                    source="graph",
+                ))
+
+        return results
+
     def _query_alternatives(self, course_name: str) -> List[SearchResult]:
         if not course_name:
             return []
@@ -1225,6 +1396,43 @@ class AcademicGraph:
             lines.append(f"- 합격기준: {data['졸업시험_합격기준']}")
         if data.get("졸업시험_대체방법"):
             lines.append(f"- 대체방법: {data['졸업시험_대체방법']}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _fmt_leave_of_absence(data: dict) -> str:
+        """휴복학 노드 포맷팅 — 모든 필드를 동적으로 출력."""
+        section_name = data.get("구분", "휴복학 안내")
+        lines = [f"[휴복학] {section_name}"]
+        skip_keys = {"type", "구분"}
+        for key, val in data.items():
+            if key in skip_keys or not val:
+                continue
+            lines.append(f"- {key}: {val}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _fmt_scholarship(data: dict) -> str:
+        """장학금 노드 포맷팅 (동적 필드 출력 — 하드코딩/크롤링 노드 공용)."""
+        name = data.get("장학금명") or data.get("구분", "")
+        lines = [f"[장학금] {name}"]
+        SKIP = {"type", "장학금명", "구분"}
+        # 우선 출력 필드 (있으면 먼저)
+        PRIORITY = (
+            "종류", "지급액", "선발기준", "신청방법",
+            "신청기간", "신청처", "필요서류", "문의처",
+        )
+        seen: set[str] = set()
+        for key in PRIORITY:
+            val = data.get(key)
+            if val:
+                lines.append(f"- {key}: {val}")
+                seen.add(key)
+        # 나머지 동적 필드 (크롤링 노드 대응)
+        for key, val in data.items():
+            if key in SKIP or key in seen:
+                continue
+            if val:
+                lines.append(f"- {key}: {val}")
         return "\n".join(lines)
 
     @staticmethod

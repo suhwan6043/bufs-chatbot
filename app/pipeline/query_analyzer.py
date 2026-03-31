@@ -83,10 +83,32 @@ class QueryAnalyzer:
         Intent.MAJOR_CHANGE: [
             "복수전공", "부전공", "마이크로전공", "전과",
             "제2전공", "융합전공", "전공탐색", "교직",
+            "방법1", "방법2", "방법3",
+            "이수방법1", "이수방법2", "이수방법3",
+            "주전공+복수전공", "복수전공 이수학점",
         ],
         Intent.ALTERNATIVE: [
             "대체", "동일과목", "폐지", "변경", "대신",
             "대체과목", "대체가능",
+        ],
+        Intent.SCHOLARSHIP: [
+            "장학금", "장학금 신청", "장학금 자격", "장학금 조건",
+            "장학금 신청자격", "장학금 신청기간", "장학금 금액",
+            "등록금 지원", "교내장학금", "근로장학금",
+            "국가장학금", "외부장학금", "민간장학금",
+            "성적우수장학금", "생활비지원", "한국장학재단",
+        ],
+        Intent.LEAVE_OF_ABSENCE: [
+            "휴학", "복학", "휴학 신청", "복학 신청",
+            "일반휴학", "군입대휴학", "군입대 휴학",
+            "창업휴학", "질병휴학", "출산휴학", "육아휴학",
+            "휴학 기간", "복학 기간", "휴학 방법",
+            "휴학 서류", "복학 절차", "휴학신청",
+            "복학신청", "휴학연장", "휴학 취소", "입대 휴학",
+            "전과", "전부", "전부(과)", "전학과", "학과 변경", "학과변경",
+            "재입학", "재입학 신청", "재입학 조건",
+            "자퇴", "자퇴 신청", "자퇴 방법", "자퇴하고",
+            "제적", "중도이탈", "학적 변동", "학적변동",
         ],
     }
 
@@ -133,6 +155,7 @@ class QueryAnalyzer:
             Intent.GRADUATION_REQ, Intent.EARLY_GRADUATION,
             Intent.ALTERNATIVE, Intent.SCHEDULE,
             Intent.COURSE_INFO, Intent.MAJOR_CHANGE, Intent.REGISTRATION,
+            Intent.SCHOLARSHIP, Intent.LEAVE_OF_ABSENCE,
         )
         requires_vector = intent not in (Intent.SCHEDULE, Intent.ALTERNATIVE)
 
@@ -283,6 +306,21 @@ class QueryAnalyzer:
         ):
             return Intent.SCHEDULE
 
+        # 수강신청 + 기간 질문 → SCHEDULE (언제/기간을 묻는 것이지 방법을 묻는 게 아님)
+        # 단, "방법", "어떻게", "어디서", "사이트" 등 방법 질문은 REGISTRATION 유지
+        _REG_METHOD_KW = ("방법", "어떻게", "어디서", "사이트", "주소", "id", "로그인",
+                          "취소하고", "취소 후", "재신청", "초과", "복학생", "처리")
+        if (
+            "수강신청" in text
+            and any(kw in text for kw in ("기간", "언제", "시작", "마감", "까지"))
+            and not any(kw in text for kw in _REG_METHOD_KW)
+        ):
+            return Intent.SCHEDULE
+
+        # 전공이수방법(방법1/2/3) + 학점 질문 → MAJOR_CHANGE
+        if any(kw in text for kw in ("방법1", "방법2", "방법3", "이수방법1", "이수방법2", "이수방법3")):
+            return Intent.MAJOR_CHANGE
+
         scores = {}
         for intent, keywords in self.INTENT_KEYWORDS.items():
             score = sum(1 for kw in keywords if kw in text)
@@ -292,10 +330,18 @@ class QueryAnalyzer:
         if not scores:
             return Intent.GENERAL
 
+        # 학적변동 관련 키워드는 SCHEDULE의 "기간" 등에 잡히지 않도록 우선 처리
+        _LOA_KW = ("휴학", "복학", "전과", "전부(과)", "재입학", "자퇴", "제적", "학적변동")
+        if any(kw in text for kw in _LOA_KW) and not any(
+            kw in text for kw in ("조기졸업", "수강신청", "수업")
+        ):
+            return Intent.LEAVE_OF_ABSENCE
+
         priority = [
             Intent.ALTERNATIVE, Intent.EARLY_GRADUATION, Intent.GRADUATION_REQ,
             Intent.REGISTRATION, Intent.SCHEDULE,
-            Intent.MAJOR_CHANGE, Intent.COURSE_INFO,
+            Intent.MAJOR_CHANGE, Intent.COURSE_INFO, Intent.SCHOLARSHIP,
+            Intent.LEAVE_OF_ABSENCE,
         ]
         max_score = max(scores.values())
         top = [i for i, s in scores.items() if s == max_score]

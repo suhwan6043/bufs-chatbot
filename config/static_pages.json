@@ -1,0 +1,22 @@
+{
+  "학사": [
+    {
+      "id": "leave_of_absence",
+      "url": "https://m.bufs.ac.kr/Information/SAHJ1010.aspx?mc=0951",
+      "source_name": "휴복학안내",
+      "content_type": "guide",
+      "graph_type": "leave_of_absence",
+      "description": "휴학·복학·전부(과)·재입학·자퇴 안내"
+    }
+  ],
+  "장학": [
+    {
+      "id": "scholarship_info",
+      "url": "https://m.bufs.ac.kr/Information/SAJH1020.ASPX?mc=0935",
+      "source_name": "장학안내",
+      "content_type": "guide",
+      "graph_type": "scholarship",
+      "description": "교내·국가·외부 장학금 안내"
+    }
+  ]
+}

@@ -98,6 +98,12 @@ class NoticeCrawler(BaseCrawler):
             "bo_table": "notice",
             "content_type": "notice",
         },
+        {
+            "name": "장학금공지",
+            "list_url": f"{BUFS_BASE_URL}/bbs/board.php?bo_table=notice_sch",
+            "bo_table": "notice_sch",
+            "content_type": "scholarship",
+        },
     ]
 
     def get_targets(self) -> list[dict]:

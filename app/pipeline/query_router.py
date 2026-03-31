@@ -108,9 +108,11 @@ class QueryRouter:
         SCHEDULE, ALTERNATIVE는 student_id 없어도 동작.
         """
         # EARLY_GRADUATION: 학번 없어도 일반 자격·일정 안내 가능
+        # SCHOLARSHIP: 장학금 정보는 학번 무관하게 조회 가능
         no_id_intents = (
             Intent.SCHEDULE, Intent.ALTERNATIVE,
             Intent.REGISTRATION, Intent.EARLY_GRADUATION,
+            Intent.SCHOLARSHIP, Intent.LEAVE_OF_ABSENCE,
         )
 
         if analysis.intent not in no_id_intents and not analysis.student_id:
