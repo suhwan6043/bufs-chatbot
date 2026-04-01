@@ -12,8 +12,6 @@ BUFS 공지사항 크롤러 - 그누보드5(gnuboard5) 기반 게시판
 import logging
 import re
 from datetime import date, datetime
-from urllib.parse import urlencode, urlparse, parse_qs
-
 from app.config import settings
 from app.crawler.base_crawler import BaseCrawler, BUFS_BASE_URL
 from app.crawler.change_detector import CrawledItem

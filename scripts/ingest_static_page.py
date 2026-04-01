@@ -39,17 +39,59 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 그래프 타입 → (node type 문자열, node ID prefix)
+# 그래프 타입 → node type 문자열
 _TYPE_MAP = {
     "leave_of_absence": "휴복학",
     "scholarship": "장학금",
+    "free_semester": "자유학기제",
+    "registration_guide": "수강신청규칙",
+    "attendance": "전자출결",
+    "grading": "성적처리",
+    "tuition_refund": "등록금반환",
+    "graduation_guide": "졸업요건",
+    "teacher_training": "교직",
 }
+# 그래프 타입 → node ID prefix
 _PREFIX_MAP = {
     "leave_of_absence": "leave_info_",
     "scholarship": "sch_info_",
+    "free_semester": "free_sem_",
+    "registration_guide": "reg_guide_",
+    "attendance": "attend_",
+    "grading": "grade_",
+    "tuition_refund": "refund_",
+    "graduation_guide": "grad_guide_",
+    "teacher_training": "teacher_page_",
+}
+# 그래프 타입 → AcademicGraph 메서드명
+_METHOD_MAP = {
+    "leave_of_absence": "add_leave_info",
+    "scholarship": "add_scholarship_page_info",
+    "registration_guide": "add_registration_guide_info",
+    "graduation_guide": "add_graduation_guide_info",
+    "teacher_training": "add_teacher_training_page_info",
+    # 범용 메서드 사용 (node_type, prefix 인자 필요)
+    "free_semester": "add_static_page_info",
+    "attendance": "add_static_page_info",
+    "grading": "add_static_page_info",
+    "tuition_refund": "add_static_page_info",
 }
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "static_pages.json"
+
+
+def _classify_grade_node(title: str, text: str) -> str:
+    """성적처리 노드를 키워드 기반으로 분류합니다."""
+    t = (title + " " + text).lower()
+    if "ocu" in t or "사이버" in t or "컨소시엄" in t or "상대평가" in t:
+        return "OCU"
+    if "성적선택" in t or "성적평가 선택" in t or "성적포기" in t or "부분적 성적" in t:
+        return "성적선택제"
+    if "학사경고" in t:
+        return "학사경고"
+    if any(kw in t for kw in ("p/np", "캡스톤", "현장실습", "사회봉사", "진로탐색", "취업커뮤니티")):
+        return "P/NP"
+    return "일반"
 
 
 def _load_config() -> dict:
@@ -154,19 +196,37 @@ def ingest_static_page(
         fields["출처URL"] = url
         fields["출처명"] = source_name
 
-        if graph_type == "leave_of_absence":
-            node_id = graph.add_leave_info(name=title, data=fields)
-        elif graph_type == "scholarship":
-            node_id = graph.add_scholarship_page_info(name=title, data=fields)
-        else:
+        method_name = _METHOD_MAP.get(graph_type)
+        if method_name is None:
             raise ValueError(f"지원하지 않는 graph_type: {graph_type}")
+
+        method = getattr(graph, method_name)
+        if method_name == "add_static_page_info":
+            node_id = method(
+                name=title, data=fields,
+                node_type=node_type, prefix=_PREFIX_MAP[graph_type],
+            )
+        else:
+            node_id = method(name=title, data=fields)
 
         added_nodes.append(node_id)
         logger.info("  노드 추가: %s ← %s", node_id, title)
 
-    # 섹션 순서 엣지 (선택적)
-    for i in range(len(added_nodes) - 1):
-        graph.add_relation(added_nodes[i], added_nodes[i + 1], "연결된다")
+    # ── 성적처리 노드: 분류태그 + grading_root 엣지 ──
+    if graph_type == "grading" and added_nodes:
+        for nid in added_nodes:
+            data = graph.G.nodes[nid]
+            tag = _classify_grade_node(
+                data.get("구분", ""), data.get("설명", "")
+            )
+            graph.G.nodes[nid]["분류태그"] = tag
+
+        root_id = "grading_root"
+        if root_id not in graph.G.nodes:
+            graph.G.add_node(root_id, type="성적처리", 구분="성적처리기준")
+            graph._index_add(root_id, "성적처리")
+        for nid in added_nodes:
+            graph.G.add_edge(root_id, nid, relation="포함한다")
 
     graph.save()
     logger.info(
@@ -205,9 +265,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--graph-type",
-        default="leave_of_absence",
         choices=list(_TYPE_MAP.keys()),
-        help="그래프 노드 유형 (기본: leave_of_absence)",
+        help="그래프 노드 유형",
     )
     parser.add_argument(
         "--preset",

@@ -10,9 +10,8 @@ from pathlib import Path
 
 import streamlit as st
 
-from app.config import settings
 from app.logging import ChatLogger
-from app.shared_resources import get_embedder, get_chroma_store
+from app.shared_resources import get_chroma_store
 from app.graphdb import AcademicGraph
 from app.pipeline import (
     QueryAnalyzer,
@@ -40,9 +39,10 @@ QUICK_FEATURES = [
 ]
 
 PORTAL_LINKS = [
-    {"icon": "🖥️", "label": "수강신청 포털",   "url": "https://sugang.bufs.ac.kr/Login.aspx"},
-    {"icon": "📊", "label": "학사정보시스템",    "url": "https://m.bufs.ac.kr/default.aspx?ReturnUrl=%2f"},
-    {"icon": "📅", "label": "학사일정 달력",     "url": "https://m.bufs.ac.kr/popup/Haksa_Iljeong.aspx?gbn="},
+    {"icon": "🖥️", "label": "수강신청 사이트 바로가기", "url": "https://sugang.bufs.ac.kr/Login.aspx"},
+    {"icon": "📊", "label": "학생포털시스템",            "url": "https://m.bufs.ac.kr/default.aspx?ReturnUrl=%2f"},
+    {"icon": "📅", "label": "학사일정",                 "url": "https://m.bufs.ac.kr/popup/Haksa_Iljeong.aspx?gbn="},
+    {"icon": "📢", "label": "학사공지",                 "url": "https://www.bufs.ac.kr/bbs/board.php?bo_table=notice_aca"},
 ]
 
 # 학과 목록 (QueryAnalyzer.DEPARTMENT_KEYWORDS 기반)
@@ -812,7 +812,7 @@ def _save_feedback(text: str) -> None:
 def render_right_panel():
     # 모바일에서 이 컬럼 전체를 숨기기 위한 마커 (CSS :has(#rp-marker) 대상)
     st.markdown('<div id="rp-marker"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="rp-section">유용한 도구</div>', unsafe_allow_html=True)
+    st.markdown('<div class="rp-section">바로가기</div>', unsafe_allow_html=True)
     for lnk in PORTAL_LINKS:
         st.markdown(
             f'<a href="{lnk["url"]}" target="_blank" class="rp-link">'
@@ -893,7 +893,7 @@ def _format_contact_answer(question: str) -> str:
     lines = ["📞 **연락처 안내**\n"]
     for r in results:
         college_info = f" ({r.college})" if r.college else ""
-        office_info = f", {r.office}" if r.office else ""
+        office_info = f" | 사무실: {r.office}" if r.office else ""
         lines.append(
             f"- **{r.name}**{college_info}: "
             f"`내선 {r.extension}` / {r.phone}{office_info}"
@@ -1055,6 +1055,7 @@ async def generate_response(question: str) -> str:
     merged         = merger.merge(
         vector_results=search_results["vector_results"],
         graph_results=search_results["graph_results"],
+        question=question,
     )
 
     if not merged.formatted_context.strip():
@@ -1134,6 +1135,7 @@ async def generate_response_stream(question: str, placeholder) -> str:
     merged         = merger.merge(
         vector_results=search_results["vector_results"],
         graph_results=search_results["graph_results"],
+        question=question,
     )
 
     def _log(answer: str) -> None:

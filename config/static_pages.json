@@ -7,6 +7,62 @@
       "content_type": "guide",
       "graph_type": "leave_of_absence",
       "description": "휴학·복학·전부(과)·재입학·자퇴 안내"
+    },
+    {
+      "id": "free_semester",
+      "url": "https://m.bufs.ac.kr/Information/LESN5120.ASPX?mc=1148",
+      "source_name": "자유학기제안내",
+      "content_type": "guide",
+      "graph_type": "free_semester",
+      "description": "자유학기제(7+1학기) 프로그램 안내"
+    },
+    {
+      "id": "registration_guide",
+      "url": "https://m.bufs.ac.kr/Information/LESN6020.ASPX?mc=0966",
+      "source_name": "수강신청안내",
+      "content_type": "guide",
+      "graph_type": "registration_guide",
+      "description": "수강신청 절차·방법 안내"
+    },
+    {
+      "id": "attendance",
+      "url": "https://m.bufs.ac.kr/Information/LESN7050.ASPX?mc=0969",
+      "source_name": "전자출결안내",
+      "content_type": "guide",
+      "graph_type": "attendance",
+      "description": "전자출결 시스템 사용 안내"
+    },
+    {
+      "id": "grading",
+      "url": "https://m.bufs.ac.kr/Information/SCRO1010.ASPX?mc=1015",
+      "source_name": "성적처리기준안내",
+      "content_type": "guide",
+      "graph_type": "grading",
+      "description": "성적처리·평점 산출 기준 안내"
+    },
+    {
+      "id": "tuition_refund",
+      "url": "https://m.bufs.ac.kr/Information/REGI1020.ASPX?mc=1024",
+      "source_name": "등록금반환기준안내",
+      "content_type": "guide",
+      "graph_type": "tuition_refund",
+      "description": "등록금 반환·환불 기준 안내"
+    },
+    {
+      "id": "graduation_guide",
+      "url": "https://m.bufs.ac.kr/Information/GRAD2020.aspx?mc=1039",
+      "source_name": "졸업안내",
+      "content_type": "guide",
+      "graph_type": "graduation_guide",
+      "description": "졸업 절차·요건 종합 안내"
+    },
+    {
+      "id": "teacher_training",
+      "url": "https://m.bufs.ac.kr/Information/LESN5050.ASPX?mc=1106",
+      "source_name": "교직과정안내",
+      "content_type": "guide",
+      "graph_type": "teacher_training",
+      "description": "교직과정 이수·자격 안내"
     }
   ],
   "장학": [

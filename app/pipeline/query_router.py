@@ -4,7 +4,7 @@ CPU 전용, <1ms 처리
 """
 
 import logging
-from typing import List, Optional
+from typing import List
 
 from app.config import settings
 from app.models import QueryAnalysis, SearchResult, Intent

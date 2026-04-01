@@ -7,7 +7,7 @@ import logging
 import pickle
 import re
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 
 import networkx as nx
 
@@ -108,6 +108,15 @@ class AcademicGraph:
         "조기졸업",       # 조기졸업 신청자격·졸업기준·기타사항
         "장학금",         # 교내·국가·외부 장학금 정보
         "휴복학",         # 휴학/복학 안내 (일반·군입대·창업·질병·출산·육아·복학)
+        "자유학기제",     # 자유학기제(7+1) 프로그램 안내
+        "전자출결",       # 전자출결 시스템 안내
+        "성적처리",       # 성적처리·평점 기준
+        "등록금반환",     # 등록금 반환 기준
+        "학번그룹",       # 입학년도 그룹 (2024_2025, 2023, ...)
+        "학생유형",       # 내국인, 외국인, 편입생
+        "조건",           # 요건·제약·예외 (졸업학점, 최대신청학점, 재수강기준 등)
+        "계절학기",       # 계절학기 수강 안내
+        "OCU",            # OCU(한국열린사이버대학교) 수강 안내
     ]
 
     EDGE_TYPES = [
@@ -131,6 +140,7 @@ class AcademicGraph:
     def __init__(self, graph_path: str = None):
         self.path = graph_path or settings.graph.graph_path
         self.G = self._load_or_create()
+        self._build_index()
 
     def _load_or_create(self) -> nx.DiGraph:
         path = Path(self.path)
@@ -151,6 +161,45 @@ class AcademicGraph:
         with open(path, "wb") as f:
             pickle.dump(self.G, f)
         logger.info(f"그래프 저장: {self.path}")
+        self._build_index()
+
+    # ── 인덱스 ────────────────────────────────────────────────
+
+    def _build_index(self) -> None:
+        """노드 타입별 인덱스를 구축합니다. O(N) 1회 → 이후 조회 O(1)."""
+        self._type_index: dict[str, list[str]] = {}
+        self._course_index: dict[str, str] = {}   # 과목명/과목번호 → node_id
+
+        for nid, data in self.G.nodes(data=True):
+            ntype = data.get("type", "")
+            if ntype:
+                self._type_index.setdefault(ntype, []).append(nid)
+            if ntype == "교과목":
+                name = data.get("과목명", "")
+                number = data.get("과목번호", "")
+                if name:
+                    self._course_index[name] = nid
+                if number:
+                    self._course_index[number] = nid
+
+    def _index_add(self, node_id: str, node_type: str, data: dict = None) -> None:
+        """노드 추가 시 인덱스 증분 갱신."""
+        self._type_index.setdefault(node_type, []).append(node_id)
+        if node_type == "교과목" and data:
+            name = data.get("과목명", "")
+            number = data.get("과목번호", "")
+            if name:
+                self._course_index[name] = node_id
+            if number:
+                self._course_index[number] = node_id
+
+    def _nodes_by_type(self, node_type: str) -> list[tuple[str, dict]]:
+        """타입별 노드 리스트 반환 (인덱스 사용)."""
+        return [
+            (nid, dict(self.G.nodes[nid]))
+            for nid in self._type_index.get(node_type, [])
+            if nid in self.G.nodes
+        ]
 
     # ── 노드 추가 메서드 ──────────────────────────────────────
 
@@ -166,6 +215,7 @@ class AcademicGraph:
         node_id = f"dept_{name}"
         attrs = self._merge({"type": "학과전공", "전공명": name}, data)
         self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, "학과전공")
         return node_id
 
     def add_course(self, course_number: str, data: dict) -> str:
@@ -173,6 +223,7 @@ class AcademicGraph:
         node_id = f"course_{course_number}"
         attrs = self._merge({"type": "교과목", "과목번호": course_number}, data)
         self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, "교과목", attrs)
         return node_id
 
     def add_liberal_arts_area(self, area_name: str, data: dict) -> str:
@@ -180,6 +231,7 @@ class AcademicGraph:
         node_id = f"liberal_{area_name}"
         attrs = self._merge({"type": "교양영역", "영역명": area_name}, data)
         self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, "교양영역")
         return node_id
 
     def add_graduation_req(
@@ -204,6 +256,7 @@ class AcademicGraph:
             base_attrs["전공"] = major
         attrs = self._merge(base_attrs, data)
         self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, "졸업요건")
         return node_id
 
     def add_major_method(
@@ -216,6 +269,7 @@ class AcademicGraph:
             data,
         )
         self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, "전공이수방법")
         return node_id
 
     def add_registration_rule(self, reg_group: str, data: dict) -> str:
@@ -223,6 +277,7 @@ class AcademicGraph:
         node_id = f"reg_{reg_group}"
         attrs = self._merge({"type": "수강신청규칙", "적용학번그룹": reg_group}, data)
         self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, "수강신청규칙")
         return node_id
 
     def add_schedule(
@@ -235,6 +290,7 @@ class AcademicGraph:
             data,
         )
         self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, "학사일정")
         return node_id
 
     def add_micro_major(self, name: str, data: dict) -> str:
@@ -242,6 +298,7 @@ class AcademicGraph:
         node_id = f"micro_{name}"
         attrs = self._merge({"type": "마이크로전공", "전공명": name}, data)
         self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, "마이크로전공")
         return node_id
 
     def add_teacher_training(self, department: str, data: dict) -> str:
@@ -249,6 +306,7 @@ class AcademicGraph:
         node_id = f"teacher_{department}"
         attrs = self._merge({"type": "교직", "설치학과": department}, data)
         self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, "교직")
         return node_id
 
     def add_early_graduation(self, node_key: str, data: dict) -> str:
@@ -260,6 +318,7 @@ class AcademicGraph:
         node_id = f"early_grad_{node_key}"
         attrs = self._merge({"type": "조기졸업", "구분": node_key}, data)
         self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, "조기졸업")
         return node_id
 
     def add_scholarship(self, name: str, data: dict) -> str:
@@ -275,6 +334,7 @@ class AcademicGraph:
         node_id = f"scholarship_{name}"
         attrs = self._merge({"type": "장학금", "장학금명": name}, data)
         self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, "장학금")
         return node_id
 
     @staticmethod
@@ -299,6 +359,7 @@ class AcademicGraph:
         node_id = f"leave_info_{node_key}"
         attrs = self._merge({"type": "휴복학", "구분": name}, data)
         self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, "휴복학")
         return node_id
 
     def add_scholarship_page_info(self, name: str, data: dict) -> str:
@@ -312,6 +373,80 @@ class AcademicGraph:
         node_id = f"sch_info_{node_key}"
         attrs = self._merge({"type": "장학금", "구분": name}, data)
         self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, "장학금")
+        return node_id
+
+    def add_static_page_info(
+        self, name: str, data: dict, node_type: str, prefix: str,
+    ) -> str:
+        """
+        범용 정적 페이지 정보 노드.
+        node_type과 prefix를 외부에서 지정하여 다양한 페이지 유형에 재사용.
+        """
+        node_key = self._sanitize_node_key(name)
+        node_id = f"{prefix}{node_key}"
+        attrs = self._merge({"type": node_type, "구분": name}, data)
+        self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, node_type)
+        return node_id
+
+    def add_registration_guide_info(self, name: str, data: dict) -> str:
+        """수강신청안내 정적 페이지 노드. ID = reg_guide_{sanitized_name}"""
+        node_key = self._sanitize_node_key(name)
+        node_id = f"reg_guide_{node_key}"
+        attrs = self._merge({"type": "수강신청규칙", "구분": name}, data)
+        self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, "수강신청규칙")
+        return node_id
+
+    def add_graduation_guide_info(self, name: str, data: dict) -> str:
+        """졸업안내 정적 페이지 노드. ID = grad_guide_{sanitized_name}"""
+        node_key = self._sanitize_node_key(name)
+        node_id = f"grad_guide_{node_key}"
+        attrs = self._merge({"type": "졸업요건", "구분": name}, data)
+        self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, "졸업요건")
+        return node_id
+
+    def add_teacher_training_page_info(self, name: str, data: dict) -> str:
+        """교직과정안내 정적 페이지 노드. ID = teacher_page_{sanitized_name}"""
+        node_key = self._sanitize_node_key(name)
+        node_id = f"teacher_page_{node_key}"
+        attrs = self._merge({"type": "교직", "구분": name}, data)
+        self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, "교직")
+        return node_id
+
+    # ── 구조화 노드 (보고서 권장: StudentGroup, StudentType, Condition) ──
+
+    def add_student_group(self, group_key: str) -> str:
+        """학번그룹 노드. ID = group_{key}"""
+        node_id = f"group_{group_key}"
+        label = GROUP_LABELS.get(group_key, f"{group_key}학번")
+        attrs = {"type": "학번그룹", "그룹키": group_key, "레이블": label}
+        self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, "학번그룹")
+        return node_id
+
+    def add_student_type(self, stype: str) -> str:
+        """학생유형 노드. ID = stype_{name}"""
+        node_id = f"stype_{stype}"
+        attrs = {"type": "학생유형", "유형명": stype}
+        self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, "학생유형")
+        return node_id
+
+    def add_condition(self, name: str, data: dict) -> str:
+        """
+        조건 노드. ID = cond_{sanitized_name}
+        졸업학점, 최대신청학점, 재수강기준 등 요건·제약·예외를 독립 노드로 관리.
+        데이터 기반 스키마 진화: 속성이 아닌 노드로 분리하여 관계 추론 가능.
+        """
+        node_key = self._sanitize_node_key(name)
+        node_id = f"cond_{node_key}"
+        attrs = self._merge({"type": "조건", "조건명": name}, data)
+        self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, "조건")
         return node_id
 
     # ── 엣지 추가 ─────────────────────────────────────────────
@@ -353,13 +488,11 @@ class AcademicGraph:
     def get_major_methods(self, student_id: str) -> List[dict]:
         """학번에 해당하는 전공이수방법 3가지(방법1/2/3) 반환."""
         group = get_student_group(student_id)
-        results = []
-        for node_id, data in self.G.nodes(data=True):
-            if (
-                data.get("type") == "전공이수방법"
-                and data.get("적용학번범위") == group
-            ):
-                results.append({"id": node_id, **data})
+        results = [
+            {"id": nid, **data}
+            for nid, data in self._nodes_by_type("전공이수방법")
+            if data.get("적용학번범위") == group
+        ]
         results.sort(key=lambda x: x.get("방법유형", ""))
         return results
 
@@ -369,20 +502,17 @@ class AcademicGraph:
         node_id = f"reg_{reg_group}"
         if node_id in self.G.nodes:
             return dict(self.G.nodes[node_id])
-        # 폴백: 전체 탐색
-        for nid, data in self.G.nodes(data=True):
-            if data.get("type") == "수강신청규칙":
-                return dict(self.G.nodes[nid])
-        return None
+        # 폴백: 인덱스 사용
+        nodes = self._nodes_by_type("수강신청규칙")
+        return dict(nodes[0][1]) if nodes else None
 
     def get_schedules(self, semester: str = None) -> List[dict]:
         """학사일정 반환. semester 미지정 시 전체."""
-        results = []
-        for node_id, data in self.G.nodes(data=True):
-            if data.get("type") == "학사일정":
-                if semester is None or data.get("학기") == semester:
-                    results.append({"id": node_id, **data})
-        return results
+        return [
+            {"id": nid, **data}
+            for nid, data in self._nodes_by_type("학사일정")
+            if semester is None or data.get("학기") == semester
+        ]
 
     def get_alternatives(self, course_name: str) -> List[dict]:
         """대체과목/동일과목 체인 탐색 (1~2홉)."""
@@ -400,49 +530,40 @@ class AcademicGraph:
         node_id = f"dept_{dept_name}"
         if node_id in self.G.nodes:
             return dict(self.G.nodes[node_id])
-        for nid, data in self.G.nodes(data=True):
-            if data.get("type") == "학과전공" and dept_name in data.get("전공명", ""):
-                return dict(self.G.nodes[nid])
+        for nid, data in self._nodes_by_type("학과전공"):
+            if dept_name in data.get("전공명", ""):
+                return data
         return None
 
     def get_liberal_arts_areas(self, area_type: str = None) -> List[dict]:
         """교양영역 목록. area_type 부분 매칭 지원 ('인성체험교양' → '인성체험')."""
         results = []
-        for node_id, data in self.G.nodes(data=True):
-            if data.get("type") == "교양영역":
-                if area_type is None:
-                    results.append({"id": node_id, **data})
-                else:
-                    area_val = data.get("영역구분", "")
-                    if area_val in area_type or area_type in area_val:
-                        results.append({"id": node_id, **data})
+        for nid, data in self._nodes_by_type("교양영역"):
+            if area_type is None:
+                results.append({"id": nid, **data})
+            else:
+                area_val = data.get("영역구분", "")
+                if area_val in area_type or area_type in area_val:
+                    results.append({"id": nid, **data})
         return results
 
     def get_micro_majors(self) -> List[dict]:
         """마이크로/융합전공 목록."""
-        return [
-            {"id": nid, **data}
-            for nid, data in self.G.nodes(data=True)
-            if data.get("type") == "마이크로전공"
-        ]
+        return [{"id": nid, **data} for nid, data in self._nodes_by_type("마이크로전공")]
 
     def search_by_type(self, node_type: str) -> List[dict]:
         """특정 타입의 모든 노드 반환."""
-        return [
-            {"id": nid, **data}
-            for nid, data in self.G.nodes(data=True)
-            if data.get("type") == node_type
-        ]
+        return [{"id": nid, **data} for nid, data in self._nodes_by_type(node_type)]
 
     def _find_course_by_name(self, course_name: str) -> Optional[str]:
         """과목명(부분 매칭 포함)으로 노드 ID 탐색."""
-        for node_id, data in self.G.nodes(data=True):
-            if data.get("type") == "교과목":
-                if (
-                    data.get("과목명") == course_name
-                    or course_name in data.get("과목명", "")
-                ):
-                    return node_id
+        # 인덱스 완전 매칭 (O(1))
+        if course_name in self._course_index:
+            return self._course_index[course_name]
+        # 부분 매칭 폴백 (인덱스 범위 내)
+        for nid, data in self._nodes_by_type("교과목"):
+            if course_name in data.get("과목명", ""):
+                return nid
         return None
 
     # ── 파이프라인 통합 ───────────────────────────────────────
@@ -511,6 +632,33 @@ class AcademicGraph:
                 self._query_teacher_training(entities.get("department", ""))
             )
 
+        # ── 보충 탐색: 정적 페이지 신규 노드 타입들 ──
+        if "자유학기" in question or "7+1" in question:
+            results.extend(self._query_by_node_type("자유학기제", question))
+
+        if "출결" in question or "출석" in question or "전자출결" in question:
+            results.extend(self._query_by_node_type("전자출결", question))
+
+        if "성적처리" in question or "평점산출" in question or (
+            "성적" in question and "기준" in question
+        ) or ("평가" in question and ("방법" in question or "방식" in question)) or (
+            "절대평가" in question or "상대평가" in question
+        ) or ("학사경고" in question) or (
+            "성적" in question and ("평가" in question or "산출" in question or "처리" in question)
+        ) or ("시험" in question and ("평가" in question or "기준" in question)):
+            results.extend(self._query_grading(question))
+
+        if "등록금" in question and (
+            "반환" in question or "환불" in question or "납부" in question
+        ):
+            results.extend(self._query_by_node_type("등록금반환", question))
+
+        if "계절학기" in question or "계절수업" in question or (
+            ("하계" in question or "동계" in question) and "학기" in question
+        ):
+            if not any(r.source == "graph" and "계절학기" in r.text for r in results):
+                results.extend(self._query_by_node_type("계절학기", question))
+
         return results
 
     @staticmethod
@@ -569,6 +717,11 @@ class AcademicGraph:
         if not question or not schedules:
             return []
 
+        # 이벤트명 정규화 1회 수행 (캐시)
+        for s in schedules:
+            if "_normalized_event" not in s:
+                s["_normalized_event"] = self._normalize_text(s.get("이벤트명", ""))
+
         question_norm = self._normalize_text(question)
         trigger_map = [
             (
@@ -577,7 +730,9 @@ class AcademicGraph:
                 ),
                 ["조기졸업신청"],
             ),
-            (lambda q: "수강신청취소" in q or ("취소" in q and "까지" in q), ["수업일수1/4선"]),
+            (lambda q: "수강신청취소" in q or "수강취소" in q
+             or ("취소" in q and ("까지" in q or "언제" in q or "기간" in q)),
+             ["수업일수1/4선"]),
             (lambda q: "수업시작일" in q or "수업시작" in q, ["수업시작일"]),
             (lambda q: "ocu" in q and "개강" in q, ["ocu개강일"]),
             (lambda q: "개강" in q and "수업시작" not in q and "ocu" not in q, ["개강"]),
@@ -585,29 +740,38 @@ class AcademicGraph:
             (lambda q: "수강신청확인" in q or "수강정정" in q, ["수강신청확인"]),
             (lambda q: "중간고사" in q, ["중간고사"]),
             (lambda q: "기말고사" in q, ["기말고사"]),
+            (lambda q: "시험" in q and ("기간" in q or "언제" in q or "일정" in q)
+             and "중간" not in q and "기말" not in q, ["중간고사", "기말고사"]),
+            (lambda q: "중간" in q and "수업평가" in q, ["중간수업평가실시"]),
+            (lambda q: "기말" in q and "수업평가" in q, ["기말수업평가실시"]),
+            (lambda q: "수업평가" in q and "중간" not in q and "기말" not in q,
+             ["중간수업평가실시", "기말수업평가실시"]),
             (lambda q: "제1·2전공" in q or "제1,2전공" in q or "변경(전과)" in q or "전과" in q,
              ["제12전공신청및변경전과"]),
             (lambda q: "ocu" in q and "납부" in q, ["ocusystem사용료납부기간", "ocu시스템사용료납부기간"]),
             (lambda q: "야간" in q or any(f"{i}교시" in q for i in range(10, 15)), ["야간수업시간표"]),
             (lambda q: "수강신청" in q and ("기간" in q or "언제" in q)
              and "정정" not in q and "확인" not in q and "취소" not in q
-             and "장바구니" not in q, ["수강신청"]),
+             and "장바구니" not in q,
+             ["수강신청", "수강신청_1학년", "수강신청_2학년", "수강신청_3학년",
+              "수강신청_3,4학년", "수강신청_4학년", "수강신청_전학년"]),
         ]
 
         matched: List[dict] = []
         for predicate, keywords in trigger_map:
             if not predicate(question_norm):
                 continue
+            norm_keywords = [self._normalize_text(kw) for kw in keywords]
             for schedule in schedules:
-                event_norm = self._normalize_text(schedule.get("이벤트명", ""))
-                if any(keyword in event_norm for keyword in keywords):
+                event_norm = schedule["_normalized_event"]
+                if any(kw in event_norm for kw in norm_keywords):
                     matched.append(schedule)
             if matched:
                 matched.sort(key=lambda m: len(m.get("이벤트명", "")))
                 return matched
 
         for schedule in schedules:
-            event_norm = self._normalize_text(schedule.get("이벤트명", ""))
+            event_norm = schedule["_normalized_event"]
             if event_norm and (event_norm in question_norm or question_norm in event_norm):
                 matched.append(schedule)
 
@@ -739,9 +903,7 @@ class AcademicGraph:
         results: List[SearchResult] = []
         q_norm = re.sub(r"[\s\-\.,:()\[\]/~·]", "", question or "").lower()
 
-        for nid, data in self.G.nodes(data=True):
-            if data.get("type") != "학과전공":
-                continue
+        for nid, data in self._nodes_by_type("학과전공"):
             if not data.get("졸업시험_요건"):
                 continue
 
@@ -776,12 +938,39 @@ class AcademicGraph:
         if not rule:
             return []
 
+        # 계절학기 전용 핸들러
+        if "계절학기" in question or "계절수업" in question:
+            seasonal = self._nodes_by_type("계절학기")
+            if seasonal:
+                results = [SearchResult(
+                    text=self._fmt_static_info(dict(data), "계절학기"),
+                    score=1.3, source="graph",
+                ) for _, data in seasonal]
+                # 계절학기 일정도 함께 반환
+                sched = self._find_schedule_matches(question or "계절학기")
+                for s in sched[:2]:
+                    results.append(self._schedule_to_result(s, score=1.1))
+                return results
+
         # 재수강 제한 전용 핸들러 (focused context)
         if "재수강" in question and any(kw in question for kw in ("제한", "한도", "최대")):
             retake_limit = rule.get("재수강제한", "")
             if retake_limit:
                 context = f"[재수강 제한 규정]\n- {retake_limit}"
                 return [self._make_direct_result(context, "", score=1.3)]
+
+        # 성적선택제/성적포기 전용 핸들러 → 성적처리 노드에서 분류태그 탐색
+        q_lower = question.lower()
+        if "성적선택" in question or "성적포기" in question or "부분적 성적" in question or (
+            "p/np" in q_lower and "신청" in question
+        ):
+            for nid, data in self._nodes_by_type("성적처리"):
+                tag = data.get("분류태그", "")
+                if tag == "성적선택제":
+                    return [SearchResult(
+                        text=self._fmt_static_info(data, "성적선택제"),
+                        score=1.3, source="graph",
+                    )]
 
         # 학점이월 전용 핸들러 (19학점 혼동 방지)
         if "학점이월" in question:
@@ -862,15 +1051,41 @@ class AcademicGraph:
                 )
                 return [self._schedule_to_result(schedule, answer, score=1.25)]
 
-        if entities.get("ocu") and entities.get("payment_period"):
-            start = rule.get("납부시작")
-            end = rule.get("납부종료")
-            if start and end:
-                answer = (
-                    f"OCU 시스템 사용료 납부기간은 {self._format_period(start, end)}입니다."
-                )
-                context = f"[OCU 납부기간]\n- 납부기간: {start}~{end}"
-                return [self._make_direct_result(context, answer, score=1.3)]
+        # ── OCU 관련 질문 → OCU 노드 1-hop 탐색 ──
+        question_norm = self._normalize_text(question)
+        if entities.get("ocu") or "ocu" in question_norm or "사이버" in question_norm:
+            # OCU 노드를 엣지 1-hop으로 찾기
+            reg_nid = f"reg_{get_reg_group(student_id or '2023')}"
+            ocu_data = None
+            for succ in self.G.successors(reg_nid):
+                succ_d = self.G.nodes.get(succ, {})
+                if succ_d.get("type") == "OCU":
+                    ocu_data = succ_d
+                    break
+
+            if ocu_data:
+                # 납부기간 전용
+                if entities.get("payment_period"):
+                    start = ocu_data.get("납부시작")
+                    end = ocu_data.get("납부종료")
+                    if start and end:
+                        answer = f"OCU 시스템 사용료 납부기간은 {self._format_period(start, end)}입니다."
+                        context = f"[OCU 납부기간]\n- 납부기간: {start}~{end}"
+                        return [self._make_direct_result(context, answer, score=1.3)]
+
+                # 출석요건 전용
+                if "출석" in question:
+                    attendance = ocu_data.get("출석요건", "")
+                    if attendance:
+                        answer = f"OCU 출석요건은 전체 출석일수의 {attendance} 이상입니다."
+                        context = f"[OCU 출석요건]\n- 출석요건: {attendance} 이상"
+                        return [self._make_direct_result(context, answer, score=1.3)]
+
+                # OCU 일반 질문 → 전체 OCU 정보 반환
+                return [SearchResult(
+                    text=self._fmt_static_info(ocu_data, "OCU"),
+                    score=1.2, source="graph",
+                )]
 
         # 기간/일정 질문 → 학사일정에서 검색 (장바구니 기간, 수강신청 기간 등)
         # 절차/방법 질문은 제외 (e.g., "정정기간 이후 어떻게 처리되는가")
@@ -894,11 +1109,25 @@ class AcademicGraph:
 
                 return [self._schedule_to_result(first, answer, score=1.3)]
 
-        return [SearchResult(
+        # ── Condition 엣지 1-hop 탐색: 질문 키워드에 맞는 조건 노드 반환 ──
+        cond_results = self._query_conditions_via_edge(
+            student_id or "2023", "수강신청규칙", question
+        )
+        if cond_results:
+            return cond_results
+
+        # ── 하위 섹션 엣지 1-hop: 수강규칙→reg_guide_ 세부 안내 ──
+        sub_results = self._query_sub_sections_via_edge(
+            student_id or "2023", "수강신청규칙", question
+        )
+
+        results = [SearchResult(
             text=self._fmt_registration_rule(student_id or "2023", rule),
             score=1.0,
             source="graph",
         )]
+        results.extend(sub_results)
+        return results
 
     def _query_schedule(
         self, question: str = "", entities: dict = None
@@ -1034,8 +1263,8 @@ class AcademicGraph:
         node_id = f"dept_{dept_name}"
         if node_id in self.G.nodes:
             return node_id
-        for nid, data in self.G.nodes(data=True):
-            if data.get("type") == "학과전공" and dept_name in data.get("전공명", ""):
+        for nid, data in self._nodes_by_type("학과전공"):
+            if dept_name in data.get("전공명", ""):
                 return nid
         return None
 
@@ -1077,9 +1306,7 @@ class AcademicGraph:
     def _query_teacher_training(self, dept: str = "") -> List[SearchResult]:
         """교직과정 노드 탐색."""
         results = []
-        for nid, data in self.G.nodes(data=True):
-            if data.get("type") != "교직":
-                continue
+        for nid, data in self._nodes_by_type("교직"):
             if dept and dept not in data.get("설치학과", ""):
                 continue
             lines = [f"[교직과정] {data.get('설치학과', '')}"]
@@ -1121,9 +1348,9 @@ class AcademicGraph:
         if is_period_q:
             matches = self._find_schedule_matches(question or "조기졸업신청기간언제")
             if not matches:
-                # trigger_map 미적중 시 직접 탐색
-                for nid, data in self.G.nodes(data=True):
-                    if data.get("type") == "학사일정" and "조기졸업" in data.get("이벤트명", ""):
+                # trigger_map 미적중 시 인덱스 탐색
+                for nid, data in self._nodes_by_type("학사일정"):
+                    if "조기졸업" in data.get("이벤트명", ""):
                         matches.append({"id": nid, **data})
             if matches:
                 first = matches[0]
@@ -1222,10 +1449,7 @@ class AcademicGraph:
 
         # 특정 장학금 미매칭 시 전체 목록 반환
         if not matched_names:
-            all_scholarships = [
-                data for _, data in self.G.nodes(data=True)
-                if data.get("type") == "장학금"
-            ]
+            all_scholarships = [data for _, data in self._nodes_by_type("장학금")]
             for s_data in all_scholarships:
                 results.append(SearchResult(
                     text=self._fmt_scholarship(s_data),
@@ -1246,12 +1470,8 @@ class AcademicGraph:
         results: List[SearchResult] = []
         question_norm = self._normalize_text(question)
 
-        # 그래프에서 휴복학 노드 동적 수집
-        all_leave_nodes = [
-            (nid, data)
-            for nid, data in self.G.nodes(data=True)
-            if data.get("type") == "휴복학"
-        ]
+        # 그래프에서 휴복학 노드 수집 (인덱스)
+        all_leave_nodes = self._nodes_by_type("휴복학")
         if not all_leave_nodes:
             return []
 
@@ -1296,6 +1516,61 @@ class AcademicGraph:
 
         return results
 
+    def _query_by_node_type(
+        self, node_type: str, question: str = "",
+    ) -> List[SearchResult]:
+        """특정 node_type의 모든 노드를 검색 결과로 반환 (정적 페이지 범용)."""
+        results: List[SearchResult] = []
+        question_norm = self._normalize_text(question)
+
+        all_nodes = self._nodes_by_type(node_type)
+        if not all_nodes:
+            return []
+
+        for nid, data in all_nodes:
+            section_norm = self._normalize_text(data.get("구분", ""))
+            score = 1.2 if section_norm and section_norm in question_norm else 1.0
+            results.append(SearchResult(
+                text=self._fmt_static_info(data, node_type),
+                score=score,
+                source="graph",
+            ))
+        return results
+
+    def _query_grading(self, question: str) -> List[SearchResult]:
+        """성적처리 질문 → 분류태그 기반 엣지 1-hop 탐색."""
+        q = self._normalize_text(question)
+        results: List[SearchResult] = []
+
+        # 키워드 → 분류태그 매핑
+        if "ocu" in q or "사이버" in q or "상대평가" in q:
+            target_tags = ["OCU"]
+        elif "성적선택" in q or "성적포기" in q or "부분적성적" in q:
+            target_tags = ["성적선택제"]
+        elif "학사경고" in q:
+            target_tags = ["학사경고"]
+        elif any(kw in q for kw in ("p/np", "pnp", "캡스톤", "현장실습", "사회봉사")):
+            target_tags = ["P/NP"]
+        else:
+            target_tags = ["일반"]  # 기본: 절대평가
+
+        # grading_root → successors() → 분류태그 매칭
+        root = "grading_root"
+        if root in self.G.nodes:
+            for succ in self.G.successors(root):
+                data = self.G.nodes.get(succ, {})
+                if data.get("분류태그") in target_tags:
+                    results.append(SearchResult(
+                        text=self._fmt_static_info(data, "성적처리"),
+                        score=1.2, source="graph",
+                    ))
+
+        # 폴백: grading_root 없으면 기존 방식
+        if not results:
+            results = self._query_by_node_type("성적처리", question)
+
+        return results[:3]  # 컨텍스트 예산 보호
+
     def _query_alternatives(self, course_name: str) -> List[SearchResult]:
         if not course_name:
             return []
@@ -1310,7 +1585,112 @@ class AcademicGraph:
             )
         return [SearchResult(text="\n".join(lines), score=1.0, source="graph")]
 
+    def _query_conditions_via_edge(
+        self, student_id: str, parent_type: str, question: str
+    ) -> List[SearchResult]:
+        """
+        부모 노드 → successors() → 조건 노드 중 질문 키워드 매칭.
+        엣지를 실제 탐색하여 정확한 조건만 반환 (노드 속성 전체 덤프 대신).
+        """
+        if not question:
+            return []
+        q_norm = self._normalize_text(question)
+
+        # 부모 노드 찾기
+        parent_nid = None
+        if parent_type == "수강신청규칙":
+            reg_grp = get_reg_group(student_id)
+            parent_nid = f"reg_{reg_grp}"
+        elif parent_type == "장학금":
+            # 장학금은 특정 노드 지정이 어려우므로 전체 탐색
+            pass
+
+        if not parent_nid or parent_nid not in self.G.nodes:
+            return []
+
+        # 1-hop: 부모 → 조건 노드 (successors)
+        matched = []
+        for succ in self.G.successors(parent_nid):
+            succ_data = self.G.nodes.get(succ, {})
+            if succ_data.get("type") != "조건":
+                continue
+            orig_key = succ_data.get("원본키", "")
+            val = succ_data.get("값", "")
+            # 원본키의 핵심 토큰이 질문에 모두 포함되면 매칭
+            # "재수강최고성적" → ["재수강", "최고성적"] or ["재수강", "최고", "성적"]
+            key_norm = self._normalize_text(orig_key)
+            # 한글 2글자 이상 부분문자열 매칭 (키의 의미 단위가 질문에 포함)
+            if key_norm and key_norm in q_norm:
+                matched.append((key_norm, val, orig_key))
+            elif len(key_norm) >= 4:
+                # 긴 키는 앞 절반/뒤 절반으로 나눠서 양쪽 다 포함 확인
+                mid = len(key_norm) // 2
+                front, back = key_norm[:mid], key_norm[mid:]
+                if front in q_norm and back in q_norm:
+                    matched.append((key_norm, val, orig_key))
+
+        if not matched:
+            return []
+
+        lines = [f"[{parent_type} 조건]"]
+        for cname, val, key in matched:
+            lines.append(f"- {key or cname}: {val}")
+
+        return [SearchResult(
+            text="\n".join(lines), score=1.2, source="graph",
+        )]
+
+    def _query_sub_sections_via_edge(
+        self, student_id: str, parent_type: str, question: str
+    ) -> List[SearchResult]:
+        """
+        부모 노드 → successors() → 하위 섹션 노드 중 질문과 관련된 것만 반환.
+        정적 페이지 크롤링 결과(reg_guide_, grad_guide_ 등)를 엣지로 탐색.
+        """
+        if not question:
+            return []
+        q_norm = self._normalize_text(question)
+
+        parent_nid = None
+        if parent_type == "수강신청규칙":
+            reg_grp = get_reg_group(student_id)
+            parent_nid = f"reg_{reg_grp}"
+
+        if not parent_nid or parent_nid not in self.G.nodes:
+            return []
+
+        results = []
+        for succ in self.G.successors(parent_nid):
+            succ_data = self.G.nodes.get(succ, {})
+            section = succ_data.get("구분", "")
+            section_norm = self._normalize_text(section)
+            # 질문 키워드가 섹션명에 포함되면 매칭
+            if section_norm and any(
+                kw in section_norm for kw in (q_norm,)
+                if len(kw) >= 2
+            ):
+                text = self._fmt_static_info(succ_data, parent_type)
+                results.append(SearchResult(text=text, score=1.1, source="graph"))
+            # 역방향: 섹션명 키워드가 질문에 포함
+            elif section_norm and len(section_norm) >= 3 and section_norm in q_norm:
+                text = self._fmt_static_info(succ_data, parent_type)
+                results.append(SearchResult(text=text, score=1.1, source="graph"))
+
+        return results[:3]  # 최대 3개 (컨텍스트 예산 보호)
+
     # ── 포맷팅 헬퍼 ──────────────────────────────────────────
+
+    @staticmethod
+    def _fmt_static_info(data: dict, node_type: str) -> str:
+        """정적 페이지 노드 범용 포맷팅 — 모든 필드를 동적으로 출력."""
+        section_name = data.get("구분", node_type)
+        lines = [f"[{node_type}] {section_name}"]
+        skip_keys = {"type", "구분"}
+        for key, val in data.items():
+            if key in skip_keys or not val:
+                continue
+            lines.append(f"- {key}: {val}")
+        return "\n".join(lines)
 
     @staticmethod
     def _fmt_graduation(student_id: str, student_type: str, data: dict) -> str:
@@ -1331,11 +1711,19 @@ class AcademicGraph:
             "융합전공이수학점", "마이크로전공이수학점", "부전공이수학점",
         ):
             val = data.get(key)
-            if val is None:                          # 해당 학번에 없는 항목 → 스킵
+            if val is None:
                 continue
-            if isinstance(val, bool):                # True/False → 한국어
+            if isinstance(val, bool):
                 val = "있음" if val else "없음"
             lines.append(f"- {key}: {val}")
+
+        # 교양 세부영역 학점 출력
+        liberal_details = data.get("교양세부")
+        if liberal_details and isinstance(liberal_details, dict):
+            lines.append("- 교양 세부영역:")
+            for area, credits in liberal_details.items():
+                lines.append(f"  · {area}: {credits}")
+
         return "\n".join(lines)
 
     @staticmethod

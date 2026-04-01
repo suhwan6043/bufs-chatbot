@@ -7,9 +7,8 @@
 
 import json
 import logging
-from dataclasses import asdict, dataclass, field
-from datetime import date, datetime
-from pathlib import Path
+from dataclasses import dataclass, field
+from datetime import datetime
 
 from app.config import DATA_DIR
 

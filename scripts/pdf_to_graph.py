@@ -45,6 +45,7 @@ SECTION_KEYS = {
     "department":   ["제1전공 이수학점", "단과대학"],
     "liberal_arts": ["교양영역", "균형교양", "기초교양", "인성체험교양"],
     "micro_major":  ["마이크로전공", "융합전공"],
+    "grading":      ["성적평가", "성적처리", "학사경고", "캡스톤", "성적평가 선택제도", "성적포기"],
 }
 
 # ── 학사일정 파싱 ─────────────────────────────────────────────
@@ -165,6 +166,79 @@ def _parse_date_range(date_str: str, year: int, month: int) -> Tuple[Optional[st
     start_date = f"{start_yr}-{start_mo:02d}-{start_day:02d}"
 
     return start_date, end_date
+
+
+# ── 수강신청 학년별 일정 파싱 ─────────────────────────────────
+
+_REG_GRADE_SCHEDULE_PATTERN = re.compile(
+    r"(\d{1,2})\.(\d{1,2})\.\(([월화수목금토일])\)\s*\n?\s*"
+    r"(\d학년|전\s*학년)"
+)
+
+
+def parse_registration_grade_schedule(pages: List[PageContent], base_year: int = 2026) -> List[Dict]:
+    """수강신청 학년별 일정을 파싱합니다 (PDF p.6-7).
+
+    Returns: [{"학년": "1학년", "날짜": "2026-02-09", "요일": "월",
+               "시간": "10:00~15:20", "신청가능과목": "..."}, ...]
+    """
+    schedules = []
+    for page in pages:
+        txt = page.text or ""
+        if "신청학년" not in txt or "수강신청" not in txt:
+            continue
+
+        # 시간 정보 추출 (전체 일정에서)
+        time_str = "10:00~15:20"
+        time_m = re.search(r"(\d{1,2}:\d{2})\s*[~\-]\s*(\d{1,2}:\d{2})\s*\(?\s*신청\s*\)?", txt)
+        if time_m:
+            time_str = f"{time_m.group(1)}~{time_m.group(2)}"
+
+        # 학년별 날짜 파싱
+        lines = txt.split("\n")
+        for i, line in enumerate(lines):
+            # "2.9.(월)" 패턴 + 근처에 "N학년" 또는 "전 학년"
+            date_m = re.search(r"(\d{1,2})\.(\d{1,2})\.\(([월화수목금토일])\)", line)
+            if not date_m:
+                continue
+            month = int(date_m.group(1))
+            day = int(date_m.group(2))
+            dow = date_m.group(3)
+            date_str = f"{base_year}-{month:02d}-{day:02d}"
+
+            # 같은 줄 또는 다음 2줄에서 학년 정보 탐색
+            context = "\n".join(lines[i:i+3])
+            grade_m = re.search(r"(\d)학년|(\d),\s*(\d)학년|전\s*학년", context)
+            if not grade_m:
+                continue
+
+            if "전 학년" in context or "전학년" in context or "전체 과목" in context:
+                grade_label = "전학년"
+            elif grade_m.group(2) and grade_m.group(3):
+                grade_label = f"{grade_m.group(2)},{grade_m.group(3)}학년"
+            else:
+                grade_label = f"{grade_m.group(1)}학년"
+
+            # 신청 가능 과목 추출
+            courses = ""
+            course_m = re.search(r"신청\s*가능\s*과목[^\n]*\n(.*?)(?=\d{1,2}\.\d{1,2}\.\(|비고|$)",
+                                  context, re.DOTALL)
+            if not course_m:
+                # 테이블 형식에서 추출
+                for j in range(i, min(i+5, len(lines))):
+                    if "교양" in lines[j] or "전공" in lines[j] or "OCU" in lines[j]:
+                        courses = lines[j].strip()
+                        break
+
+            schedules.append({
+                "학년": grade_label,
+                "날짜": date_str,
+                "요일": dow,
+                "시간": time_str,
+                "신청가능과목": courses,
+            })
+
+    return schedules
 
 
 # ── 수강신청 규칙 파싱 ─────────────────────────────────────────
@@ -346,7 +420,149 @@ def parse_ocu_section(pages: List[PageContent]) -> Dict:
         ocu_data["개강일"] = f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
         ocu_data["개강시간"] = f"오전 {m.group(4)}시"
 
+    # 수강신청방법 (PDF에서 추출)
+    if "수강신청" in full_text and "홈페이지" in full_text:
+        m = re.search(
+            r"수강신청방법\s*[:：]?\s*(.+?)(?:\n|$)", full_text
+        )
+        if m:
+            ocu_data["수강신청방법"] = m.group(1).strip()
+        elif "우리대학" in full_text and "수강신청" in full_text:
+            ocu_data["수강신청방법"] = "우리대학 홈페이지에서 수강신청 후 OCU 사이트에서 수강"
+
+    # 수강방법 — OCU 홈페이지 URL 추출
+    m = re.search(r"(https?://cons\.ocu\.ac\.kr/?)", full_text)
+    if m:
+        ocu_data["OCU홈페이지"] = m.group(1)
+        ocu_data["수강방법"] = f"OCU 컨소시엄 사이트({m.group(1)})에서 온라인 수강"
+
+    # 이수구분
+    if "자유선택" in full_text and "OCU" in full_text:
+        ocu_data["이수구분"] = "자유선택으로 인정"
+
+    # 문의전화
+    m = re.search(r"\(부산외대\)\s*학사지원팀\s*[:：]?\s*([\d\-,\s]+)", full_text)
+    if m:
+        ocu_data["문의"] = f"학사지원팀 {m.group(1).strip()}"
+
     return ocu_data
+
+
+# ── 성적처리 파싱 ─────────────────────────────────────────────
+
+_GRADE_SELECT_PERIOD = re.compile(
+    r"(\d{4})\.(\d{1,2})\.(\d{1,2})\.\([^\)]+\)\s*~\s*(\d{1,2})\.(\d{1,2})\.\([^\)]+\)"
+)
+_GRADE_SELECT_MAX = re.compile(r"학기\s*당\s*최대\s*(\d+)학점")
+_GRADE_SELECT_TOTAL = re.compile(r"재학\s*중\s*최대\s*(\d+)학점")
+_GRADE_DROP_PERIOD = re.compile(
+    r"(\d{4})\.(\d{1,2})\.(\d{1,2})\.\([^\)]+\)\s*~\s*(\d{1,2})\.(\d{1,2})\.\([^\)]+\)"
+)
+_GRADE_DROP_SEM_MAX = re.compile(r"학기\s*당\s*(\d+)학점\s*이내")
+_GRADE_DROP_TOTAL_MAX = re.compile(r"졸업\s*시\s*까지\s*최대\s*(\d+)학점")
+
+
+def parse_grading_info(pages: List[PageContent]) -> Dict[str, Dict]:
+    """PDF에서 성적평가 관련 데이터를 파싱합니다."""
+    info: Dict[str, Dict] = {
+        "일반교과목": {
+            "평가방식": "절대평가",
+            "성적등급": "A+, A, B+, B, C+, C, D+, D, F",
+            "설명": "본교 일반 교과목은 절대평가를 원칙으로 합니다.",
+        },
+        "캡스톤디자인": {
+            "평가방식": "절대평가 또는 P/NP (담당교수 결정)",
+            "수강대상": "3학년 이상",
+        },
+    }
+
+    for page in pages:
+        txt = page.text or ""
+
+        # 성적평가 선택제도 (P/NP 선택) — p.47
+        if "성적평가 선택제도" in txt or "성적평가선택제도" in txt:
+            select_info: Dict[str, str] = {}
+            m = _GRADE_SELECT_PERIOD.search(txt)
+            if m:
+                select_info["신청기간"] = (
+                    f"{m.group(1)}.{m.group(2)}.{m.group(3)}~"
+                    f"{m.group(4)}.{m.group(5)}"
+                )
+            m = _GRADE_SELECT_MAX.search(txt)
+            if m:
+                select_info["학기당최대"] = f"{m.group(1)}학점"
+            m = _GRADE_SELECT_TOTAL.search(txt)
+            if m:
+                select_info["재학중최대"] = f"{m.group(1)}학점"
+            select_info["성적처리"] = "D학점 이상 → P등급, F이하 → NP"
+            select_info["신청불가"] = "OCU·교직·자유선택·기존P/NP·계절학기"
+            info["성적평가선택제"] = select_info
+
+        # 부분적 성적포기제도 — p.48
+        if "부분적 성적포기" in txt or "성적포기제도" in txt:
+            drop_info: Dict[str, str] = {}
+            m = _GRADE_DROP_SEM_MAX.search(txt)
+            if m:
+                drop_info["학기당최대"] = f"{m.group(1)}학점"
+            m = _GRADE_DROP_TOTAL_MAX.search(txt)
+            if m:
+                drop_info["졸업까지최대"] = f"{m.group(1)}학점"
+            drop_info["대상"] = "4학기 이상 이수 재학생"
+            drop_info["포기가능성적"] = "C+이하(F포함) 또는 NP"
+            drop_info["포기불가"] = "재수강 가능 과목, 현재 교육과정 과목, 편입 전 성적, OCU, 교직"
+            info["부분적성적포기"] = drop_info
+
+        # 캡스톤 디자인 — p.84
+        if "캡스톤" in txt and "절대평가" in txt:
+            info["캡스톤디자인"]["설명"] = (
+                "캡스톤디자인은 3~4학년 대상 종합설계과목으로, "
+                "절대평가 또는 P/NP 중 담당교수가 결정합니다."
+            )
+
+    return info
+
+
+# ── 계절학기 파싱 ─────────────────────────────────────────────
+
+def parse_seasonal_semester_info(pages: List[PageContent]) -> Dict[str, str]:
+    """PDF에서 계절학기 관련 규칙을 파싱합니다.
+
+    학사일정, 수강신청 규칙, 성적평가 선택제 등 여러 페이지에 흩어진
+    계절학기 정보를 수집합니다.
+    """
+    info: Dict[str, str] = {}
+
+    for page in pages:
+        txt = page.text or ""
+        if "계절" not in txt:
+            continue
+
+        # 학기당 최대학점: "계절학기 6학점 이내" (현장실습 항목)
+        m = re.search(r"계절학기\s+(\d+)학점\s*이내", txt)
+        if m and "학기당최대학점" not in info:
+            info["학기당최대학점"] = f"{m.group(1)}학점"
+
+        # 졸업까지 최대학점: "계절학기...졸업까지 각각 최대 24학점만 인정"
+        if "계절학기" in txt and "졸업" in txt:
+            m2 = re.search(r"최대\s*(\d+)학점.*?인정", txt)
+            if m2 and "졸업까지최대학점" not in info:
+                info["졸업까지최대학점"] = f"{m2.group(1)}학점"
+
+        # 성적평가선택제 관련
+        if ("성적평가 선택제" in txt or "성적평가선택제" in txt) and (
+            "계절학기" in txt and "신청불가" in txt
+        ):
+            info["성적평가선택제"] = "계절학기 신청불가"
+
+        # 수강신청 사이트 URL
+        if "sugang.bufs.ac.kr" in txt:
+            info["수강신청사이트"] = "http://sugang.bufs.ac.kr"
+
+    # 수강신청방법 — 수강신청 사이트에서 신청 (PDF에서 추출된 URL 활용)
+    if info.get("수강신청사이트"):
+        info["수강신청방법"] = f"본교 수강신청 사이트({info['수강신청사이트']})에서 신청"
+
+    return info
 
 
 # ── 제2전공 파싱 ───────────────────────────────────────────────
@@ -407,7 +623,7 @@ def parse_second_major_credits(pages: List[PageContent]) -> Dict:
 
 # 학번 그룹 탐지 패턴
 _GRAD_GROUP_PATTERNS = [
-    (re.compile(r"2024.{0,5}2025학번"), "2024_2025"),
+    (re.compile(r"2024.{0,10}학번"), "2024_2025"),
     (re.compile(r"2023학번"),            "2023"),
     (re.compile(r"2022학번"),            "2022"),
     (re.compile(r"2021학번"),            "2021"),
@@ -507,7 +723,93 @@ def parse_graduation_reqs(pages: List[PageContent]) -> Dict[str, Dict]:
         if m and current_group in reqs:
             reqs[current_group]["글로벌소통역량학점"] = int(m.group(1))
 
+        # 교양 세부영역 파싱 (테이블 + 텍스트)
+        if current_group in reqs and "교양세부" not in reqs[current_group]:
+            details = _parse_liberal_arts_details(page, txt)
+            if details:
+                reqs[current_group]["교양세부"] = details
+
     return reqs
+
+
+def _parse_liberal_arts_details(page: PageContent, txt: str) -> Dict[str, str]:
+    """교양 세부영역 학점을 파싱합니다 (테이블 + 텍스트 하이브리드)."""
+    details = {}
+
+    # ① 텍스트에서 직접 파싱: 다양한 패턴
+    for label, patterns in [
+        ("인성체험교양", [
+            r"인성체험교양\s*[：:]\s*(\d+)학점",
+            r"①\s*인성체험교양\s*[：:]\s*(\d+)학점",
+            r"인성체험교양\s*\(?\s*(\d+)학점",
+        ]),
+        ("기초교양", [
+            r"기초교양\s*[：:]\s*(\d+)학점",
+            r"②\s*기초교양\s*[：:]\s*(\d+)학점",
+            r"기초교양\s*\(?\s*(\d+)학점",
+        ]),
+        ("균형교양", [
+            r"균형교양\s*[：:]\s*(\d+)학점",
+            r"③\s*(?:인성체험교양.*?및\s*)?균형교양\s*[：:]\s*(\d+)학점",
+            r"인성체험.*?균형교양\s*[：:]\s*(\d+)학점",
+        ]),
+    ]:
+        for pat in patterns:
+            m = re.search(pat, txt)
+            if m:
+                # 마지막 그룹 (비캡처 그룹 때문에 여러 그룹일 수 있음)
+                val = m.group(m.lastindex) if m.lastindex else m.group(1)
+                details[label] = f"{val}학점"
+                break
+
+    # ② 테이블에서 파싱: "계" 열의 숫자에서 세부 합산
+    for table_md in (page.tables or []):
+        if "인성" not in table_md and "기초교양" not in table_md:
+            continue
+
+        rows = [r for r in table_md.splitlines() if r.strip().startswith("|") and "---" not in r]
+        if len(rows) < 3:
+            continue
+
+        # 헤더행에서 영역명 추출, 데이터행에서 학점 추출
+        header_cells = [c.strip() for c in rows[0].strip("|").split("|")]
+        # 서브헤더 (채플, 자기계발, 사회봉사 등)
+        sub_cells = [c.strip() for c in rows[2].strip("|").split("|")] if len(rows) > 2 else []
+        # 데이터행 (학점 숫자)
+        data_cells = [c.strip() for c in rows[-1].strip("|").split("|")] if rows else []
+
+        # "인성체험교양" 영역 합산
+        insung_start = None
+        for i, h in enumerate(header_cells):
+            if "인성" in h and insung_start is None:
+                insung_start = i
+
+        # "기초교양" 영역
+        basic_idx = None
+        for i, h in enumerate(header_cells):
+            if "기초" in h:
+                basic_idx = i
+
+        # 학점 데이터에서 큰 숫자 찾기 (합계)
+        nums = []
+        for c in data_cells:
+            m = re.search(r"(\d+)", c)
+            if m:
+                nums.append(int(m.group(1)))
+
+        # 합계가 있으면 "인성체험교양+기초교양" 또는 "균형교양" 분리
+        if nums:
+            # 30이상이면 교양 전체 합계
+            for n in nums:
+                if "인성체험교양" not in details:
+                    if 7 <= n <= 12:
+                        details["인성체험교양"] = f"{n}학점"
+                    elif 5 <= n <= 8 and "기초교양" not in details:
+                        details["기초교양"] = f"{n}학점"
+                    elif 14 <= n <= 24 and "균형교양" not in details:
+                        details["균형교양"] = f"{n}학점"
+
+    return details
 
 
 # ── 학과 정보 파싱 ─────────────────────────────────────────────
@@ -725,6 +1027,18 @@ def build_graph_from_pdf(
         graph.add_registration_rule(grp, data)
     logger.info(f"  수강신청규칙 {len(rules)}개 그룹 추가")
 
+    # ── 2-0. 수강신청 학년별 일정 ────────────────────────────
+    grade_sched = parse_registration_grade_schedule(reg_pages, base_year=base_year)
+    for gs in grade_sched:
+        ev_name = f"수강신청_{gs['학년']}"
+        graph.add_schedule(ev_name, sem, {
+            "시작일": gs["날짜"],
+            "종료일": gs["날짜"],
+            "비고": f"{gs['학년']} {gs['시간']} ({gs['요일']}요일) {gs.get('신청가능과목','')}".strip(),
+        })
+    if grade_sched:
+        logger.info(f"  수강신청 학년별 일정 {len(grade_sched)}개 추가")
+
     # ── 2-1. OCU 파싱 및 수강신청규칙에 추가 ──────────────────
     logger.info("OCU 섹션 파싱 중...")
     ocu_pages = [p for p in pages if any(k in (p.text or "") for k in SECTION_KEYS["ocu"])]
@@ -732,11 +1046,19 @@ def build_graph_from_pdf(
         ocu_data = parse_ocu_section(ocu_pages)
         logger.info(f"  OCU 파싱 완료: {ocu_data}")
 
-        # OCU 정보를 수강신청규칙에 추가
+        # OCU 정보를 독립 노드로 생성 (수강규칙에 합치지 않음)
+        ocu_node_id = graph.add_static_page_info(
+            name="OCU 수강안내",
+            data={k: v for k, v in ocu_data.items()
+                  if k not in ("개강일", "개강시간")},
+            node_type="OCU", prefix="ocu_",
+        )
+        # 수강규칙 → OCU 엣지 (1-hop 탐색용)
         for grp in ("2023이후", "2022이전"):
-            if f"reg_{grp}" in graph.G.nodes:
-                graph.G.nodes[f"reg_{grp}"].update(ocu_data)
-                logger.info(f"  OCU 정보 추가: reg_{grp}")
+            reg_nid = f"reg_{grp}"
+            if reg_nid in graph.G.nodes:
+                graph.G.add_edge(reg_nid, ocu_node_id, relation="포함한다")
+        logger.info(f"  OCU 독립 노드 생성: {ocu_node_id}")
 
         graph.add_schedule(
             "OCU 시스템 사용료 납부기간",
@@ -763,7 +1085,52 @@ def build_graph_from_pdf(
     else:
         logger.warning("  OCU 섹션을 찾을 수 없음")
 
-    # ── 2-2. 제2전공 학점 파싱 및 졸업요건에 추가 ──────────────
+    # ── 2-2. 성적처리 파싱 ─────────────────────────────────────
+    logger.info("성적처리 파싱 중...")
+    grading_pages = [p for p in pages if any(k in (p.text or "") for k in SECTION_KEYS["grading"])]
+    if grading_pages:
+        grading_info = parse_grading_info(grading_pages)
+        # grading_root 노드 생성
+        root_id = "grading_root"
+        graph.G.add_node(root_id, type="성적처리", 구분="성적처리기준")
+        graph._index_add(root_id, "성적처리")
+
+        for category, data in grading_info.items():
+            # 분류태그 결정
+            if "OCU" in category or "사이버" in category:
+                tag = "OCU"
+            elif "선택" in category or "포기" in category:
+                tag = "성적선택제"
+            elif "캡스톤" in category:
+                tag = "P/NP"
+            elif "학사경고" in category:
+                tag = "학사경고"
+            else:
+                tag = "일반"
+
+            node_id = graph.add_static_page_info(
+                name=category, data={**data, "분류태그": tag},
+                node_type="성적처리", prefix="grade_pdf_",
+            )
+            graph.G.add_edge(root_id, node_id, relation="포함한다")
+            logger.info(f"  성적처리 노드: {node_id} (태그={tag})")
+    else:
+        logger.warning("  성적처리 섹션을 찾을 수 없음")
+
+    # ── 2-3. 계절학기 파싱 ─────────────────────────────────────
+    logger.info("계절학기 정보 파싱 중...")
+    seasonal_info = parse_seasonal_semester_info(pages)
+    if seasonal_info:
+        graph.add_static_page_info(
+            name="계절학기 수강안내",
+            data=seasonal_info,
+            node_type="계절학기", prefix="seasonal_",
+        )
+        logger.info(f"  계절학기 파싱 완료: {seasonal_info}")
+    else:
+        logger.warning("  계절학기 정보를 찾을 수 없음")
+
+    # ── 2-4. 제2전공 학점 파싱 및 졸업요건에 추가 ──────────────
     logger.info("제2전공 학점 파싱 중...")
     second_major_pages = [p for p in pages if any(k in (p.text or "") for k in SECTION_KEYS["second_major"])]
     if second_major_pages:
@@ -927,6 +1294,10 @@ def build_graph_from_pdf(
     logger.info("핵심 관계(엣지) 구축 중...")
     _build_core_edges(graph)
 
+    # ── 9. 구조화 노드 (StudentGroup, StudentType, Condition) ──
+    logger.info("구조화 노드 (학번그룹/학생유형/조건) 생성 중...")
+    _build_structural_nodes(graph)
+
     # ── 결과 저장 ─────────────────────────────────────────────
     total_nodes = graph.G.number_of_nodes()
     total_edges = graph.G.number_of_edges()
@@ -1006,6 +1377,161 @@ def _extract_micro_major_names(pages: List[PageContent]) -> List[Tuple[str, Dict
                 seen.add(name)
                 results.append((name, {"유형": "융합형", "이수학점": credits}))
     return results
+
+
+def _build_structural_nodes(graph: AcademicGraph) -> None:
+    """
+    실용적 구조화 노드 생성 — 쿼리에서 실제 탐색되는 엣지만 만듦.
+
+    원칙: 엣지는 쿼리 코드에서 successors()로 탐색될 관계만 생성.
+    - 학번그룹 → 졸업요건/전공이수방법/수강규칙 (1-hop 탐색용)
+    - 수강규칙 → Condition (조건 키워드 매칭용)
+    - 장학금 → Condition (장학금 조건 질문용)
+    - 학과→졸업요건 교차 엣지는 제거 (직접 ID 조회로 충분)
+    """
+    from app.graphdb.academic_graph import GROUP_LABELS
+
+    G = graph.G
+
+    # ── 1) StudentGroup → 졸업요건/전공이수방법/수강규칙 ──
+    # 쿼리 활용: _query_graduation()에서 학번→그룹→요건 1-hop
+    for gk in GROUP_LABELS:
+        gid = graph.add_student_group(gk)
+        for nid, data in graph._nodes_by_type("졸업요건"):
+            if data.get("적용학번그룹") == gk:
+                graph.add_relation(gid, nid, "적용된다")
+        for nid, data in graph._nodes_by_type("전공이수방법"):
+            if data.get("적용학번범위") == gk:
+                graph.add_relation(gid, nid, "적용된다")
+
+    # 수강규칙 → StudentGroup (역방향: 그룹에서 규칙 찾기)
+    for nid, data in graph._nodes_by_type("수강신청규칙"):
+        if nid.startswith("reg_guide_"):
+            continue
+        reg_grp = data.get("적용학번그룹", "")
+        if "2023" in reg_grp:
+            for gk in ("2023", "2024_2025"):
+                gid = f"group_{gk}"
+                if gid in G.nodes:
+                    graph.add_relation(gid, nid, "적용된다")
+        elif "2022" in reg_grp:
+            for gk in ("2022", "2021", "2017_2020", "2016_before"):
+                gid = f"group_{gk}"
+                if gid in G.nodes:
+                    graph.add_relation(gid, nid, "적용된다")
+
+    # ── 2) 수강규칙 → Condition (쿼리에서 키워드 매칭용) ──
+    _REG_COND_KEYS = {
+        "최대신청학점": "최대신청학점",
+        "평점4이상최대학점": "평점4이상최대학점",
+        "재수강제한": "재수강제한",
+        "재수강최고성적": "재수강최고성적",
+        "재수강기준성적": "재수강기준성적",
+        "OCU최대학점": "OCU최대학점",
+        "OCU출석요건": "OCU출석요건",
+        "정규학기_최대학점": "OCU정규학기최대",
+        "출석요건": "OCU출석요건",
+    }
+
+    for nid, data in graph._nodes_by_type("수강신청규칙"):
+        if nid.startswith("reg_guide_"):
+            continue
+        grp = data.get("적용학번그룹", nid.replace("reg_", ""))
+        for attr_key, cond_label in _REG_COND_KEYS.items():
+            val = data.get(attr_key)
+            if val is None or val == "":
+                continue
+            cond_name = f"{cond_label}_{grp}"
+            cond_id = graph.add_condition(cond_name, {"값": str(val), "원본키": attr_key})
+            graph.add_relation(nid, cond_id, "제약한다")
+
+    # ── 3) 장학금 → Condition (장학금 조건 질문용) ──
+    for nid, data in graph._nodes_by_type("장학금"):
+        text = " ".join(str(v) for v in data.values())
+        # "12학점 이상" 패턴 → 최소이수학점 조건
+        import re
+        m = re.search(r"(\d+)학점\s*이상.*?이수", text)
+        if m:
+            cond_id = graph.add_condition(
+                f"최소이수학점_{nid}",
+                {"값": f"{m.group(1)}학점 이상", "원본키": "선발기준"},
+            )
+            graph.add_relation(nid, cond_id, "요구한다")
+
+    # ── 4) 정적 페이지 하위 섹션 → 부모 정책 노드 연결 ──
+    # reg_guide_ → reg_2023이후/reg_2022이전 ("포함한다")
+    for nid in graph._type_index.get("수강신청규칙", []):
+        if not nid.startswith("reg_guide_"):
+            continue
+        # PDF 기반 수강규칙 노드와 연결
+        for parent_nid in ("reg_2023이후", "reg_2022이전"):
+            if parent_nid in G.nodes:
+                graph.add_relation(parent_nid, nid, "포함한다")
+                break  # 하나만 연결 (중복 방지)
+
+    # grad_guide_ → 졸업요건 노드 연결
+    for nid in graph._type_index.get("졸업요건", []):
+        if not nid.startswith("grad_guide_"):
+            continue
+        # 최신 학번 졸업요건에 연결
+        parent = "grad_2024_2025_내국인"
+        if parent in G.nodes:
+            graph.add_relation(parent, nid, "포함한다")
+
+    # leave_info_ 섹션 간 부모-자식: "휴학 > 정의" → 부모 = "학적변동 안내"
+    leave_parent = None
+    for nid in graph._type_index.get("휴복학", []):
+        data = G.nodes.get(nid, {})
+        section = data.get("구분", "")
+        if "학적변동" in section or "안내" in section:
+            leave_parent = nid
+            break
+    if leave_parent:
+        for nid in graph._type_index.get("휴복학", []):
+            if nid != leave_parent:
+                graph.add_relation(leave_parent, nid, "포함한다")
+
+    # ── 5) 학사일정 → 관련 정책 연결 ("기간정한다") ──
+    _SCHEDULE_POLICY_MAP = {
+        "휴복학": ["휴복학", "휴학", "복학"],
+        "조기졸업": ["조기졸업"],
+        "수강신청규칙": ["수강신청", "수강정정", "장바구니"],
+        "성적처리": ["성적", "평가"],
+    }
+    for sched_nid, sched_data in graph._nodes_by_type("학사일정"):
+        event = sched_data.get("이벤트명", "")
+        for policy_type, keywords in _SCHEDULE_POLICY_MAP.items():
+            if any(kw in event for kw in keywords):
+                # 해당 정책 타입의 첫 번째 노드와 연결
+                policy_nodes = graph._type_index.get(policy_type, [])
+                if policy_nodes:
+                    target = policy_nodes[0]
+                    graph.add_relation(sched_nid, target, "기간정한다")
+                break  # 하나의 정책만 연결
+
+    # ── 6) 장학금 → Condition 보강 (선발기준 텍스트에서 추출) ──
+    import re as _re
+    for nid, data in graph._nodes_by_type("장학금"):
+        criteria = str(data.get("선발기준", ""))
+        # "평점 N.N 이상" 패턴
+        for m in _re.finditer(r"평점(?:평균)?\s*([\d.]+)\s*이상", criteria):
+            cond_id = graph.add_condition(
+                f"평점기준_{nid}", {"값": f"평점 {m.group(1)} 이상", "원본키": "선발기준"}
+            )
+            graph.add_relation(nid, cond_id, "요구한다")
+            break
+        # "N학점 이상 이수" 패턴
+        for m in _re.finditer(r"(\d+)학점\s*이상\s*이수", criteria):
+            cond_id = graph.add_condition(
+                f"이수학점기준_{nid}", {"값": f"{m.group(1)}학점 이상", "원본키": "선발기준"}
+            )
+            graph.add_relation(nid, cond_id, "요구한다")
+            break
+
+    cond_count = len(graph._type_index.get("조건", []))
+    group_count = len(graph._type_index.get("학번그룹", []))
+    edge_count = G.number_of_edges()
+    logger.info(f"  학번그룹 {group_count}개, 조건 {cond_count}개, 엣지 {edge_count}개")
 
 
 def _build_core_edges(graph: AcademicGraph) -> None:

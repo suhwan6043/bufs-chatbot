@@ -10,6 +10,7 @@ from typing import Optional
 
 from app.models import Intent, QueryAnalysis
 from app.pipeline.glossary import Glossary
+from app.graphdb.academic_graph import get_student_group
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,9 @@ class QueryAnalyzer:
             "몇 학점", "교양", "전공학점", "글로벌소통역량",
             "취업커뮤니티", "NOMAD", "졸업인증", "졸업시험",
             "학점인정", "선이수", "인정",
+            # 성적처리기준
+            "성적처리", "성적기준", "평점산출", "평점계산", "학점계산",
+            "성적이의", "성적정정",
         ],
         Intent.REGISTRATION: [
             "수강신청", "수강", "재수강", "학점이월",
@@ -68,13 +72,24 @@ class QueryAnalyzer:
             "수강신청 정정", "수강정정", "공인결석계",
             "이수 가능", "신청 가능", "수강 가능",
             "이수구분", "이수구분 변경", "이수구분 신청",
+            # 계절학기
+            "계절학기", "계절수업", "하계학기", "동계학기",
             # 성적선택제도 (A~F / P/NP 선택 신청)
             "성적선택", "성적포기", "Pass", "P/NP", "등급제",
+            # 자유학기제
+            "자유학기제", "자유학기", "7+1학기", "7+1",
+            # 전자출결
+            "전자출결", "출결", "출석체크", "전자출석",
+            # 등록금반환
+            "등록금 반환", "등록금반환", "등록금 환불", "환불기준",
+            "등록금납부", "수업료 반환",
         ],
         Intent.SCHEDULE: [
             "언제", "기간", "일정", "마감", "시작일", "종료일",
             "중간고사", "기말고사", "개강", "종강", "방학",
             "수강취소", "수업일수", "학사일정",
+            # 시험
+            "시험", "시험기간", "고사",
         ],
         Intent.COURSE_INFO: [
             "과목", "교과목", "수업", "강의",
@@ -175,6 +190,12 @@ class QueryAnalyzer:
             requires_graph = False
             requires_vector = True
 
+        # 성적처리기준 질문은 그래프에 노드 있음 → 그래프 탐색 유지
+        _GRADE_PROCESS_KW = ("성적처리", "평점산출", "평점계산")
+        if any(kw in normalized for kw in _GRADE_PROCESS_KW):
+            requires_graph = True
+            requires_vector = True
+
         missing_info = []
         if not student_id and intent in (
             Intent.GRADUATION_REQ, Intent.MAJOR_CHANGE, Intent.REGISTRATION
@@ -263,18 +284,7 @@ class QueryAnalyzer:
 
     @staticmethod
     def _year_to_group(year: str) -> str:
-        value = int(year)
-        if value >= 2024:
-            return "2024_2025"
-        if value == 2023:
-            return "2023"
-        if value == 2022:
-            return "2022"
-        if value == 2021:
-            return "2021"
-        if value >= 2017:
-            return "2017_2020"
-        return "2016_before"
+        return get_student_group(year)
 
     def _extract_student_type(self, text: str) -> Optional[str]:
         for stype, pattern in self.STUDENT_TYPE_PATTERNS.items():

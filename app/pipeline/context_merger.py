@@ -4,6 +4,7 @@ CPU 전용, ~2ms 처리
 """
 
 import logging
+import re
 from typing import List
 
 from app.models import SearchResult, MergedContext
@@ -14,30 +15,60 @@ logger = logging.getLogger(__name__)
 TOKENS_PER_CHAR = 1.5
 MAX_CONTEXT_TOKENS = 1200  # 시스템 프롬프트(~300) + 질문(~100) + 답변(~400) 제외
 
+# RRF 상수
+_RRF_K = 60
+# 그래프 가중치: 구조화된 데이터가 더 신뢰도 높으므로 1.5배 가중
+_GRAPH_WEIGHT = 1.5
+_VECTOR_WEIGHT = 1.0
+
+
+def _rrf_merge(
+    graph_results: List[SearchResult],
+    vector_results: List[SearchResult],
+) -> List[SearchResult]:
+    """
+    Weighted Reciprocal Rank Fusion으로 그래프·벡터 결과를 병합합니다.
+    score_rrf(d) = w_graph / (k + rank_graph(d)) + w_vector / (k + rank_vector(d))
+
+    그래프 결과에 1.5배 가중치를 부여하여 구조화된 데이터를 우선하되,
+    벡터 결과도 순위에 따라 자연스럽게 끼어듭니다.
+    """
+    rrf_scores: dict = {}   # id(result) → rrf_score
+    result_map: dict = {}   # id(result) → SearchResult
+
+    for rank, r in enumerate(graph_results, start=1):
+        r.metadata["source_type"] = "graph"
+        rid = id(r)
+        rrf_scores[rid] = rrf_scores.get(rid, 0.0) + _GRAPH_WEIGHT / (_RRF_K + rank)
+        result_map[rid] = r
+
+    for rank, r in enumerate(vector_results, start=1):
+        r.metadata["source_type"] = "vector"
+        rid = id(r)
+        rrf_scores[rid] = rrf_scores.get(rid, 0.0) + _VECTOR_WEIGHT / (_RRF_K + rank)
+        result_map[rid] = r
+
+    merged = sorted(result_map.values(), key=lambda r: rrf_scores[id(r)], reverse=True)
+    for r in merged:
+        r.score = rrf_scores[id(r)]
+    return merged
+
 
 class ContextMerger:
     """
     [역할] Vector/Graph 검색 결과를 LLM 프롬프트용 컨텍스트로 통합
-    [핵심] 2048 토큰 제한 내에서 가장 관련성 높은 정보를 선별
+    [핵심] RRF(k=60)로 두 검색 채널을 순위 기반 병합 후 토큰 제한 내 선별
     """
 
     def merge(
         self,
         vector_results: List[SearchResult],
         graph_results: List[SearchResult],
+        question: str = "",
     ) -> MergedContext:
         """검색 결과를 통합된 컨텍스트로 병합합니다."""
-        # 그래프 결과 우선 (구조화된 정보가 더 정확)
-        all_results = []
-        for r in graph_results:
-            r.metadata["source_type"] = "graph"
-            all_results.append(r)
-        for r in vector_results:
-            r.metadata["source_type"] = "vector"
-            all_results.append(r)
-
-        # 점수 기준 정렬 (그래프 결과는 score=1.0)
-        all_results.sort(key=lambda x: x.score, reverse=True)
+        # RRF로 그래프·벡터 결과 병합 (rank 기반, 점수 스케일 무관)
+        all_results = _rrf_merge(graph_results, vector_results)
 
         # 토큰 제한 내에서 컨텍스트 구성
         context_parts = []
@@ -53,13 +84,21 @@ class ContextMerger:
                 direct_answer = result.metadata["direct_answer"]
 
             text_len = len(result.text)
-            if total_chars + text_len > max_chars:
-                # 남은 공간에 맞게 자르기
-                remaining = max_chars - total_chars
-                if remaining > 100:
-                    truncated = result.text[:remaining] + "..."
-                    context_parts.append(self._format_result(result, truncated))
+            remaining = max_chars - total_chars
+
+            if remaining <= 50:
                 break
+
+            if text_len > remaining:
+                # 남은 공간에 맞게 자르기 — skip 대신 truncate 후 continue
+                truncated = result.text[:remaining] + "..."
+                context_parts.append(self._format_result(result, truncated))
+                total_chars += remaining
+                if result.metadata.get("source_type") == "graph":
+                    selected_graph.append(result)
+                else:
+                    selected_vector.append(result)
+                continue
 
             context_parts.append(self._format_result(result))
             total_chars += text_len
@@ -75,6 +114,12 @@ class ContextMerger:
         # 공지사항 출처 URL 수집 (중복 제거)
         source_urls = self._collect_source_urls(selected_vector + selected_graph)
 
+        # direct_answer가 없으면 컨텍스트에서 팩트 자동 추출 시도
+        if not direct_answer and formatted and question:
+            extracted = self._try_extract_direct_answer(question, formatted)
+            if extracted:
+                direct_answer = extracted
+
         return MergedContext(
             vector_results=selected_vector,
             graph_results=selected_graph,
@@ -83,6 +128,50 @@ class ContextMerger:
             direct_answer=direct_answer,
             source_urls=source_urls,
         )
+
+    @staticmethod
+    def _try_extract_direct_answer(question: str, context: str) -> str:
+        """
+        질문 유형에 따라 컨텍스트에서 핵심 팩트를 정규식으로 직접 추출.
+        추출 성공 시 LLM을 우회하여 정확도 향상 + 지연 시간 절감.
+        추출 실패 시 빈 문자열 → 기존 LLM 경로 유지.
+
+        주의: 오탐 방지를 위해 질문+컨텍스트 동시 매칭만 수행.
+        """
+        q = re.sub(r"\s+", "", question.lower())
+
+        # ── 1) URL 추출: "사이트", "주소", "홈페이지" ──
+        if any(kw in q for kw in ("사이트", "주소", "홈페이지", "url")):
+            urls = re.findall(r"https?://[^\s)\]가-힣]+", context)
+            if urls:
+                return f"{urls[0]}입니다."
+
+        # ── 2) 재수강 최고 성적 (매우 구체적 질문만) ──
+        if "최고성적" in q or ("재수강" in q and "성적" in q and "최고" in q):
+            m = re.search(r"재수강최고성적[은는:]?\s*([A-Da-d][+]?)", context)
+            if m:
+                return f"{m.group(1)}입니다."
+
+        # ── 3) 재수강 가능 성적 기준 ──
+        if "재수강" in q and ("가능" in q or "기준" in q) and "성적" in q:
+            m = re.search(r"([A-Da-d][+]?)\s*이하.*?(?:과목|가능|재수강)", context)
+            if m:
+                return f"{m.group(1)} 이하의 과목만 가능합니다."
+
+        # ── 4) 출석 요건 (분수/비율) ──
+        if "출석" in q and any(kw in q for kw in ("요건", "조건", "기준")):
+            m = re.search(r"(\d+/\d+)\s*이상", context)
+            if m:
+                return f"전체 출석일수의 {m.group(1)} 이상을 충족해야 합니다."
+
+        # ── 5) 졸업 최소 학점 (학번 특정) ──
+        if ("졸업" in q or "필요한" in q) and ("최소" in q or "학점" in q):
+            # 컨텍스트에서 졸업학점 추출 (단일 값만)
+            m = re.search(r"졸업학점[은는:]?\s*(\d{2,3})", context)
+            if m:
+                return f"{m.group(1)}학점 이상입니다."
+
+        return ""
 
     @staticmethod
     def _collect_source_urls(results: list) -> list:

@@ -36,11 +36,31 @@ def normalize_text(text: str) -> str:
 
 def canonicalize_dates(text: str) -> str:
     text = normalize_text(text)
+    # 날짜: 2026년 4월 20일 → 20260420
     text = re.sub(
         r"(20\d{2})년\s*(\d{1,2})월\s*(\d{1,2})일",
         lambda m: f"{m.group(1)}{int(m.group(2)):02d}{int(m.group(3)):02d}",
         text,
     )
+    # 시간: "18시 05분" → "18:05", "18시" → "18:00"
+    text = re.sub(
+        r"(\d{1,2})시\s*(\d{1,2})분",
+        lambda m: f"{int(m.group(1)):02d}:{int(m.group(2)):02d}",
+        text,
+    )
+    text = re.sub(
+        r"(\d{1,2})시(?!\d)",
+        lambda m: f"{int(m.group(1)):02d}:00",
+        text,
+    )
+    # 시간: "18:00" 형태를 통일 (이미 맞는 경우 유지)
+    text = re.sub(
+        r"(\d{1,2}):(\d{2})",
+        lambda m: f"{int(m.group(1)):02d}:{m.group(2)}",
+        text,
+    )
+    # 성적등급 정규화: "a이다" → "a", "a등급" → "a"
+    text = re.sub(r"\b([a-d][+]?)\s*(?:이다|입니다|등급)", r"\1", text)
     return text
 
 
@@ -62,6 +82,7 @@ def extract_key_tokens(text: str) -> list[str]:
         r"\d+급",
         r"\d+과목",
         r"\d+교시",
+        r"\d{2}:\d{2}",
         r"\d+시\d+분",
         r"\d+시",
         r"\d+분",
@@ -148,6 +169,7 @@ async def evaluate_one(
     merged = merger.merge(
         vector_results=search_results.get("vector_results", []),
         graph_results=search_results.get("graph_results", []),
+        question=question,
     )
 
     if merged.direct_answer:
