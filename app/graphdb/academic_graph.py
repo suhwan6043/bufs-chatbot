@@ -812,6 +812,11 @@ class AcademicGraph:
                 if any(kw in event_norm for kw in norm_keywords):
                     matched.append(schedule)
             if matched:
+                # "ocu"가 질문에 없으면 OCU 전용 이벤트 제외
+                if "ocu" not in question_norm:
+                    non_ocu = [m for m in matched if "ocu" not in m.get("_normalized_event", "").lower()]
+                    if non_ocu:
+                        matched = non_ocu
                 matched.sort(key=lambda m: len(m.get("이벤트명", "")))
                 return matched
 

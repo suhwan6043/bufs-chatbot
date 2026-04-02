@@ -1090,6 +1090,7 @@ def build_graph_from_pdf(
         if "3" in full_sched_text.split("개강")[0] if "개강" in full_sched_text else False:
             semester_month = 3
 
+    sched_parsed_page = None  # 실제 테이블 파싱 페이지 추적
     for sp in sched_pages[:3]:  # 첫 3개 페이지만 (일정이 한 페이지에 몰려 있음)
         for table_md in sp.tables:
             if "학사" in table_md or "내용" in table_md:
@@ -1099,6 +1100,7 @@ def build_graph_from_pdf(
                     semester_start_month=semester_month,
                 )
                 if events:
+                    sched_parsed_page = sp.page_number
                     # 학기 정정: 3월 이후면 1학기
                     for evt in events:
                         if semester_month == 3:
@@ -1123,8 +1125,8 @@ def build_graph_from_pdf(
         logger.warning("  학사일정 테이블 파싱 실패 → 일정 없음")
 
     sem = schedule_events[0]["학기"] if schedule_events else "2026-1"
-    # 학사일정 PDF 출처 메타 (원칙 3: 버전 관리)
-    sched_source_pages = sorted(set(p.page_number for p in sched_pages if p.text))
+    # 학사일정 PDF 출처 메타 — 실제 파싱한 페이지만 (목차 제외)
+    sched_source_pages = [sched_parsed_page] if sched_parsed_page else []
     sched_source_file = sched_pages[0].source_file if sched_pages else str(pdf_path)
     for ev in schedule_events:
         graph.add_schedule(
@@ -1167,7 +1169,10 @@ def build_graph_from_pdf(
     logger.info(f"  수강신청규칙 {len(rules)}개 그룹 추가")
 
     # ── 2-0. 수강신청 학년별 일정 ────────────────────────────
-    reg_source_pages = sorted(set(p.page_number for p in reg_pages if p.text))
+    # 학년별 일정 테이블은 "신청학년" 키워드가 있는 페이지에서 파싱됨
+    reg_sched_pages = [p.page_number for p in reg_pages
+                       if p.text and "신청학년" in p.text and "수강신청" in p.text]
+    reg_source_pages = reg_sched_pages[:2] if reg_sched_pages else []
     reg_source_file = reg_pages[0].source_file if reg_pages else str(pdf_path)
     grade_sched = parse_registration_grade_schedule(reg_pages, base_year=base_year)
     for gs in grade_sched:
