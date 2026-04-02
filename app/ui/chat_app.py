@@ -45,21 +45,31 @@ PORTAL_LINKS = [
     {"icon": "📢", "label": "학사공지",                 "url": "https://www.bufs.ac.kr/bbs/board.php?bo_table=notice_aca"},
 ]
 
-# 학과 목록 (QueryAnalyzer.DEPARTMENT_KEYWORDS 기반)
-DEPARTMENTS = [
-    "컴퓨터공학", "소프트웨어", "빅데이터", "인공지능",
-    "스마트융합보안", "스마트에너지",
-    "영어", "일본어", "중국어", "한국어",
-    "독일어", "프랑스어", "스페인어", "러시아어",
-    "베트남어", "태국어", "미얀마어", "아랍",
-    "인도네시아", "인도어", "터키어", "이탈리아어",
-    "경영", "경제", "금융", "회계", "무역", "마케팅",
-    "관광", "호텔", "항공서비스",
-    "외교", "행정",
-    "사회복지", "상담심리", "사이버경찰",
-    "영상콘텐츠", "체육", "스포츠",
-    "국제개발협력", "글로벌창업", "비서",
-]
+# 학과 목록 (departments.json에서 동적 로드)
+def _load_departments() -> list:
+    """departments.json에서 학과/전공 이름을 추출합니다."""
+    try:
+        import json
+        from pathlib import Path
+        data_path = Path(__file__).parent.parent.parent / "data" / "contacts" / "departments.json"
+        with open(data_path, encoding="utf-8") as f:
+            data = json.load(f)
+        names = []
+        for college in data.get("colleges", []):
+            for dept in college.get("departments", []):
+                # "전공" 접미사 제거
+                name = dept["name"].replace("전공", "").replace("학부", "").replace("학과", "").strip()
+                if name:
+                    names.append(name)
+                for sub in dept.get("sub_units", []):
+                    sub_name = sub["name"].replace("전공", "").replace("학부", "").replace("학과", "").strip()
+                    if sub_name:
+                        names.append(sub_name)
+        return sorted(set(names))
+    except Exception:
+        return []
+
+DEPARTMENTS = _load_departments()
 
 # ── Loading animation (답변 생성 중 표시) ───────────
 THINKING_HTML = """
@@ -899,7 +909,6 @@ def _format_contact_answer(question: str) -> str:
             f"`내선 {r.extension}` / {r.phone}{office_info}"
         )
 
-    lines.append("\n> 운영시간: 평일 09:00 ~ 18:00 (점심 12:00 ~ 13:00 제외)")
     return "\n".join(lines)
 
 
@@ -921,7 +930,7 @@ def _get_contact_footer(intent, entities: dict, question: str) -> str:
                 r = results[0]
                 return f"\n\n---\n📞 **{r.name}** 문의: `{r.phone}`"
 
-    # 학사 일반 질문 → 학사지원팀
+    # 학사 일반 질문 → 학사지원팀 (departments.json에서 동적 조회)
     _ACADEMIC = {
         Intent.GRADUATION_REQ, Intent.EARLY_GRADUATION,
         Intent.REGISTRATION, Intent.SCHEDULE,
@@ -929,7 +938,9 @@ def _get_contact_footer(intent, entities: dict, question: str) -> str:
         Intent.ALTERNATIVE,
     }
     if intent in _ACADEMIC:
-        return "\n\n---\n📞 학사 문의: **학사지원팀** `051-509-5181`"
+        haksa = get_dept_searcher().search("학사지원팀", top_k=1)
+        if haksa:
+            return f"\n\n---\n📞 학사 문의: **{haksa[0].name}** `{haksa[0].phone}`"
 
     return ""
 
@@ -991,7 +1002,7 @@ def _render_source_panel(results: list) -> None:
             if key and key not in seen:
                 seen.add(key)
                 items.append(("notice", r))
-        elif r.source:
+        elif r.source and r.source != "graph" and r.page_number:
             key = f"{r.source}:{r.page_number}"
             if key not in seen:
                 seen.add(key)

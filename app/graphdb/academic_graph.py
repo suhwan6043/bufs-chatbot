@@ -684,17 +684,39 @@ class AcademicGraph:
             return f"{self._format_date(start)}부터 {int(end[5:7])}월 {int(end[8:10])}일까지"
         return f"{self._format_date(start)}부터 {end}까지"
 
-    @staticmethod
+    def _make_graph_result(
+        self,
+        text: str,
+        node_data: dict = None,
+        score: float = 1.0,
+        extra_meta: dict = None,
+    ) -> SearchResult:
+        """그래프 노드 데이터로부터 PDF 출처가 포함된 SearchResult를 생성합니다."""
+        node_data = node_data or {}
+        sf = (node_data.get("_source_file", "")
+              or self.G.graph.get("source_pdf", ""))
+        sp = node_data.get("_source_pages", [])
+        meta = dict(extra_meta or {})
+        meta["source_type"] = "graph"
+        if len(sp) > 1:
+            meta["source_pages"] = sp
+        return SearchResult(
+            text=text,
+            score=score,
+            source=sf,
+            page_number=sp[0] if sp else 0,
+            metadata=meta,
+        )
+
     def _make_direct_result(
+        self,
         context_text: str,
         answer_text: str,
         score: float = 1.2,
     ) -> SearchResult:
-        return SearchResult(
-            text=context_text,
-            score=score,
-            source="graph",
-            metadata={"direct_answer": answer_text},
+        return self._make_graph_result(
+            text=context_text, score=score,
+            extra_meta={"direct_answer": answer_text},
         )
 
     def _schedule_to_result(
@@ -706,11 +728,14 @@ class AcademicGraph:
         start = schedule.get("시작일", "")
         end = schedule.get("종료일", "")
         period = start if start == end else f"{start}~{end}"
-        line = f"[학사일정]\n- {schedule.get('이벤트명', '')}: {period}"
+        line = f"학사일정: {schedule.get('이벤트명', '')} {period}"
         if schedule.get("비고"):
-            line += f"\n- 비고: {schedule['비고']}"
+            line += f" (비고: {schedule['비고']})"
         metadata = {"direct_answer": answer_text} if answer_text else {}
-        return SearchResult(text=line, score=score, source="graph", metadata=metadata)
+        return self._make_graph_result(
+            text=line, node_data=schedule, score=score,
+            extra_meta=metadata,
+        )
 
     def _find_schedule_matches(self, question: str) -> List[dict]:
         schedules = self.get_schedules()
@@ -750,7 +775,7 @@ class AcademicGraph:
              ["제12전공신청및변경전과"]),
             (lambda q: "ocu" in q and "납부" in q, ["ocusystem사용료납부기간", "ocu시스템사용료납부기간"]),
             (lambda q: "야간" in q or any(f"{i}교시" in q for i in range(10, 15)), ["야간수업시간표"]),
-            (lambda q: "수강신청" in q and ("기간" in q or "언제" in q)
+            (lambda q: "수강신청" in q and ("기간" in q or "언제" in q or "신청일" in q or "며칠" in q)
              and "정정" not in q and "확인" not in q and "취소" not in q
              and "장바구니" not in q,
              ["수강신청", "수강신청_1학년", "수강신청_2학년", "수강신청_3학년",
@@ -889,11 +914,11 @@ class AcademicGraph:
             if data:
                 text = self._fmt_graduation(student_id, stype, data)
                 score = 1.0 if stype == student_type else 0.8
-                results.append(SearchResult(text=text, score=score, source="graph"))
+                results.append(self._make_graph_result(text=text, node_data=data, score=score))
         # 전공이수방법 추가
         for m in self.get_major_methods(student_id):
             text = self._fmt_major_method(m)
-            results.append(SearchResult(text=text, score=0.95, source="graph"))
+            results.append(self._make_graph_result(text=text, node_data=m, score=0.95))
         return results
 
     def _query_dept_grad_exam(self, question: str, dept_hint: str = "") -> List[SearchResult]:
@@ -921,11 +946,9 @@ class AcademicGraph:
 
             if matched:
                 text = self._fmt_department(data)
-                results.append(SearchResult(
-                    text=text,
-                    score=1.1,
-                    source="graph",
-                    metadata={"dept_name": dept_name},
+                results.append(self._make_graph_result(
+                    text=text, node_data=data, score=1.1,
+                    extra_meta={"dept_name": dept_name},
                 ))
 
         return results
@@ -942,9 +965,9 @@ class AcademicGraph:
         if "계절학기" in question or "계절수업" in question:
             seasonal = self._nodes_by_type("계절학기")
             if seasonal:
-                results = [SearchResult(
+                results = [self._make_graph_result(
                     text=self._fmt_static_info(dict(data), "계절학기"),
-                    score=1.3, source="graph",
+                    node_data=dict(data), score=1.3,
                 ) for _, data in seasonal]
                 # 계절학기 일정도 함께 반환
                 sched = self._find_schedule_matches(question or "계절학기")
@@ -967,9 +990,9 @@ class AcademicGraph:
             for nid, data in self._nodes_by_type("성적처리"):
                 tag = data.get("분류태그", "")
                 if tag == "성적선택제":
-                    return [SearchResult(
+                    return [self._make_graph_result(
                         text=self._fmt_static_info(data, "성적선택제"),
-                        score=1.3, source="graph",
+                        node_data=data, score=1.3,
                     )]
 
         # 학점이월 전용 핸들러 (19학점 혼동 방지)
@@ -1082,9 +1105,9 @@ class AcademicGraph:
                         return [self._make_direct_result(context, answer, score=1.3)]
 
                 # OCU 일반 질문 → 전체 OCU 정보 반환
-                return [SearchResult(
+                return [self._make_graph_result(
                     text=self._fmt_static_info(ocu_data, "OCU"),
-                    score=1.2, source="graph",
+                    node_data=ocu_data, score=1.2,
                 )]
 
         # 기간/일정 질문 → 학사일정에서 검색 (장바구니 기간, 수강신청 기간 등)
@@ -1096,16 +1119,27 @@ class AcademicGraph:
         ):
             matches = self._find_schedule_matches(question)
             if matches:
+                # 학년 키워드가 있으면 해당 학년 일정만 필터링
+                import re as _re
+                grade_m = _re.search(r"(\d)학년", question)
+                if grade_m:
+                    grade = grade_m.group(1)
+                    grade_matches = [
+                        m for m in matches
+                        if grade in m.get("이벤트명", "")
+                    ]
+                    if grade_matches:
+                        matches = grade_matches
+
                 first = matches[0]
                 event_name = first.get("이벤트명", "")
                 period_text = self._format_period(
                     first.get("시작일", ""), first.get("종료일", "")
                 )
                 answer = f"{event_name} 기간은 {period_text}입니다."
-                # 비고가 '수강 가능' 시간 안내이면 포함 (운영 시간표는 제외)
                 bigo = first.get("비고", "")
-                if bigo and ("수강 가능" in bigo or "부터" in bigo):
-                    answer += f" {bigo}."
+                if bigo:
+                    answer += f" ({bigo})"
 
                 return [self._schedule_to_result(first, answer, score=1.3)]
 
@@ -1121,10 +1155,9 @@ class AcademicGraph:
             student_id or "2023", "수강신청규칙", question
         )
 
-        results = [SearchResult(
+        results = [self._make_graph_result(
             text=self._fmt_registration_rule(student_id or "2023", rule),
-            score=1.0,
-            source="graph",
+            node_data=rule, score=1.0,
         )]
         results.extend(sub_results)
         return results
@@ -1135,6 +1168,18 @@ class AcademicGraph:
         entities = entities or {}
         matches = self._find_schedule_matches(question)
         if matches:
+            # 학년 키워드가 있으면 해당 학년 일정 우선 필터링
+            import re as _re
+            grade_m = _re.search(r"(\d)학년", question)
+            if grade_m:
+                grade = grade_m.group(1)
+                grade_matches = [
+                    m for m in matches
+                    if grade in m.get("이벤트명", "")
+                ]
+                if grade_matches:
+                    matches = grade_matches
+
             results = []
             first = matches[0]
 
@@ -1145,8 +1190,8 @@ class AcademicGraph:
                 for k, v in first.items():
                     if k not in skip_keys and v:
                         lines.append(f"- {k}: {v}")
-                return [SearchResult(
-                    text="\n".join(lines), score=1.3, source="graph",
+                return [self._make_graph_result(
+                    text="\n".join(lines), node_data=first, score=1.3,
                 )]
 
             answer = (
@@ -1203,7 +1248,7 @@ class AcademicGraph:
                 if s.get("비고"):
                     line += f"  ※{s['비고']}"
                 lines.append(line)
-            results.append(SearchResult(text="\n".join(lines), score=1.0, source="graph"))
+            results.append(self._make_graph_result(text="\n".join(lines), node_data=None, score=1.0))
 
         # ② 시작일 없는 참조 노드(야간수업교시표 등) → 각각 별도 SearchResult
         skip_keys = {"id", "type", "이벤트명", "학기"}
@@ -1214,7 +1259,7 @@ class AcademicGraph:
             for k, v in s.items():
                 if k not in skip_keys:
                     lines.append(f"- {k}: {v}")
-            results.append(SearchResult(text="\n".join(lines), score=0.95, source="graph"))
+            results.append(self._make_graph_result(text="\n".join(lines), node_data=s, score=0.95))
 
         return results
 
@@ -1225,18 +1270,16 @@ class AcademicGraph:
         if course_name:
             nid = self._find_course_by_name(course_name)
             if nid:
-                results.append(SearchResult(
+                results.append(self._make_graph_result(
                     text=self._fmt_course(dict(self.G.nodes[nid])),
-                    score=1.0,
-                    source="graph",
+                    node_data=dict(self.G.nodes[nid]), score=1.0,
                 ))
         if dept:
             dept_data = self.get_department_info(dept)
             if dept_data:
-                results.append(SearchResult(
+                results.append(self._make_graph_result(
                     text=self._fmt_department(dept_data),
-                    score=0.9,
-                    source="graph",
+                    node_data=dept_data, score=0.9,
                 ))
             # 개설한다 엣지 탐색: 학과 → 교과목
             dept_node = self._find_dept_node(dept)
@@ -1253,8 +1296,8 @@ class AcademicGraph:
                             f"- {c.get('과목번호', '')} {c.get('과목명', '')} "
                             f"({c.get('학점', '')}학점)"
                         )
-                    results.append(SearchResult(
-                        text="\n".join(lines), score=0.95, source="graph",
+                    results.append(self._make_graph_result(
+                        text="\n".join(lines), node_data=None, score=0.95,
                     ))
         return results
 
@@ -1284,7 +1327,7 @@ class AcademicGraph:
                     lines.append(
                         f"  · {course.get('과목명', '')} ({course.get('학점', '')}학점)"
                     )
-        return [SearchResult(text="\n".join(lines), score=1.0, source="graph")]
+        return [self._make_graph_result(text="\n".join(lines), node_data=None, score=1.0)]
 
     def _query_micro_majors(self) -> List[SearchResult]:
         """마이크로/융합전공 노드 + 구성된다 엣지(교과목) 탐색."""
@@ -1301,7 +1344,7 @@ class AcademicGraph:
                     lines.append(
                         f"  · {course.get('과목명', '')} ({course.get('학점', '')}학점)"
                     )
-        return [SearchResult(text="\n".join(lines), score=1.0, source="graph")]
+        return [self._make_graph_result(text="\n".join(lines), node_data=None, score=1.0)]
 
     def _query_teacher_training(self, dept: str = "") -> List[SearchResult]:
         """교직과정 노드 탐색."""
@@ -1314,17 +1357,16 @@ class AcademicGraph:
             for k, v in data.items():
                 if k not in skip_keys and v:
                     lines.append(f"- {k}: {v}")
-            results.append(SearchResult(
-                text="\n".join(lines), score=1.0, source="graph",
+            results.append(self._make_graph_result(
+                text="\n".join(lines), node_data=data, score=1.0,
             ))
         return results
 
     def _query_major_methods(self, student_id: str) -> List[SearchResult]:
         return [
-            SearchResult(
+            self._make_graph_result(
                 text=self._fmt_major_method(m),
-                score=1.0,
-                source="graph",
+                node_data=m, score=1.0,
             )
             for m in self.get_major_methods(student_id)
         ]
@@ -1366,10 +1408,9 @@ class AcademicGraph:
         # ② 신청자격
         if "early_grad_신청자격" in self.G.nodes:
             elig = dict(self.G.nodes["early_grad_신청자격"])
-            results.append(SearchResult(
+            results.append(self._make_graph_result(
                 text=self._fmt_early_graduation_eligibility(elig),
-                score=1.15,
-                source="graph",
+                node_data=elig, score=1.15,
             ))
 
         # ③ 학번별 졸업기준
@@ -1380,34 +1421,31 @@ class AcademicGraph:
                 grad_group = "2023이후"
             node_id = f"early_grad_기준_{grad_group}"
             if node_id in self.G.nodes:
-                results.append(SearchResult(
+                results.append(self._make_graph_result(
                     text=self._fmt_early_graduation_criteria(
                         dict(self.G.nodes[node_id])
                     ),
-                    score=1.2,
-                    source="graph",
+                    node_data=dict(self.G.nodes[node_id]), score=1.2,
                 ))
         else:
             # 학번 미입력 → 전 그룹 기준 모두 반환
             for grad_group in ("2022이전", "2023이후"):
                 node_id = f"early_grad_기준_{grad_group}"
                 if node_id in self.G.nodes:
-                    results.append(SearchResult(
+                    results.append(self._make_graph_result(
                         text=self._fmt_early_graduation_criteria(
                             dict(self.G.nodes[node_id])
                         ),
-                        score=1.1,
-                        source="graph",
+                        node_data=dict(self.G.nodes[node_id]), score=1.1,
                     ))
 
         # ④ 기타사항
         if "early_grad_기타사항" in self.G.nodes:
-            results.append(SearchResult(
+            results.append(self._make_graph_result(
                 text=self._fmt_early_graduation_notes(
                     dict(self.G.nodes["early_grad_기타사항"])
                 ),
-                score=0.95,
-                source="graph",
+                node_data=dict(self.G.nodes["early_grad_기타사항"]), score=0.95,
             ))
 
         return results
@@ -1441,20 +1479,18 @@ class AcademicGraph:
                 node_id = f"scholarship_{name}"
                 if node_id in self.G.nodes:
                     matched_names.append(name)
-                    results.append(SearchResult(
+                    results.append(self._make_graph_result(
                         text=self._fmt_scholarship(dict(self.G.nodes[node_id])),
-                        score=1.2,
-                        source="graph",
+                        node_data=dict(self.G.nodes[node_id]), score=1.2,
                     ))
 
         # 특정 장학금 미매칭 시 전체 목록 반환
         if not matched_names:
             all_scholarships = [data for _, data in self._nodes_by_type("장학금")]
             for s_data in all_scholarships:
-                results.append(SearchResult(
+                results.append(self._make_graph_result(
                     text=self._fmt_scholarship(s_data),
-                    score=1.0,
-                    source="graph",
+                    node_data=s_data, score=1.0,
                 ))
 
         return results
@@ -1501,17 +1537,15 @@ class AcademicGraph:
         if matched_nids:
             for nid in matched_nids:
                 data = dict(self.G.nodes[nid])
-                results.append(SearchResult(
+                results.append(self._make_graph_result(
                     text=self._fmt_leave_of_absence(data),
-                    score=1.2,
-                    source="graph",
+                    node_data=data, score=1.2,
                 ))
         else:
             for nid, data in all_leave_nodes:
-                results.append(SearchResult(
+                results.append(self._make_graph_result(
                     text=self._fmt_leave_of_absence(data),
-                    score=1.0,
-                    source="graph",
+                    node_data=data, score=1.0,
                 ))
 
         return results
@@ -1530,10 +1564,9 @@ class AcademicGraph:
         for nid, data in all_nodes:
             section_norm = self._normalize_text(data.get("구분", ""))
             score = 1.2 if section_norm and section_norm in question_norm else 1.0
-            results.append(SearchResult(
+            results.append(self._make_graph_result(
                 text=self._fmt_static_info(data, node_type),
-                score=score,
-                source="graph",
+                node_data=data, score=score,
             ))
         return results
 
@@ -1560,9 +1593,9 @@ class AcademicGraph:
             for succ in self.G.successors(root):
                 data = self.G.nodes.get(succ, {})
                 if data.get("분류태그") in target_tags:
-                    results.append(SearchResult(
+                    results.append(self._make_graph_result(
                         text=self._fmt_static_info(data, "성적처리"),
-                        score=1.2, source="graph",
+                        node_data=data, score=1.2,
                     ))
 
         # 폴백: grading_root 없으면 기존 방식
@@ -1583,7 +1616,7 @@ class AcademicGraph:
                 f"- {a.get('과목번호', '')} {a.get('과목명', '')} "
                 f"({a.get('학점', '')}학점, {a.get('이수구분', '')})"
             )
-        return [SearchResult(text="\n".join(lines), score=1.0, source="graph")]
+        return [self._make_graph_result(text="\n".join(lines), node_data=None, score=1.0)]
 
     def _query_conditions_via_edge(
         self, student_id: str, parent_type: str, question: str
@@ -1636,8 +1669,8 @@ class AcademicGraph:
         for cname, val, key in matched:
             lines.append(f"- {key or cname}: {val}")
 
-        return [SearchResult(
-            text="\n".join(lines), score=1.2, source="graph",
+        return [self._make_graph_result(
+            text="\n".join(lines), node_data=None, score=1.2,
         )]
 
     def _query_sub_sections_via_edge(
@@ -1670,11 +1703,11 @@ class AcademicGraph:
                 if len(kw) >= 2
             ):
                 text = self._fmt_static_info(succ_data, parent_type)
-                results.append(SearchResult(text=text, score=1.1, source="graph"))
+                results.append(self._make_graph_result(text=text, node_data=succ_data, score=1.1))
             # 역방향: 섹션명 키워드가 질문에 포함
             elif section_norm and len(section_norm) >= 3 and section_norm in q_norm:
                 text = self._fmt_static_info(succ_data, parent_type)
-                results.append(SearchResult(text=text, score=1.1, source="graph"))
+                results.append(self._make_graph_result(text=text, node_data=succ_data, score=1.1))
 
         return results[:3]  # 최대 3개 (컨텍스트 예산 보호)
 
@@ -1684,10 +1717,12 @@ class AcademicGraph:
     def _fmt_static_info(data: dict, node_type: str) -> str:
         """정적 페이지 노드 범용 포맷팅 — 모든 필드를 동적으로 출력."""
         section_name = data.get("구분", node_type)
-        lines = [f"[{node_type}] {section_name}"]
+        lines = [f"{section_name} 안내"]
         skip_keys = {"type", "구분"}
         for key, val in data.items():
             if key in skip_keys or not val:
+                continue
+            if key.startswith("_"):
                 continue
             lines.append(f"- {key}: {val}")
         return "\n".join(lines)
@@ -1700,7 +1735,7 @@ class AcademicGraph:
             else student_id
         )
         major = data.get("전공", "")
-        header = f"[졸업요건] {group}학번 {student_type}"
+        header = f"{group}학번 {student_type} 졸업요건"
         if major:
             header += f" ({major}전공)"
         lines = [header]
@@ -1729,7 +1764,7 @@ class AcademicGraph:
     @staticmethod
     def _fmt_major_method(data: dict) -> str:
         lines = [
-            f"[전공이수방법] {data.get('방법유형', '')} "
+            f"전공이수방법: {data.get('방법유형', '')} "
             f"({data.get('적용학번범위', '')})"
         ]
         for key in (
@@ -1743,7 +1778,7 @@ class AcademicGraph:
     @staticmethod
     def _fmt_registration_rule(student_id: str, data: dict) -> str:
         group = get_reg_group(student_id)
-        lines = [f"[수강신청규칙] {group}"]
+        lines = [f"{group} 수강신청규칙"]
         for key in (
             "최대신청학점", "장바구니최대학점",
             "평점4이상최대학점", "교직복수전공최대학점",
@@ -1762,7 +1797,7 @@ class AcademicGraph:
     @staticmethod
     def _fmt_course(data: dict) -> str:
         lines = [
-            f"[교과목] {data.get('과목번호', '')} {data.get('과목명', '')}"
+            f"교과목 정보: {data.get('과목번호', '')} {data.get('과목명', '')}"
         ]
         for key in ("학점", "시수", "이수구분", "성적평가방식", "개설학기", "수업방식"):
             if key in data:
@@ -1771,7 +1806,7 @@ class AcademicGraph:
 
     @staticmethod
     def _fmt_department(data: dict) -> str:
-        lines = [f"[학과전공] {data.get('전공명', '')}"]
+        lines = [f"학과전공 정보: {data.get('전공명', '')}"]
         for key in ("단과대학", "전공유형", "제1전공_이수학점", "전화번호", "사무실위치"):
             if key in data:
                 lines.append(f"- {key}: {data[key]}")
@@ -1790,10 +1825,12 @@ class AcademicGraph:
     def _fmt_leave_of_absence(data: dict) -> str:
         """휴복학 노드 포맷팅 — 모든 필드를 동적으로 출력."""
         section_name = data.get("구분", "휴복학 안내")
-        lines = [f"[휴복학] {section_name}"]
+        lines = [f"{section_name}"]
         skip_keys = {"type", "구분"}
         for key, val in data.items():
             if key in skip_keys or not val:
+                continue
+            if key.startswith("_"):
                 continue
             lines.append(f"- {key}: {val}")
         return "\n".join(lines)
@@ -1802,7 +1839,7 @@ class AcademicGraph:
     def _fmt_scholarship(data: dict) -> str:
         """장학금 노드 포맷팅 (동적 필드 출력 — 하드코딩/크롤링 노드 공용)."""
         name = data.get("장학금명") or data.get("구분", "")
-        lines = [f"[장학금] {name}"]
+        lines = [f"장학금 안내: {name}"]
         SKIP = {"type", "장학금명", "구분"}
         # 우선 출력 필드 (있으면 먼저)
         PRIORITY = (
@@ -1819,6 +1856,8 @@ class AcademicGraph:
         for key, val in data.items():
             if key in SKIP or key in seen:
                 continue
+            if key.startswith("_"):
+                continue
             if val:
                 lines.append(f"- {key}: {val}")
         return "\n".join(lines)
@@ -1826,7 +1865,7 @@ class AcademicGraph:
     @staticmethod
     def _fmt_early_graduation_eligibility(data: dict) -> str:
         """조기졸업 신청자격 노드 포맷팅."""
-        lines = ["[조기졸업 신청자격]"]
+        lines = ["조기졸업 신청자격"]
         if data.get("신청학기"):
             lines.append(f"- 신청대상: {data['신청학기']}")
         if data.get("편입생_신청불가"):
@@ -1846,7 +1885,7 @@ class AcademicGraph:
     @staticmethod
     def _fmt_early_graduation_criteria(data: dict) -> str:
         """조기졸업 졸업기준 노드 포맷팅 (학번별)."""
-        lines = [f"[조기졸업 졸업기준] {data.get('적용대상', '')}"]
+        lines = [f"조기졸업 졸업기준 ({data.get('적용대상', '')})"]
         if data.get("기준학점"):
             lines.append(f"- 기준학점: {data['기준학점']}학점 이상")
         if data.get("비고"):
@@ -1858,7 +1897,7 @@ class AcademicGraph:
     @staticmethod
     def _fmt_early_graduation_notes(data: dict) -> str:
         """조기졸업 기타사항 노드 포맷팅."""
-        lines = ["[조기졸업 기타사항]"]
+        lines = ["조기졸업 기타사항"]
         if data.get("탈락자처리"):
             lines.append(f"- 탈락자: {data['탈락자처리']}")
         if data.get("합격자졸업유예"):
