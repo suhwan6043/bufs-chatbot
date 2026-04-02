@@ -185,20 +185,115 @@ async def evaluate_one(
             )
         ).strip()
 
-    metrics = answer_metrics(answer, item["answer"])
+    # 검색 결과 페이지 번호 수집 (Recall@5, MRR@5 계산용)
+    all_results = search_results.get("graph_results", []) + search_results.get("vector_results", [])
+    retrieved_pages = [r.page_number for r in all_results[:5] if r.page_number]
+
+    answerable = item.get("answerable", True)
+    gold_page = item.get("source_page", 0)
+
+    if answerable and item.get("answer"):
+        metrics = answer_metrics(answer, item["answer"])
+    else:
+        # 대답불가 질문: 거부 응답이면 정답
+        metrics = answer_metrics(answer, item.get("answer", ""))
 
     return {
         "id": item["id"],
         "difficulty": item.get("difficulty", "unknown"),
+        "answerable": answerable,
         "question": question,
-        "ground_truth": item["answer"],
+        "ground_truth": item.get("answer", ""),
         "prediction": answer,
         "source": item.get("source"),
         "context": item.get("context"),
+        "source_page": gold_page,
+        "retrieved_pages": retrieved_pages,
         "retrieved_vector": len(search_results.get("vector_results", [])),
         "retrieved_graph": len(search_results.get("graph_results", [])),
         "elapsed_s": round(time.perf_counter() - started, 2),
         **metrics,
+    }
+
+
+# ── 검색 지표 (Retrieval Metrics) ────────────────────────────
+
+def recall_at_k(retrieved_pages: list[int], gold_page: int, k: int = 5) -> float:
+    """상위 k개 검색 결과에 정답 페이지가 포함되는지."""
+    if not gold_page:
+        return 0.0
+    return 1.0 if gold_page in retrieved_pages[:k] else 0.0
+
+
+def mrr_at_k(retrieved_pages: list[int], gold_page: int, k: int = 5) -> float:
+    """정답 페이지가 처음 나타나는 순위의 역수."""
+    if not gold_page:
+        return 0.0
+    for i, page in enumerate(retrieved_pages[:k]):
+        if page == gold_page:
+            return 1.0 / (i + 1)
+    return 0.0
+
+
+def retrieval_summary(records: list[dict[str, Any]], k: int = 5) -> dict[str, Any]:
+    """검색 지표 요약 (answerable 문항만)."""
+    answerable = [r for r in records if r.get("answerable", True) and r.get("source_page")]
+    if not answerable:
+        return {"recall_at_5": 0.0, "mrr_at_5": 0.0, "n_evaluated": 0}
+
+    recalls = [recall_at_k(r.get("retrieved_pages", []), r["source_page"], k) for r in answerable]
+    mrrs = [mrr_at_k(r.get("retrieved_pages", []), r["source_page"], k) for r in answerable]
+
+    return {
+        "recall_at_5": round(sum(recalls) / len(recalls), 4),
+        "mrr_at_5": round(sum(mrrs) / len(mrrs), 4),
+        "n_evaluated": len(answerable),
+    }
+
+
+# ── 환각 방지 지표 (Unanswerable) ────────────────────────────
+
+_REFUSAL_PATTERNS = [
+    "학사지원팀", "문의", "확인되지 않", "찾을 수 없", "관련 정보를 찾",
+    "해당 정보가 없", "답변할 수 없", "제공된 정보에",
+]
+
+
+def is_refusal(prediction: str) -> bool:
+    """LLM 응답이 거부/문의 안내인지 판단."""
+    pred_lower = prediction.lower().strip()
+    if not pred_lower:
+        return True
+    return any(pat in pred_lower for pat in _REFUSAL_PATTERNS)
+
+
+def unanswerable_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """대답불가 문항의 환각 방지 성능."""
+    unanswerable = [r for r in records if not r.get("answerable", True)]
+    if not unanswerable:
+        return {"unanswerable_f1": 0.0, "n_unanswerable": 0, "correct_refusals": 0, "hallucinations": 0}
+
+    correct = sum(1 for r in unanswerable if is_refusal(r["prediction"]))
+    halluc = len(unanswerable) - correct
+
+    return {
+        "unanswerable_f1": round(correct / len(unanswerable), 4),
+        "n_unanswerable": len(unanswerable),
+        "correct_refusals": correct,
+        "hallucinations": halluc,
+    }
+
+
+def answerable_summary(records: list[dict[str, Any]], mode: str) -> dict[str, Any]:
+    """대답가능 문항만의 F1."""
+    answerable = [r for r in records if r.get("answerable", True)]
+    if not answerable:
+        return {"answerable_f1": 0.0, "n_answerable": 0}
+
+    correct = sum(1 for r in answerable if correctness_flag(r, mode))
+    return {
+        "answerable_f1": round(correct / len(answerable), 4),
+        "n_answerable": len(answerable),
     }
 
 
@@ -263,6 +358,9 @@ def build_summary(records: list[dict[str, Any]], mode: str) -> dict[str, Any]:
             **classification_summary(records, mode),
             **average_summary(records),
         },
+        "retrieval": retrieval_summary(records),
+        "answerable": answerable_summary(records, mode),
+        "unanswerable": unanswerable_summary(records),
         "by_difficulty": {},
     }
 
@@ -277,19 +375,28 @@ def build_summary(records: list[dict[str, Any]], mode: str) -> dict[str, Any]:
 
 def print_summary(summary: dict[str, Any]) -> None:
     overall = summary["overall"]
+    retrieval = summary.get("retrieval", {})
+    ans = summary.get("answerable", {})
+    unans = summary.get("unanswerable", {})
+
     print("\n" + "=" * 60)
-    print("F1 evaluation summary")
+    print("Retrieval Metrics (검색)")
     print("=" * 60)
-    print(f"Mode       : {overall['mode']}")
-    print(f"Total      : {overall['total']}")
-    print(f"Precision  : {overall['precision']:.4f}")
-    print(f"Recall     : {overall['recall']:.4f}")
-    print(f"F1         : {overall['f1']:.4f}")
-    print(f"Exact Match: {overall['exact_match']:.4f}")
-    print(f"Contains GT: {overall['contains_gt']:.4f}")
-    print(f"Avg Tok P  : {overall['avg_token_precision']:.4f}")
-    print(f"Avg Tok R  : {overall['avg_token_recall']:.4f}")
-    print(f"Avg Tok F1 : {overall['avg_token_f1']:.4f}")
+    print(f"Recall@5   : {retrieval.get('recall_at_5', 0):.4f}")
+    print(f"MRR@5      : {retrieval.get('mrr_at_5', 0):.4f}")
+    print(f"Evaluated  : {retrieval.get('n_evaluated', 0)} questions (with source_page)")
+
+    print("\n" + "=" * 60)
+    print("Generation Metrics (생성)")
+    print("=" * 60)
+    print(f"Overall-F1      : {overall['f1']:.4f}  (n={overall['total']})")
+    print(f"Exact Match     : {overall['exact_match']:.4f}")
+    print(f"Answerable-F1   : {ans.get('answerable_f1', 0):.4f}  (n={ans.get('n_answerable', 0)})")
+    print(f"Unanswerable-F1 : {unans.get('unanswerable_f1', 0):.4f}  "
+          f"(n={unans.get('n_unanswerable', 0)}, "
+          f"거부={unans.get('correct_refusals', 0)}, "
+          f"환각={unans.get('hallucinations', 0)})")
+    print(f"Avg Tok F1      : {overall['avg_token_f1']:.4f}")
 
     print("\nBy difficulty")
     for difficulty, item in summary["by_difficulty"].items():
