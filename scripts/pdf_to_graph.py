@@ -345,18 +345,58 @@ def parse_registration_rules(pages: List[PageContent]) -> Dict[str, Dict]:
         rules["2022이전"]["OCU초과학점"] = ocu_note
         rules["2023이후"]["OCU초과학점"] = ocu_note
 
-    # 예외조건 (평점 4.0 이상 → N학점)
-    for key in rules:
-        max_cr = rules[key].get("최대신청학점")
-        gpa_cr = rules[key].get("평점4이상최대학점")
-        teacher_cr = rules[key].get("교직복수전공최대학점")
-        if gpa_cr or teacher_cr:
+    # ── 예외조건 전체 파싱 (PDF "ú  조건 : N학점" 패턴) ──
+    # 2022이전(①)과 2023이후(②) 섹션을 분리하여 각각 파싱
+    _exception_pattern = re.compile(r"[úù]\s*(.+?)\s*[:：]\s*(\d+)학점")
+    _section_split = re.split(r"②\s*2023", full_text)
+    sections = {
+        "2022이전": _section_split[0] if len(_section_split) >= 1 else "",
+        "2023이후": _section_split[1] if len(_section_split) >= 2 else "",
+    }
+    for grp, section_text in sections.items():
+        exceptions = _exception_pattern.findall(section_text)
+        if exceptions:
             parts = []
-            if gpa_cr:
-                parts.append(f"직전학기 평점 4.0 이상 → {gpa_cr}학점")
-            if teacher_cr:
-                parts.append(f"교직복수전공자 → {teacher_cr}학점")
-            rules[key]["예외조건"] = ", ".join(parts)
+            for condition, credits in exceptions:
+                cond = condition.strip()
+                parts.append(f"{cond}: {credits}학점")
+                # 개별 필드로도 저장 (구조화)
+                if "학군" in cond:
+                    rules[grp]["학군사관후보생최대학점"] = int(credits)
+                elif "학·석사" in cond or "연계" in cond:
+                    rules[grp]["학석사연계최대학점"] = int(credits)
+                elif "영어권" in cond or "복수학위" in cond:
+                    rules[grp]["영어권복수학위최대학점"] = int(credits)
+                elif "파이데이아" in cond:
+                    rules[grp]["파이데이아최대학점"] = int(credits)
+            rules[grp]["예외조건"] = " / ".join(parts)
+
+    # 학사경고 감소학점 파싱
+    for grp in rules:
+        base = rules[grp].get("최대신청학점", 0)
+        m_warn = re.search(
+            rf"학사경고자.*?(\d+)학점까지\s*신청\s*가능",
+            sections.get(grp, full_text),
+        )
+        if m_warn and base:
+            warn_max = int(m_warn.group(1))
+            rules[grp]["학사경고시최대학점"] = warn_max
+
+    # 초과 신청 가능 교과목 파싱
+    for grp in rules:
+        section_text = sections.get(grp, "")
+        extras = []
+        if "사회봉사" in section_text and "1학점" in section_text:
+            extras.append("사회봉사·서비스러닝: +1학점")
+        if "진로탐색학기제" in section_text:
+            m_extra = re.search(r"진로탐색학기제.*?(\d+)학점", section_text)
+            if m_extra:
+                extras.append(f"진로탐색학기제(커리어블라썸 등): +{m_extra.group(1)}학점")
+        if "취업커뮤니티" in section_text or "진로탐색" in section_text:
+            if "1과목에 한해" in section_text:
+                extras.append("진로탐색·취업커뮤니티: 1과목 초과 가능")
+        if extras:
+            rules[grp]["초과가능교과목"] = " / ".join(extras)
 
     m = _CANCEL_DEADLINE_PATTERN.search(full_text)
     if m:
