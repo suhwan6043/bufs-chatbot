@@ -85,16 +85,30 @@ def main():
     # ── 0. PDF → 그래프 빌드 (학사일정, 수강신청규칙, 졸업요건 등) ──
     pdf_path = "data/pdfs/2026학년도1학기학사안내.pdf"
     if Path(pdf_path).exists():
-        logger.info("=== 그래프 빌드 (PDF → 그래프) ===")
-        graph_result = build_graph_from_pdf(str(Path(pdf_path).resolve()))
-        if graph_result:
-            # 조기졸업·장학금 데이터 보완 (build_graph.py와 동일)
-            from scripts.build_graph import _add_early_graduation_data, _add_scholarship_data
-            _add_early_graduation_data(graph_result)
-            _add_scholarship_data(graph_result)
-            graph_result.save()
-            logger.info("그래프 빌드 완료: %d노드, %d엣지",
-                        graph_result.G.number_of_nodes(), graph_result.G.number_of_edges())
+        # 원칙 3: PDF 버전 체크 — 미변경 시 재빌드 건너뜀
+        from app.crawler.pdf_version_tracker import PdfVersionTracker
+        tracker = PdfVersionTracker()
+        pdf_changed = tracker.has_changed(pdf_path)
+
+        if not pdf_changed:
+            logger.info("PDF 미변경 — 그래프 재빌드 건너뜀")
+            graph_result = AcademicGraph()
+        else:
+            logger.info("=== 그래프 빌드 (PDF → 그래프) ===")
+            graph_result = build_graph_from_pdf(str(Path(pdf_path).resolve()))
+            if graph_result:
+                # 조기졸업·장학금 데이터 보완 (build_graph.py와 동일)
+                from scripts.build_graph import _add_early_graduation_data, _add_scholarship_data
+                _add_early_graduation_data(graph_result)
+                _add_scholarship_data(graph_result)
+                graph_result.save()
+                tracker.update(
+                    pdf_path,
+                    node_count=graph_result.G.number_of_nodes(),
+                    edge_count=graph_result.G.number_of_edges(),
+                )
+                logger.info("그래프 빌드 완료: %d노드, %d엣지",
+                            graph_result.G.number_of_nodes(), graph_result.G.number_of_edges())
 
     # ── 1. PDF 인제스트 (ChromaDB) ───────────────────────────
     if Path(pdf_path).exists():

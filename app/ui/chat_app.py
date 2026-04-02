@@ -1067,6 +1067,7 @@ async def generate_response(question: str) -> str:
         vector_results=search_results["vector_results"],
         graph_results=search_results["graph_results"],
         question=question,
+        intent=analysis.intent,
     )
 
     if not merged.formatted_context.strip():
@@ -1147,6 +1148,7 @@ async def generate_response_stream(question: str, placeholder) -> str:
         vector_results=search_results["vector_results"],
         graph_results=search_results["graph_results"],
         question=question,
+        intent=analysis.intent,
     )
 
     def _log(answer: str) -> None:

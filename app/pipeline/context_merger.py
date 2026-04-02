@@ -1,37 +1,62 @@
 """
 컨텍스트 통합기 - Vector/Graph 검색 결과를 하나의 프롬프트용 컨텍스트로 병합
 CPU 전용, ~2ms 처리
+
+원칙 2: 인텐트별 적응형 RRF 가중치 + 컨텍스트 예산
 """
 
 import logging
 import re
-from typing import List
+from typing import List, Optional
 
-from app.models import SearchResult, MergedContext
+from app.models import SearchResult, MergedContext, Intent
 
 logger = logging.getLogger(__name__)
 
 # 대략적인 토큰 추정: 한국어 1글자 ≈ 1.5 토큰 (즉 1토큰 ≈ 0.67글자)
 TOKENS_PER_CHAR = 1.5
-MAX_CONTEXT_TOKENS = 1200  # 시스템 프롬프트(~300) + 질문(~100) + 답변(~400) 제외
+_DEFAULT_CONTEXT_TOKENS = 1200
+
+# ── 원칙 2: 인텐트별 적응형 설정 ────────────────────────────────
+# (graph_weight, vector_weight) — 인텐트에 따라 검색 채널 가중치 조정
+_INTENT_WEIGHTS = {
+    Intent.SCHEDULE:         (2.0, 0.5),   # 그래프(학사일정) 강력 우선
+    Intent.ALTERNATIVE:      (2.0, 0.5),
+    Intent.GRADUATION_REQ:   (1.8, 1.0),
+    Intent.REGISTRATION:     (1.5, 1.0),
+    Intent.EARLY_GRADUATION: (1.5, 1.0),
+    Intent.MAJOR_CHANGE:     (1.5, 1.0),
+    Intent.SCHOLARSHIP:      (1.0, 1.2),   # 벡터(크롤링 공지) 우선
+    Intent.LEAVE_OF_ABSENCE: (1.0, 1.2),
+    Intent.COURSE_INFO:      (0.8, 1.5),   # 벡터(시간표 청크) 우선
+    Intent.GENERAL:          (0.5, 1.5),
+}
+_DEFAULT_WEIGHTS = (1.5, 1.0)
+
+# 인텐트별 컨텍스트 토큰 예산 — 단답형은 작게, 복합형은 크게
+_INTENT_BUDGET = {
+    Intent.SCHEDULE:       800,
+    Intent.ALTERNATIVE:    800,
+    Intent.GRADUATION_REQ: 1400,
+    Intent.REGISTRATION:   1200,
+    Intent.COURSE_INFO:    1200,
+}
 
 # RRF 상수
 _RRF_K = 60
-# 그래프 가중치: 구조화된 데이터가 더 신뢰도 높으므로 1.5배 가중
-_GRAPH_WEIGHT = 1.5
-_VECTOR_WEIGHT = 1.0
 
 
 def _rrf_merge(
     graph_results: List[SearchResult],
     vector_results: List[SearchResult],
+    graph_weight: float = 1.5,
+    vector_weight: float = 1.0,
 ) -> List[SearchResult]:
     """
     Weighted Reciprocal Rank Fusion으로 그래프·벡터 결과를 병합합니다.
     score_rrf(d) = w_graph / (k + rank_graph(d)) + w_vector / (k + rank_vector(d))
 
-    그래프 결과에 1.5배 가중치를 부여하여 구조화된 데이터를 우선하되,
-    벡터 결과도 순위에 따라 자연스럽게 끼어듭니다.
+    원칙 2: graph_weight/vector_weight는 인텐트에 따라 동적 조정됩니다.
     """
     rrf_scores: dict = {}   # id(result) → rrf_score
     result_map: dict = {}   # id(result) → SearchResult
@@ -39,13 +64,13 @@ def _rrf_merge(
     for rank, r in enumerate(graph_results, start=1):
         r.metadata["source_type"] = "graph"
         rid = id(r)
-        rrf_scores[rid] = rrf_scores.get(rid, 0.0) + _GRAPH_WEIGHT / (_RRF_K + rank)
+        rrf_scores[rid] = rrf_scores.get(rid, 0.0) + graph_weight / (_RRF_K + rank)
         result_map[rid] = r
 
     for rank, r in enumerate(vector_results, start=1):
         r.metadata["source_type"] = "vector"
         rid = id(r)
-        rrf_scores[rid] = rrf_scores.get(rid, 0.0) + _VECTOR_WEIGHT / (_RRF_K + rank)
+        rrf_scores[rid] = rrf_scores.get(rid, 0.0) + vector_weight / (_RRF_K + rank)
         result_map[rid] = r
 
     merged = sorted(result_map.values(), key=lambda r: rrf_scores[id(r)], reverse=True)
@@ -65,15 +90,23 @@ class ContextMerger:
         vector_results: List[SearchResult],
         graph_results: List[SearchResult],
         question: str = "",
+        intent: Optional[Intent] = None,
     ) -> MergedContext:
-        """검색 결과를 통합된 컨텍스트로 병합합니다."""
-        # RRF로 그래프·벡터 결과 병합 (rank 기반, 점수 스케일 무관)
-        all_results = _rrf_merge(graph_results, vector_results)
+        """검색 결과를 통합된 컨텍스트로 병합합니다.
+
+        원칙 2: intent에 따라 RRF 가중치와 컨텍스트 예산을 동적 조정합니다.
+        """
+        # 인텐트별 가중치 + 예산 결정
+        gw, vw = _INTENT_WEIGHTS.get(intent, _DEFAULT_WEIGHTS)
+        budget = _INTENT_BUDGET.get(intent, _DEFAULT_CONTEXT_TOKENS)
+
+        # RRF로 그래프·벡터 결과 병합 (rank 기반, 인텐트별 가중치 적용)
+        all_results = _rrf_merge(graph_results, vector_results, gw, vw)
 
         # 토큰 제한 내에서 컨텍스트 구성
         context_parts = []
         total_chars = 0
-        max_chars = int(MAX_CONTEXT_TOKENS / TOKENS_PER_CHAR)
+        max_chars = int(budget / TOKENS_PER_CHAR)
 
         selected_vector = []
         selected_graph = []

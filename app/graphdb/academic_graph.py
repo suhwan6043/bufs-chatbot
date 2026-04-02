@@ -205,9 +205,27 @@ class AcademicGraph:
 
     @staticmethod
     def _merge(base: dict, extra: dict) -> dict:
-        """base 속성에 extra를 병합합니다. extra가 우선합니다."""
+        """base 속성에 extra를 병합합니다. extra가 우선합니다.
+
+        원칙 1: 스키마 레지스트리로 미등록 필드 자동 감지 + 확장
+        원칙 3: 모든 노드에 생성/수정 타임스탬프를 자동 주입
+        """
+        from datetime import datetime
         result = dict(base)
         result.update(extra)
+        now = datetime.now().isoformat(timespec="seconds")
+        result.setdefault("_created_at", now)
+        result["_updated_at"] = now
+
+        # 원칙 1: 스키마 자동 진화 — 미등록 필드 감지 시 자동 확장
+        node_type = result.get("type", "")
+        if node_type:
+            try:
+                from app.graphdb.schema_registry import validate_node
+                validate_node(node_type, result)
+            except ImportError:
+                pass
+
         return result
 
     def add_department(self, name: str, data: dict) -> str:

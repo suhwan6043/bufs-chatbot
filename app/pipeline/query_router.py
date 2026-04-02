@@ -64,24 +64,37 @@ class QueryRouter:
         )
         return results
 
+    # ── 원칙 2: 인텐트별 벡터 검색 후보 수 (동적 k 선택) ──
+    _INTENT_K = {
+        Intent.SCHEDULE:       5,    # 그래프가 처리, 벡터 최소
+        Intent.ALTERNATIVE:    5,
+        Intent.GRADUATION_REQ: 10,
+        Intent.REGISTRATION:   12,
+        Intent.EARLY_GRADUATION: 8,
+        Intent.SCHOLARSHIP:    12,
+        Intent.LEAVE_OF_ABSENCE: 12,
+        Intent.COURSE_INFO:    20,   # 시간표 청크 다수 필요
+        Intent.MAJOR_CHANGE:   10,
+        Intent.GENERAL:        15,
+    }
+
     def _search_vector(
         self, query: str, analysis: QueryAnalysis
     ) -> List[SearchResult]:
-        # 리랭커 사용 시 더 많은 후보 가져오기
+        # 원칙 2: 인텐트별 검색 후보 수 동적 조정
+        intent_k = self._INTENT_K.get(analysis.intent, settings.chroma.n_results)
         n_candidates = (
-            settings.reranker.candidate_k
+            max(intent_k, settings.reranker.candidate_k)
             if settings.reranker.enabled
-            else settings.chroma.n_results
+            else intent_k
         )
 
         # COURSE_INFO + department: 수업시간표 전용 필터 적용
-        # - 다른 학과 청크 혼입 방지 (IOT, COM 등 다른 학부 데이터 제거)
-        # - 한 학과의 전체 분반을 가져오기 위해 n_results를 충분히 크게 설정
         department = None
         if analysis.intent == Intent.COURSE_INFO:
             department = analysis.entities.get("department")
             if department:
-                n_candidates = max(n_candidates, 20)  # 분반 많은 학과 대비
+                n_candidates = max(n_candidates, 20)
 
         candidates = self.chroma_store.search(
             query=query,

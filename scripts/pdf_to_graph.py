@@ -1052,8 +1052,19 @@ def build_graph_from_pdf(
     import networkx as nx
     graph.G = nx.DiGraph()
 
-    # PDF 출처 전역 메타데이터 (그래프 SearchResult 폴백용)
+    # PDF 출처 전역 메타데이터 (원칙 3: 버전 관리)
+    from datetime import datetime as _dt
+    import hashlib as _hl
     graph.G.graph["source_pdf"] = str(pdf_path)
+    graph.G.graph["build_timestamp"] = _dt.now().isoformat(timespec="seconds")
+    try:
+        _h = _hl.sha256()
+        with open(pdf_path, "rb") as _f:
+            for _chunk in iter(lambda: _f.read(8192), b""):
+                _h.update(_chunk)
+        graph.G.graph["source_pdf_hash"] = _h.hexdigest()
+    except OSError:
+        graph.G.graph["source_pdf_hash"] = ""
 
     # ── 1. 학사일정 ──────────────────────────────────────────
     logger.info("학사일정 파싱 중...")

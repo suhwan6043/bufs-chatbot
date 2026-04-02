@@ -17,7 +17,7 @@ from app.models import (
 )
 from app.pipeline.query_analyzer import QueryAnalyzer
 from app.pipeline.query_router import QueryRouter
-from app.pipeline.context_merger import ContextMerger, MAX_CONTEXT_TOKENS, TOKENS_PER_CHAR
+from app.pipeline.context_merger import ContextMerger, _DEFAULT_CONTEXT_TOKENS as MAX_CONTEXT_TOKENS, TOKENS_PER_CHAR
 from app.pipeline.response_validator import ResponseValidator
 
 
