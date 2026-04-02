@@ -793,6 +793,8 @@ class AcademicGraph:
              ["제12전공신청및변경전과"]),
             (lambda q: "ocu" in q and "납부" in q, ["ocusystem사용료납부기간", "ocu시스템사용료납부기간"]),
             (lambda q: "야간" in q or any(f"{i}교시" in q for i in range(10, 15)), ["야간수업시간표"]),
+            (lambda q: "학위수여" in q or "졸업식" in q, ["학위수여식"]),
+            (lambda q: "학위" in q and "유예" in q, ["학사학위취득유예"]),
             (lambda q: "수강신청" in q and ("기간" in q or "언제" in q or "신청일" in q or "며칠" in q)
              and "정정" not in q and "확인" not in q and "취소" not in q
              and "장바구니" not in q,
