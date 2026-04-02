@@ -25,7 +25,12 @@ DATA_FILE = Path(__file__).parent.parent.parent / "data" / "contacts" / "departm
 CONTACT_KEYWORDS = {
     "전화", "전화번호", "연락처", "연락", "번호",
     "전화기", "내선", "사무실", "직통",
-    "몇번", "몇 번", "어디", "어떻게 연락",
+    "몇번", "몇 번", "어떻게 연락",
+}
+# "어디" 단독은 너무 광범위 → 복합 패턴으로만 트리거
+CONTACT_COMPOUND_PATTERNS = {
+    "사무실 어디", "위치가 어디", "위치 어디", "어디에 있",
+    "어디로 연락", "어디로 전화",
 }
 
 
@@ -97,7 +102,10 @@ class DeptSearcher:
         알려진 학과/부서명이 함께 있을 때 True 반환합니다.
         """
         q = query.strip()
-        has_keyword = any(kw in q for kw in CONTACT_KEYWORDS)
+        has_keyword = (
+            any(kw in q for kw in CONTACT_KEYWORDS)
+            or any(pat in q for pat in CONTACT_COMPOUND_PATTERNS)
+        )
         if not has_keyword:
             return False
         # 알려진 학과/부서가 쿼리에 있는지 확인
