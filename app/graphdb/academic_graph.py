@@ -731,9 +731,10 @@ class AcademicGraph:
         context_text: str,
         answer_text: str,
         score: float = 1.2,
+        node_data: dict = None,
     ) -> SearchResult:
         return self._make_graph_result(
-            text=context_text, score=score,
+            text=context_text, node_data=node_data, score=score,
             extra_meta={"direct_answer": answer_text},
         )
 
@@ -778,6 +779,8 @@ class AcademicGraph:
              ["수업일수1/4선"]),
             (lambda q: "수업시작일" in q or "수업시작" in q, ["수업시작일"]),
             (lambda q: "ocu" in q and "개강" in q, ["ocu개강일"]),
+            (lambda q: "ocu" in q and ("수강신청" in q or "신청기간" in q),
+             ["수강신청"]),  # OCU 수강신청은 본교와 동일
             (lambda q: "개강" in q and "수업시작" not in q and "ocu" not in q, ["개강"]),
             (lambda q: "장바구니" in q and ("기간" in q or "언제" in q), ["장바구니"]),
             (lambda q: "수강신청확인" in q or "수강정정" in q, ["수강신청확인"]),
@@ -913,7 +916,7 @@ class AcademicGraph:
                         ]
                     )
                     results.append(
-                        self._make_direct_result(context, answer, score=1.3)
+                        self._make_direct_result(context, answer, score=1.3, node_data=method)
                     )
                     return results
 
@@ -1106,7 +1109,7 @@ class AcademicGraph:
                         f"수강신청 취소는 {self._format_date(date_part)}까지 가능합니다."
                     )
                 context = f"[수강신청 취소]\n- 수강취소마감일시: {deadline}"
-                return [self._make_direct_result(context, answer, score=1.3)]
+                return [self._make_direct_result(context, answer, score=1.3, node_data=rule)]
 
             matches = self._find_schedule_matches(question)
             if matches:
@@ -1137,7 +1140,7 @@ class AcademicGraph:
                     if start and end:
                         answer = f"OCU 시스템 사용료 납부기간은 {self._format_period(start, end)}입니다."
                         context = f"[OCU 납부기간]\n- 납부기간: {start}~{end}"
-                        return [self._make_direct_result(context, answer, score=1.3)]
+                        return [self._make_direct_result(context, answer, score=1.3, node_data=ocu_data)]
 
                 # 출석요건 전용
                 if "출석" in question:
@@ -1145,7 +1148,7 @@ class AcademicGraph:
                     if attendance:
                         answer = f"OCU 출석요건은 전체 출석일수의 {attendance} 이상입니다."
                         context = f"[OCU 출석요건]\n- 출석요건: {attendance} 이상"
-                        return [self._make_direct_result(context, answer, score=1.3)]
+                        return [self._make_direct_result(context, answer, score=1.3, node_data=ocu_data)]
 
                 # OCU 일반 질문 → 전체 OCU 정보 반환
                 return [self._make_graph_result(

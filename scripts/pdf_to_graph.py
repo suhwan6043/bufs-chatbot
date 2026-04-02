@@ -1057,6 +1057,10 @@ def _parse_major_methods_from_pdf(pages: List[PageContent]) -> Dict:
     major_methods: Dict[str, List] = {}
     full_text = "\n".join(p.text or "" for p in pages if p.text)
 
+    # PDF 출처 메타데이터 — 전공이수방법 페이지
+    method_pages = sorted(set(p.page_number for p in pages if p.text))
+    source_file = pages[0].source_file if pages else ""
+
     # 테이블 기반 파싱 (각 학번별 섹션에서)
     # 2024~2025: "이수방법1 (주전공+복수·융합전공) ... 제1전공학점: 30~42 제2전공학점: 30"
     # 2023: "이수방법1 (주전공+복수전공) ... 주전공 36 복수전공 27 취업커뮤니티 2"
@@ -1080,6 +1084,12 @@ def _parse_major_methods_from_pdf(pages: List[PageContent]) -> Dict:
             ("방법1", {"설명": "주전공+복수전공", "주전공학점": 36, "복수전공학점": 33, "제2전공학점": 33, "취업커뮤니티학점": 2}),
             ("방법2", {"설명": "주전공+부전공", "제2전공학점": 18}),
         ]
+
+    # _source_pages 전파: 각 method 데이터에 PDF 출처 추가
+    for group, methods in major_methods.items():
+        for mtype, mdata in methods:
+            mdata["_source_pages"] = method_pages
+            mdata["_source_file"] = source_file
 
     return major_methods if major_methods else {}
 

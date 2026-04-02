@@ -182,6 +182,13 @@ class QueryAnalyzer:
         _POLICY_KW = ("성적", "제도", "요건", "조건", "규정")
         if intent == Intent.SCHEDULE and any(kw in normalized for kw in _POLICY_KW):
             requires_vector = True
+        # SCHEDULE이어도 취소/마감 질문은 등록규칙(p.9) 참조 필요
+        if intent == Intent.SCHEDULE and any(kw in normalized for kw in ("취소", "마감")):
+            requires_vector = True
+        # OCU + 수강신청/기간 질문은 OCU 안내(p.20-23) 벡터 검색 필요
+        norm_lower = normalized.lower()
+        if "ocu" in norm_lower and any(kw in normalized for kw in ("수강신청", "기간", "신청기간")):
+            requires_vector = True
 
         # 성적선택제도·성적포기제도는 그래프 스키마에 없음 → 그래프 탐색 불필요
         # (그래프 결과 score=1.0이 벡터 결과를 밀어내는 것을 방지)

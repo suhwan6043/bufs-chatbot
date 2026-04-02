@@ -47,7 +47,7 @@ class RerankerConfig:
     device: str = os.getenv("RERANKER_DEVICE", "cpu")
     enabled: bool = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
     top_k: int = int(os.getenv("RERANKER_TOP_K", "7"))
-    candidate_k: int = int(os.getenv("RERANKER_CANDIDATE_K", "20"))
+    candidate_k: int = int(os.getenv("RERANKER_CANDIDATE_K", "30"))
 
 
 @dataclass

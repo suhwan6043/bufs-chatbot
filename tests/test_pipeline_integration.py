@@ -179,7 +179,10 @@ class TestQueryRouterRouting:
         assert len(results["graph_results"]) > 0
 
     def test_requires_vector_false_skips_chroma(self, mock_chroma, mock_graph):
-        """requires_vector=False → chroma_store.search 호출 안 됨."""
+        """requires_vector=False → chroma_store.search 호출 안 됨 (그래프 결과 있을 때)."""
+        mock_graph.query_to_search_results.return_value = [
+            _make_search_result("일정 결과", score=1.0, source_type="graph"),
+        ]
         router = self._make_router(chroma=mock_chroma, graph=mock_graph)
         analysis = QueryAnalysis(
             intent=Intent.SCHEDULE,

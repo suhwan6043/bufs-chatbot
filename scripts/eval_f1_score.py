@@ -186,8 +186,15 @@ async def evaluate_one(
         ).strip()
 
     # 검색 결과 페이지 번호 수집 (Recall@5, MRR@5 계산용)
+    # 그래프 노드의 source_pages 메타데이터도 활용 (sp[0]만이 아닌 전체 페이지)
     all_results = search_results.get("graph_results", []) + search_results.get("vector_results", [])
-    retrieved_pages = [r.page_number for r in all_results[:5] if r.page_number]
+    retrieved_pages = []
+    for r in all_results[:5]:
+        sp = r.metadata.get("source_pages", []) if r.metadata else []
+        if sp:
+            retrieved_pages.extend(sp)
+        elif r.page_number:
+            retrieved_pages.append(r.page_number)
 
     answerable = item.get("answerable", True)
     gold_page = item.get("source_page", 0)
@@ -218,31 +225,42 @@ async def evaluate_one(
 
 # ── 검색 지표 (Retrieval Metrics) ────────────────────────────
 
-def recall_at_k(retrieved_pages: list[int], gold_page: int, k: int = 5) -> float:
-    """상위 k개 검색 결과에 정답 페이지가 포함되는지."""
+def recall_at_k(
+    retrieved_pages: list[int], gold_page: int, k: int = 5, tolerance: int = 0,
+) -> float:
+    """상위 k개 검색 결과의 페이지에 정답이 포함되는지.
+    retrieved_pages는 이미 top-k results에서 수집된 페이지 목록이므로 전체를 탐색."""
     if not gold_page:
         return 0.0
-    return 1.0 if gold_page in retrieved_pages[:k] else 0.0
+    for rp in retrieved_pages:
+        if abs(rp - gold_page) <= tolerance:
+            return 1.0
+    return 0.0
 
 
-def mrr_at_k(retrieved_pages: list[int], gold_page: int, k: int = 5) -> float:
-    """정답 페이지가 처음 나타나는 순위의 역수."""
+def mrr_at_k(
+    retrieved_pages: list[int], gold_page: int, k: int = 5, tolerance: int = 0,
+) -> float:
+    """정답 페이지가 처음 나타나는 순위의 역수.
+    retrieved_pages는 이미 top-k results에서 수집된 페이지 목록이므로 전체를 탐색."""
     if not gold_page:
         return 0.0
-    for i, page in enumerate(retrieved_pages[:k]):
-        if page == gold_page:
+    for i, page in enumerate(retrieved_pages):
+        if abs(page - gold_page) <= tolerance:
             return 1.0 / (i + 1)
     return 0.0
 
 
-def retrieval_summary(records: list[dict[str, Any]], k: int = 5) -> dict[str, Any]:
-    """검색 지표 요약 (answerable 문항만)."""
+def retrieval_summary(
+    records: list[dict[str, Any]], k: int = 5, tolerance: int = 0,
+) -> dict[str, Any]:
+    """검색 지표 요약 (answerable 문항만). tolerance: 인접 페이지 허용 범위."""
     answerable = [r for r in records if r.get("answerable", True) and r.get("source_page")]
     if not answerable:
         return {"recall_at_5": 0.0, "mrr_at_5": 0.0, "n_evaluated": 0}
 
-    recalls = [recall_at_k(r.get("retrieved_pages", []), r["source_page"], k) for r in answerable]
-    mrrs = [mrr_at_k(r.get("retrieved_pages", []), r["source_page"], k) for r in answerable]
+    recalls = [recall_at_k(r.get("retrieved_pages", []), r["source_page"], k, tolerance) for r in answerable]
+    mrrs = [mrr_at_k(r.get("retrieved_pages", []), r["source_page"], k, tolerance) for r in answerable]
 
     return {
         "recall_at_5": round(sum(recalls) / len(recalls), 4),
@@ -348,7 +366,9 @@ def average_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def build_summary(records: list[dict[str, Any]], mode: str) -> dict[str, Any]:
+def build_summary(
+    records: list[dict[str, Any]], mode: str, tolerance: int = 0,
+) -> dict[str, Any]:
     by_difficulty: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for record in records:
         by_difficulty[record["difficulty"]].append(record)
@@ -358,7 +378,7 @@ def build_summary(records: list[dict[str, Any]], mode: str) -> dict[str, Any]:
             **classification_summary(records, mode),
             **average_summary(records),
         },
-        "retrieval": retrieval_summary(records),
+        "retrieval": retrieval_summary(records, tolerance=tolerance),
         "answerable": answerable_summary(records, mode),
         "unanswerable": unanswerable_summary(records),
         "by_difficulty": {},
@@ -425,6 +445,10 @@ async def main(argv: list[str]) -> None:
     )
     parser.add_argument("--limit", type=int, default=None, help="Limit number of questions")
     parser.add_argument(
+        "--tolerance", type=int, default=0,
+        help="Page tolerance for retrieval metrics (0=exact, 1=±1 page)",
+    )
+    parser.add_argument(
         "--output",
         default=None,
         help="Optional output JSON path",
@@ -466,7 +490,7 @@ async def main(argv: list[str]) -> None:
             f"tok_f1={record['token_f1']:.4f} time={record['elapsed_s']:.2f}s"
         )
 
-    summary = build_summary(results, args.mode)
+    summary = build_summary(results, args.mode, tolerance=args.tolerance)
     print_summary(summary)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
