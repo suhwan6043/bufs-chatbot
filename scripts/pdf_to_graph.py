@@ -1123,11 +1123,18 @@ def build_graph_from_pdf(
         logger.warning("  학사일정 테이블 파싱 실패 → 일정 없음")
 
     sem = schedule_events[0]["학기"] if schedule_events else "2026-1"
+    # 학사일정 PDF 출처 메타 (원칙 3: 버전 관리)
+    sched_source_pages = sorted(set(p.page_number for p in sched_pages if p.text))
+    sched_source_file = sched_pages[0].source_file if sched_pages else str(pdf_path)
     for ev in schedule_events:
         graph.add_schedule(
             ev["이벤트명"],
             ev["학기"],
-            {"시작일": ev["시작일"], "종료일": ev["종료일"], "비고": ev["비고"]},
+            {
+                "시작일": ev["시작일"], "종료일": ev["종료일"], "비고": ev["비고"],
+                "_source_pages": sched_source_pages,
+                "_source_file": sched_source_file,
+            },
         )
     logger.info(f"  학사일정 {len(schedule_events)}개 추가 (학기: {sem})")
 
@@ -1160,6 +1167,8 @@ def build_graph_from_pdf(
     logger.info(f"  수강신청규칙 {len(rules)}개 그룹 추가")
 
     # ── 2-0. 수강신청 학년별 일정 ────────────────────────────
+    reg_source_pages = sorted(set(p.page_number for p in reg_pages if p.text))
+    reg_source_file = reg_pages[0].source_file if reg_pages else str(pdf_path)
     grade_sched = parse_registration_grade_schedule(reg_pages, base_year=base_year)
     for gs in grade_sched:
         ev_name = f"수강신청_{gs['학년']}"
@@ -1167,6 +1176,8 @@ def build_graph_from_pdf(
             "시작일": gs["날짜"],
             "종료일": gs["날짜"],
             "비고": f"{gs['학년']} {gs['시간']} ({gs['요일']}요일) {gs.get('신청가능과목','')}".strip(),
+            "_source_pages": reg_source_pages,
+            "_source_file": reg_source_file,
         })
     if grade_sched:
         logger.info(f"  수강신청 학년별 일정 {len(grade_sched)}개 추가")
@@ -1204,6 +1215,8 @@ def build_graph_from_pdf(
             )
 
         # OCU 개강일 일정 추가
+        ocu_source_pages = sorted(set(p.page_number for p in ocu_pages if p.text))
+        ocu_source_file = ocu_pages[0].source_file if ocu_pages else str(pdf_path)
         if ocu_data.get("개강일"):
             graph.add_schedule(
                 "OCU개강일",
@@ -1212,6 +1225,8 @@ def build_graph_from_pdf(
                     "시작일": ocu_data["개강일"],
                     "종료일": ocu_data["개강일"],
                     "비고": f"{ocu_data.get('개강시간', '오전 10시')}부터 수강 가능",
+                    "_source_pages": ocu_source_pages,
+                    "_source_file": ocu_source_file,
                 },
             )
             logger.info(f"  OCU 개강일 추가: {ocu_data['개강일']} {ocu_data.get('개강시간', '')}")
