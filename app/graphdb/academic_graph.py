@@ -800,6 +800,24 @@ class AcademicGraph:
              and "장바구니" not in q,
              ["수강신청", "수강신청_1학년", "수강신청_2학년", "수강신청_3학년",
               "수강신청_3,4학년", "수강신청_4학년", "수강신청_전학년"]),
+            # 성적 공시/확인 기간
+            (lambda q: "성적" in q and ("공시" in q or "확인" in q or "언제" in q or "발표" in q)
+             and "이의" not in q and "정정" not in q and "포기" not in q and "선택" not in q,
+             ["성적확인"]),
+            # 성적포기
+            (lambda q: "성적포기" in q and ("기간" in q or "언제" in q or "신청" in q),
+             ["부분적성적포기"]),
+            # 전과/전공변경
+            (lambda q: "전과" in q or "전공변경" in q or "전공바꾸" in q,
+             ["제12전공신청및변경전과", "전공신청및변경"]),
+            # 복수전공/부전공/제2전공 신청기간
+            (lambda q: ("복수전공" in q or "부전공" in q or "제2전공" in q or "융합전공" in q
+                        or "마이크로전공" in q)
+             and ("신청" in q or "기간" in q or "언제" in q),
+             ["제2전공", "제12전공"]),
+            # 졸업시험
+            (lambda q: "졸업시험" in q or "졸업논문" in q,
+             ["전공졸업시험"]),
         ]
 
         matched: List[dict] = []
