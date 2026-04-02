@@ -407,12 +407,15 @@ def parse_registration_rules(pages: List[PageContent]) -> Dict[str, Dict]:
         for key in rules:
             rules[key]["수강취소마감일시"] = deadline
 
-    # PDF 출처 메타데이터
+    # PDF 출처 메타데이터 — 실제 수강신청 학점 규칙이 있는 페이지만
     source_file = pages[0].source_file if pages else ""
-    all_pages = sorted(set(p.page_number for p in pages if p.text))
+    rule_pages = sorted(set(
+        p.page_number for p in pages
+        if p.text and ("최대 신청 학점" in p.text or "최대신청학점" in p.text)
+    ))
     for group_data in rules.values():
         if isinstance(group_data, dict):
-            group_data["_source_pages"] = all_pages
+            group_data["_source_pages"] = rule_pages
             group_data["_source_file"] = source_file
 
     return rules
@@ -509,8 +512,11 @@ def parse_ocu_section(pages: List[PageContent]) -> Dict:
     if m:
         ocu_data["문의"] = f"학사지원팀 {m.group(1).strip()}"
 
-    # PDF 출처 메타데이터
-    ocu_data["_source_pages"] = sorted(p.page_number for p in pages if p.text)
+    # PDF 출처 메타데이터 — OCU 안내 페이지만
+    ocu_data["_source_pages"] = sorted(set(
+        p.page_number for p in pages
+        if p.text and ("OCU" in p.text or "ocu" in p.text.lower())
+    ))
     ocu_data["_source_file"] = pages[0].source_file if pages else ""
 
     return ocu_data
@@ -626,12 +632,15 @@ def parse_grading_info(pages: List[PageContent]) -> Dict[str, Dict]:
         if "P/NP" in full_text and "캡스톤" in full_text:
             info["캡스톤디자인"]["평가방식"] = "절대평가 또는 P/NP"
 
-    # PDF 출처 메타데이터 — 각 카테고리에 페이지 정보 첨부
+    # PDF 출처 메타데이터 — 성적평가 관련 페이지만
     source_file = pages[0].source_file if pages else ""
-    all_pages = sorted(set(p.page_number for p in pages if p.text))
+    grade_pages = sorted(set(
+        p.page_number for p in pages
+        if p.text and ("성적평가" in p.text or "성적처리" in p.text or "성적포기" in p.text)
+    ))
     for category_data in info.values():
         if isinstance(category_data, dict):
-            category_data["_source_pages"] = all_pages
+            category_data["_source_pages"] = grade_pages
             category_data["_source_file"] = source_file
 
     return info
@@ -776,12 +785,15 @@ def parse_second_major_credits(pages: List[PageContent]) -> Dict:
                         if len(credits) >= 3:
                             second_major["2016_before"]["부전공"] = int(credits[2])
 
-    # PDF 출처 메타데이터
+    # PDF 출처 메타데이터 — 제2전공 학점 테이블이 있는 페이지만
     source_file = pages[0].source_file if pages else ""
-    all_pages = sorted(set(p.page_number for p in pages if p.text))
+    major_pages = sorted(set(
+        p.page_number for p in pages
+        if p.text and "제2전공" in p.text and "이수학점" in p.text
+    ))
     for group_data in second_major.values():
         if isinstance(group_data, dict):
-            group_data["_source_pages"] = all_pages
+            group_data["_source_pages"] = major_pages
             group_data["_source_file"] = source_file
 
     return second_major
@@ -888,12 +900,15 @@ def parse_graduation_reqs(pages: List[PageContent]) -> Dict[str, Dict]:
             if details:
                 reqs[current_group]["교양세부"] = details
 
-    # PDF 출처 메타데이터
+    # PDF 출처 메타데이터 — 졸업요건 테이블이 있는 페이지만
     source_file = pages[0].source_file if pages else ""
-    all_pages = sorted(set(p.page_number for p in pages if p.text))
+    grad_pages = sorted(set(
+        p.page_number for p in pages
+        if p.text and ("졸업학점" in p.text or "졸업요건" in p.text)
+    ))
     for group_data in reqs.values():
         if isinstance(group_data, dict):
-            group_data["_source_pages"] = all_pages
+            group_data["_source_pages"] = grad_pages
             group_data["_source_file"] = source_file
 
     return reqs
