@@ -32,38 +32,42 @@ logger = logging.getLogger(__name__)
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "static_pages.json"
 
 # ingest_static_page.py와 동일 매핑
+# 정적 페이지 → 그래프 노드 매핑
+# 제거됨: registration_guide (PDF 수강신청규칙이 더 정확)
+# 제거됨: graduation_guide (PDF 졸업요건이 학번별로 더 상세)
+# 제거됨: scholarship (data/scholarships.json이 더 상세)
 _TYPE_MAP = {
     "leave_of_absence": "휴복학",
-    "scholarship": "장학금",
     "free_semester": "자유학기제",
-    "registration_guide": "수강신청규칙",
     "attendance": "전자출결",
     "grading": "성적처리",
     "tuition_refund": "등록금반환",
-    "graduation_guide": "졸업요건",
     "teacher_training": "교직",
 }
 _PREFIX_MAP = {
     "leave_of_absence": "leave_info_",
-    "scholarship": "sch_info_",
     "free_semester": "free_sem_",
-    "registration_guide": "reg_guide_",
     "attendance": "attend_",
     "grading": "grade_",
     "tuition_refund": "refund_",
-    "graduation_guide": "grad_guide_",
     "teacher_training": "teacher_page_",
 }
 _METHOD_MAP = {
     "leave_of_absence": "add_leave_info",
-    "scholarship": "add_scholarship_page_info",
-    "registration_guide": "add_registration_guide_info",
-    "graduation_guide": "add_graduation_guide_info",
     "teacher_training": "add_teacher_training_page_info",
     "free_semester": "add_static_page_info",
     "attendance": "add_static_page_info",
     "grading": "add_static_page_info",
     "tuition_refund": "add_static_page_info",
+}
+# 루트 노드 생성 대상 (grading_root 패턴 확장)
+_ROOT_NODE_MAP = {
+    "leave_of_absence": "leave_root",
+    "free_semester": "free_sem_root",
+    "attendance": "attend_root",
+    "tuition_refund": "refund_root",
+    "teacher_training": "teacher_root",
+    # grading: 이미 별도 로직에서 grading_root 생성
 }
 
 
@@ -219,6 +223,18 @@ def main():
             logger.info(
                 "성적처리 분류: %s",
                 {nid: graph.G.nodes[nid].get("분류태그") for nid in added_nodes},
+            )
+
+        # ── 루트 노드 + 엣지 구조 (grading_root 패턴 확장) ──
+        root_id = _ROOT_NODE_MAP.get(graph_type)
+        if root_id and added_nodes and graph_type != "grading":
+            if root_id not in graph.G.nodes:
+                graph.G.add_node(root_id, type=node_type, 구분=f"{node_type} 안내")
+                graph._index_add(root_id, node_type)
+            for nid in added_nodes:
+                graph.G.add_edge(root_id, nid, relation="포함한다")
+            logger.info(
+                "%s → %d개 하위 노드 엣지 생성", root_id, len(added_nodes)
             )
 
         logger.info("%s: %d개 노드 추가", source_name, len(added_nodes))

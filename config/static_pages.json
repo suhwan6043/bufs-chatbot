@@ -17,14 +17,6 @@
       "description": "자유학기제(7+1학기) 프로그램 안내"
     },
     {
-      "id": "registration_guide",
-      "url": "https://m.bufs.ac.kr/Information/LESN6020.ASPX?mc=0966",
-      "source_name": "수강신청안내",
-      "content_type": "guide",
-      "graph_type": "registration_guide",
-      "description": "수강신청 절차·방법 안내"
-    },
-    {
       "id": "attendance",
       "url": "https://m.bufs.ac.kr/Information/LESN7050.ASPX?mc=0969",
       "source_name": "전자출결안내",
@@ -49,14 +41,6 @@
       "description": "등록금 반환·환불 기준 안내"
     },
     {
-      "id": "graduation_guide",
-      "url": "https://m.bufs.ac.kr/Information/GRAD2020.aspx?mc=1039",
-      "source_name": "졸업안내",
-      "content_type": "guide",
-      "graph_type": "graduation_guide",
-      "description": "졸업 절차·요건 종합 안내"
-    },
-    {
       "id": "teacher_training",
       "url": "https://m.bufs.ac.kr/Information/LESN5050.ASPX?mc=1106",
       "source_name": "교직과정안내",
@@ -65,14 +49,5 @@
       "description": "교직과정 이수·자격 안내"
     }
   ],
-  "장학": [
-    {
-      "id": "scholarship_info",
-      "url": "https://m.bufs.ac.kr/Information/SAJH1020.ASPX?mc=0935",
-      "source_name": "장학안내",
-      "content_type": "guide",
-      "graph_type": "scholarship",
-      "description": "교내·국가·외부 장학금 안내"
-    }
-  ]
+  "장학": []
 }
