@@ -56,6 +56,11 @@ class QueryRouter:
         if analysis.requires_graph and self.academic_graph:
             results["graph_results"] = self._search_graph(query, analysis)
 
+        # 원칙 2: 그래프 빈 결과 → 벡터 폴백 (비용 최적화)
+        if not results["graph_results"] and not results["vector_results"] and self.chroma_store:
+            logger.info("그래프 결과 없음 → 벡터 폴백 활성화")
+            results["vector_results"] = self._search_vector(query, analysis)
+
         logger.info(
             "라우팅: intent=%s, vector=%d, graph=%d",
             analysis.intent.value,
