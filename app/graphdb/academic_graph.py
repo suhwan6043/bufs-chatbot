@@ -117,6 +117,7 @@ class AcademicGraph:
         "조건",           # 요건·제약·예외 (졸업학점, 최대신청학점, 재수강기준 등)
         "계절학기",       # 계절학기 수강 안내
         "OCU",            # OCU(한국열린사이버대학교) 수강 안내
+        "공지사항",       # 게시판 공지 (고정공지 + 번호게시글)
     ]
 
     EDGE_TYPES = [
@@ -135,6 +136,7 @@ class AcademicGraph:
         "교양전공상호인정", # 교과목 → 학과전공
         "신청자격적용",   # 조기졸업(신청자격) → 조기졸업(기준)
         "졸업기준적용",   # 조기졸업(기준) → 졸업요건
+        "공지_참조",     # 공지사항 → 도메인 노드 (수강신청규칙, 장학금, 졸업요건 등)
     ]
 
     def __init__(self, graph_path: str = None):
@@ -467,6 +469,38 @@ class AcademicGraph:
         self._index_add(node_id, "조건")
         return node_id
 
+    def add_notice(self, source_url: str, data: dict) -> str:
+        """
+        공지사항 노드. ID = notice_{sanitized_title}
+        data: 제목, 내용요약, 발행일, 게시판, is_pinned, 태그 등
+        기존 노드면 업데이트 (upsert), 새 노드면 추가.
+        """
+        title = data.get("제목", source_url)
+        node_key = self._sanitize_node_key(title)
+        node_id = f"notice_{node_key}"
+        base = {
+            "type": "공지사항",
+            "제목": title,
+            "URL": source_url,
+        }
+        attrs = self._merge(base, data)
+        self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, "공지사항")
+        return node_id
+
+    def remove_notice(self, source_url: str, title: str = "") -> bool:
+        """공지사항 노드 및 관련 엣지 삭제. 성공 여부 반환."""
+        node_key = self._sanitize_node_key(title or source_url)
+        node_id = f"notice_{node_key}"
+        if node_id in self.G.nodes:
+            self.G.remove_node(node_id)
+            # 인덱스에서도 제거
+            notice_list = self._type_index.get("공지사항", [])
+            if node_id in notice_list:
+                notice_list.remove(node_id)
+            return True
+        return False
+
     # ── 엣지 추가 ─────────────────────────────────────────────
 
     def add_relation(
@@ -676,6 +710,13 @@ class AcademicGraph:
         ):
             if not any(r.source == "graph" and "계절학기" in r.text for r in results):
                 results.extend(self._query_by_node_type("계절학기", question))
+
+        # ── 보충 탐색: 관련 공지사항 ──
+        notice_results = self._query_notices(question, intent)
+        if notice_results:
+            # 이미 충분한 결과가 있으면 공지는 최대 1개만
+            max_notices = 1 if len(results) >= 2 else 2
+            results.extend(notice_results[:max_notices])
 
         return results
 
@@ -1613,6 +1654,85 @@ class AcademicGraph:
             results.append(self._make_graph_result(
                 text=self._fmt_static_info(data, node_type),
                 node_data=data, score=score,
+            ))
+        return results
+
+    # ── 공지사항 인텐트-태그 매핑 ─────────────────────────────
+    _INTENT_TO_NOTICE_TAGS = {
+        "REGISTRATION": ["수강신청"],
+        "SCHOLARSHIP": ["장학금"],
+        "GRADUATION_REQ": ["졸업"],
+        "LEAVE_OF_ABSENCE": ["휴복학"],
+        "SCHEDULE": ["일정"],
+        "EARLY_GRADUATION": ["졸업"],
+    }
+
+    def _query_notices(
+        self, question: str, intent: str = "",
+    ) -> List[SearchResult]:
+        """
+        공지사항 노드에서 인텐트/키워드 기반으로 관련 공지를 검색.
+        태그 인덱싱으로 O(1) 조회 (원칙 2: 동적 최적화).
+        """
+        all_notices = self._nodes_by_type("공지사항")
+        if not all_notices:
+            return []
+
+        q_norm = self._normalize_text(question)
+        scored: list[tuple[str, dict, float]] = []
+
+        # 인텐트 기반 태그 필터
+        target_tags = self._INTENT_TO_NOTICE_TAGS.get(intent, [])
+
+        for nid, data in all_notices:
+            tags = data.get("태그", [])
+            title_norm = self._normalize_text(data.get("제목", ""))
+            score = 0.8  # base score
+
+            # 태그 매칭 (인텐트 기반)
+            if target_tags and any(t in tags for t in target_tags):
+                score = 1.2
+
+            # 제목 키워드 직접 매칭
+            if q_norm and title_norm and any(
+                kw in title_norm for kw in q_norm.split()
+                if len(kw) >= 2
+            ):
+                score = max(score, 1.1)
+
+            # 관련 없는 공지는 스킵
+            if score <= 0.8 and target_tags:
+                continue
+
+            # 내용 포맷
+            title = data.get("제목", "")
+            summary = data.get("내용요약", "")
+            date_str = data.get("발행일", "")
+            board = data.get("게시판", "")
+            text_parts = [f"[공지사항] {title}"]
+            if date_str:
+                text_parts.append(f"게시일: {date_str}")
+            if board:
+                text_parts.append(f"게시판: {board}")
+            if summary:
+                text_parts.append(summary)
+
+            scored.append((nid, data, score))
+
+        # 점수 내림차순, 최대 3개
+        scored.sort(key=lambda x: x[2], reverse=True)
+        results: List[SearchResult] = []
+        for nid, data, score in scored[:3]:
+            title = data.get("제목", "")
+            summary = data.get("내용요약", "")
+            date_str = data.get("발행일", "")
+            text = f"[공지사항] {title}"
+            if date_str:
+                text += f" (게시일: {date_str})"
+            if summary:
+                text += f"\n{summary}"
+            results.append(self._make_graph_result(
+                text=text, node_data=data, score=score,
             ))
         return results
 

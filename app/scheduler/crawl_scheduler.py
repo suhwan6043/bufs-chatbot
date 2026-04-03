@@ -84,7 +84,7 @@ def _run_notice_job() -> None:
         # ── 크롤링 ───────────────────────────────────────────────
         from app.crawler.notice_crawler import NoticeCrawler
         crawler = NoticeCrawler()
-        items = crawler.crawl()
+        items = crawler.crawl(pinned_only=False)  # 번호게시글만 (고정공지는 정적 수집)
 
         # ── 변경 감지 ─────────────────────────────────────────────
         from app.crawler.change_detector import ChangeDetector

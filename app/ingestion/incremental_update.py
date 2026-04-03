@@ -87,17 +87,18 @@ class IncrementalUpdater:
     # ── 이벤트 핸들러 ─────────────────────────────────────────────
 
     def _handle_new(self, event: ChangeEvent) -> int:
-        """신규: 공지 텍스트 인제스트 → 첨부파일 다운로드 + PDF 인제스트"""
+        """신규: 공지 텍스트 인제스트 → 첨부파일 다운로드 + PDF 인제스트 → 그래프 업데이트"""
         chunks = self._event_to_chunks(event)
         if chunks:
             self.chroma.add_chunks(chunks)
         logger.info("신규 인제스트: %s (%d청크)", event.title or event.source_id, len(chunks))
 
         attach_count = self._ingest_attachments(event)
+        self._update_graph(event)
         return len(chunks) + attach_count
 
     def _handle_modified(self, event: ChangeEvent) -> int:
-        """수정: 기존 공지/첨부 청크 삭제 → 재인제스트"""
+        """수정: 기존 공지/첨부 청크 삭제 → 재인제스트 → 그래프 업데이트"""
         # 공지 텍스트 청크 삭제
         deleted = self.chroma.delete_by_source(event.source_id)
         logger.debug("수정 전 기존 청크 삭제: %d개", deleted)
@@ -112,18 +113,51 @@ class IncrementalUpdater:
         logger.info("수정 재인제스트: %s (%d청크)", event.title or event.source_id, len(chunks))
 
         attach_count = self._ingest_attachments(event)
+        self._update_graph(event)
         return len(chunks) + attach_count
 
     def _handle_deleted(self, event: ChangeEvent) -> None:
-        """삭제: 공지 텍스트 + 첨부 PDF 청크 제거"""
+        """삭제: 공지 텍스트 + 첨부 PDF 청크 제거 + 그래프 노드 삭제"""
         deleted = self.chroma.delete_by_source(event.source_id)
         attach_deleted = self._delete_attachment_chunks(event.source_id)
+        # 그래프에서도 삭제
+        self._remove_from_graph(event)
         logger.info(
             "삭제 처리: %s (공지 %d청크, 첨부 %d청크 제거)",
             event.title or event.source_id,
             deleted,
             attach_deleted,
         )
+
+    # ── 그래프 업데이트 ─────────────────────────────────────────────
+
+    def _update_graph(self, event: ChangeEvent) -> None:
+        """공지사항 이벤트를 그래프에 반영 (노드 추가/업데이트 + 엣지 연결)."""
+        if event.metadata.get("content_type") != "notice":
+            return
+        try:
+            from app.graphdb.notice_graph_builder import NoticeGraphBuilder
+            from app.graphdb.academic_graph import AcademicGraph
+            graph = AcademicGraph()
+            builder = NoticeGraphBuilder()
+            builder.build_from_event(graph, event)
+            graph.save()
+        except Exception as e:
+            logger.warning("그래프 업데이트 실패: %s", e)
+
+    def _remove_from_graph(self, event: ChangeEvent) -> None:
+        """삭제된 공지사항을 그래프에서 제거."""
+        if event.metadata.get("content_type") != "notice":
+            return
+        try:
+            from app.graphdb.notice_graph_builder import NoticeGraphBuilder
+            from app.graphdb.academic_graph import AcademicGraph
+            graph = AcademicGraph()
+            if NoticeGraphBuilder.remove_notice(graph, event.source_id, event.title):
+                graph.save()
+                logger.debug("그래프에서 공지 삭제: %s", event.title)
+        except Exception as e:
+            logger.warning("그래프 삭제 실패: %s", e)
 
     # ── 첨부파일 (Phase 6) ────────────────────────────────────────
 

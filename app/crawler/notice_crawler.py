@@ -107,20 +107,26 @@ class NoticeCrawler(BaseCrawler):
     def get_targets(self) -> list[dict]:
         return self.DEFAULT_TARGETS
 
-    def crawl(self) -> list[CrawledItem]:
+    def crawl(self, pinned_only: bool | None = None) -> list[CrawledItem]:
         """
-        모든 대상 게시판을 크롤링하여 이번 학기 게시글만 반환합니다.
+        모든 대상 게시판을 크롤링합니다.
+
+        Args:
+            pinned_only: None=전체, True=고정공지만, False=번호게시글만
         """
         semester_start = _current_semester_start()
         semester_label = _current_semester_label()
+        mode_label = {None: "전체", True: "고정공지만", False: "번호게시글만"}
         logger.info(
-            "크롤링 시작: 학기=%s, 기준일=%s",
-            semester_label, semester_start.isoformat(),
+            "크롤링 시작: 학기=%s, 기준일=%s, 모드=%s",
+            semester_label, semester_start.isoformat(), mode_label[pinned_only],
         )
 
         all_items: list[CrawledItem] = []
         for target in self.get_targets():
-            items = self._crawl_board(target, semester_start, semester_label)
+            items = self._crawl_board(
+                target, semester_start, semester_label, pinned_only,
+            )
             all_items.extend(items)
             logger.info(
                 "[%s] 수집 완료: %d건",
@@ -137,11 +143,14 @@ class NoticeCrawler(BaseCrawler):
         target: dict,
         semester_start: date,
         semester_label: str,
+        pinned_only: bool | None = None,
     ) -> list[CrawledItem]:
         """
-        단일 게시판의 목록 페이지를 순회하며 이번 학기 게시글을 수집합니다.
+        단일 게시판의 목록 페이지를 순회하며 게시글을 수집합니다.
 
-        날짜가 semester_start 이전이 되면 즉시 중단합니다.
+        - 번호게시글: 날짜가 semester_start 이전이면 중단
+        - 고정공지: 날짜 필터 면제 (오래된 공지도 수집)
+        - pinned_only: None=전체, True=고정공지만, False=번호게시글만
         """
         items: list[CrawledItem] = []
         base_url = target["list_url"]
@@ -154,10 +163,14 @@ class NoticeCrawler(BaseCrawler):
             if not html:
                 break
 
-            posts, stop = self._parse_list_page(html, target, semester_start)
+            posts, stop = self._parse_list_page(
+                html, target, semester_start, pinned_only,
+            )
 
-            for url, title, post_date in posts:
-                item = self._crawl_post(url, title, post_date, target, semester_label)
+            for url, title, post_date, is_pinned in posts:
+                item = self._crawl_post(
+                    url, title, post_date, target, semester_label, is_pinned,
+                )
                 if item:
                     items.append(item)
 
@@ -175,16 +188,20 @@ class NoticeCrawler(BaseCrawler):
         html: str,
         target: dict,
         semester_start: date,
-    ) -> tuple[list[tuple[str, str, date | None]], bool]:
+        pinned_only: bool | None = None,
+    ) -> tuple[list[tuple[str, str, date | None, bool]], bool]:
         """
-        목록 페이지에서 (URL, 제목, 날짜) 튜플 목록을 추출합니다.
+        목록 페이지에서 (URL, 제목, 날짜, is_pinned) 튜플 목록을 추출합니다.
+
+        Args:
+            pinned_only: None=전체, True=고정공지만, False=번호게시글만
 
         Returns:
             (posts, stop_flag)
-            stop_flag=True이면 이 페이지에 학기 이전 게시글이 있어 순회 중단 신호
+            stop_flag=True이면 이 페이지에 학기 이전 번호게시글이 있어 순회 중단 신호
         """
         soup = self._soup(html)
-        posts: list[tuple[str, str, date | None]] = []
+        posts: list[tuple[str, str, date | None, bool]] = []
         stop = False
 
         # BUFS 커스텀 스킨: div.tbl_wrap > table > tbody
@@ -199,6 +216,19 @@ class NoticeCrawler(BaseCrawler):
             return posts, True
 
         for tr in tbody.select("tr"):
+            # ── 고정공지 vs 번호게시글 감지 ──
+            num_td = tr.select_one("td.td_num")
+            is_pinned = True  # td_num 없으면 고정공지로 간주
+            if num_td:
+                num_text = num_td.get_text(strip=True)
+                is_pinned = not num_text.isdigit()
+
+            # pinned_only 필터 적용
+            if pinned_only is True and not is_pinned:
+                continue
+            if pinned_only is False and is_pinned:
+                continue
+
             # 제목 링크: td.td_subject > a
             subject_td = tr.select_one("td.td_subject")
             if not subject_td:
@@ -223,12 +253,12 @@ class NoticeCrawler(BaseCrawler):
             if date_td:
                 post_date = _parse_post_date(date_td.get_text(strip=True))
 
-            # 학기 기준일 이전 게시글 → 중단 신호
-            if post_date and post_date < semester_start:
+            # 번호게시글만 학기 기준일 필터 적용 (고정공지는 면제)
+            if not is_pinned and post_date and post_date < semester_start:
                 stop = True
                 break
 
-            posts.append((href, title, post_date))
+            posts.append((href, title, post_date, is_pinned))
 
         return posts, stop
 
@@ -241,6 +271,7 @@ class NoticeCrawler(BaseCrawler):
         post_date: date | None,
         target: dict,
         semester_label: str,
+        is_pinned: bool = False,
     ) -> CrawledItem | None:
         """단일 게시글 상세 페이지를 크롤링합니다."""
         html = self._fetch(url)
@@ -327,5 +358,7 @@ class NoticeCrawler(BaseCrawler):
                 "semester": semester_label,
                 "crawled_at": datetime.now().isoformat(timespec="seconds"),
                 "bo_table": target["bo_table"],
+                "is_pinned": is_pinned,
             },
+            is_pinned=is_pinned,
         )

@@ -38,6 +38,7 @@ class CrawledItem:
     source_name: str        # "학사공지", "일반공지" 등
     attachments: list[str] = field(default_factory=list)  # 첨부파일 URL
     metadata: dict = field(default_factory=dict)
+    is_pinned: bool = False  # 고정공지 여부
 
 
 @dataclass

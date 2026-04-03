@@ -946,7 +946,7 @@ def _get_contact_footer(intent, entities: dict, question: str) -> str:
 
 
 @st.cache_data(show_spinner=False)
-def _render_pdf_page(source_file: str, page_num: int, chunk_text: str) -> bytes | None:
+def _render_pdf_page(source_file: str, page_num: int, chunk_text: str, _v: int = 2) -> bytes | None:
     """PDF 지정 페이지를 렌더링하고 chunk_text 위치를 노란색 하이라이트합니다."""
     try:
         import fitz  # PyMuPDF
@@ -967,16 +967,38 @@ def _render_pdf_page(source_file: str, page_num: int, chunk_text: str) -> bytes 
         page = doc[page_idx]
 
         # ── 하이라이트 (실패해도 페이지 렌더링은 계속) ────────────
+        # 문자 기반 슬라이딩 윈도우: 한국어 텍스트에 최적화
         try:
-            words = chunk_text.split()
-            for i in range(0, len(words), 6):
-                fragment = " ".join(words[i:i + 6])
-                if len(fragment) < 10:
+            import re as _re
+            # 1. 메타 접두사·특수문자 제거
+            clean = _re.sub(r"\[공지\]\s*", "", chunk_text)
+            clean = _re.sub(r"[|│┃]", " ", clean)
+            clean = _re.sub(r"\s+", " ", clean).strip()
+
+            # 2. 문장 단위 분리 (마침표·줄바꿈 기준)
+            sentences = _re.split(r"[.\n]+", clean)
+
+            highlighted: set = set()
+            for sent in sentences:
+                sent = sent.strip()
+                if len(sent) < 8:
                     continue
-                for rect in page.search_for(fragment):
-                    h = page.add_highlight_annot(rect)
-                    h.set_colors(stroke=(1, 0.9, 0))  # 노란색
-                    h.update()
+                # 짧은 문장은 그대로, 긴 문장은 15자 슬라이딩 윈도우
+                if len(sent) <= 30:
+                    fragments = [sent]
+                else:
+                    fragments = [sent[j:j + 15] for j in range(0, len(sent) - 14, 10)]
+
+                for frag in fragments:
+                    if frag in highlighted:
+                        continue
+                    rects = page.search_for(frag)
+                    for rect in rects:
+                        h = page.add_highlight_annot(rect)
+                        h.set_colors(stroke=(1, 0.9, 0))  # 노란색
+                        h.update()
+                    if rects:
+                        highlighted.add(frag)
         except Exception as e:
             logger.debug("하이라이트 실패 (렌더링 계속): %s", e)
 
