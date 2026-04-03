@@ -13,6 +13,28 @@ from typing import List, Optional, Tuple
 # ── 청킹 설정 ──────────────────────────────────────────────────
 CHUNK_SIZE = 500       # 청크당 최대 글자 수 (한국어 기준 ~250 토큰)
 CHUNK_OVERLAP = 80     # 청크 간 겹침 글자 수 (문맥 연속성)
+
+
+def _detect_info_type(text: str) -> str:
+    """
+    청크 텍스트에서 정보 유형을 자동 분류합니다 (원칙 3: 지식 생애주기).
+    패턴 기반 감지로 하드코딩 최소화.
+
+    Returns: "schedule" | "contact" | "requirement" | "procedure" | "general"
+    """
+    # 날짜 패턴 (2026-03-02, 3월 2일 등) → 일정 정보
+    if re.search(r"\d{4}[-./]\d{1,2}[-./]\d{1,2}", text):
+        return "schedule"
+    # URL 패턴 → 연락처/접속 정보
+    if re.search(r"https?://", text):
+        return "contact"
+    # 학점/수치 기준 → 요건 정보
+    if re.search(r"\d+학점|이상|이하|최대|최소|초과", text):
+        return "requirement"
+    # 절차/신청 → 프로세스 정보
+    if re.search(r"신청|절차|방법|제출|서류", text):
+        return "procedure"
+    return "general"
 MIN_CHUNK_LEN = 50     # 이 이하 청크는 버림
 
 # ── 학번 범위 감지 ─────────────────────────────────────────────
@@ -157,6 +179,7 @@ def pages_to_chunks(
                         "page_number": page_num,
                         "doc_type": doc_type,
                         "is_table": False,
+                        "info_type": _detect_info_type(text),
                         **extra_metadata,
                     },
                 ))
@@ -184,6 +207,7 @@ def pages_to_chunks(
                     "page_number": page_num,
                     "doc_type": doc_type,
                     "is_table": True,
+                    "info_type": _detect_info_type(table_md),
                     **extra_metadata,
                 },
             ))

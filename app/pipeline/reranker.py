@@ -71,15 +71,24 @@ class Reranker:
             reverse=True,
         )
 
+        # 동적 컷오프: 최고 점수 대비 50% 미만인 결과 제거
+        # 원칙 2: 무관한 청크의 컨텍스트 오염 방지 → 검색 정밀도 향상
         reranked = []
+        top_score = scored[0][0] if scored else 0.0
+        threshold = top_score * 0.5 if top_score > 0 else -float("inf")
+
         for score, result in scored[:top_k]:
+            if score < threshold and len(reranked) >= 2:
+                # 최소 2개는 유지, 이후 threshold 미달 시 중단
+                break
             result.score = float(score)
             reranked.append(result)
 
         logger.debug(
-            "리랭킹: %d개 후보 → %d개 선택 (top score=%.3f)",
+            "리랭킹: %d개 후보 → %d개 선택 (top=%.3f, threshold=%.3f)",
             len(results),
             len(reranked),
-            reranked[0].score if reranked else 0.0,
+            top_score,
+            threshold,
         )
         return reranked

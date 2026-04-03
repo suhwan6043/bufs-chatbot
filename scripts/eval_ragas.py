@@ -51,6 +51,9 @@ router = QueryRouter(store, graph)
 merger = ContextMerger()
 generator = AnswerGenerator()
 
+# 임베딩 모델 워밍업 — q008 segfault 방지 (lazy-load 대신 즉시 로드)
+_ = store.embedder.embed_query("warmup")
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # LLM 호출 헬퍼

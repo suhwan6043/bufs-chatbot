@@ -106,19 +106,38 @@ def parse_schedule_table(
         if m_note:
             note = m_note.group(1).strip()
 
+        # 시간 추출: "10:00", "오전 10시", "17시", "09:45" 등
+        time_info = ""
+        m_time = re.search(r"(\d{1,2})\s*[:시]\s*(\d{0,2})\s*분?", event_cell)
+        if m_time:
+            h = int(m_time.group(1))
+            mm = m_time.group(2)
+            time_info = f"{h:02d}:{int(mm):02d}" if mm else f"{h:02d}:00"
+        # "오전/오후 N시" 패턴
+        if not time_info:
+            m_ampm = re.search(r"(오전|오후)\s*(\d{1,2})시", event_cell)
+            if m_ampm:
+                h = int(m_ampm.group(2))
+                if m_ampm.group(1) == "오후" and h < 12:
+                    h += 12
+                time_info = f"{h:02d}:00"
+
         # 날짜 파싱: "1(월)", "3(수) ~ 5(금)", "11월 초 ~" 등
         start_date, end_date = _parse_date_range(date_cell, current_year, current_month)
 
         if not start_date or not event_name:
             continue
 
-        events.append({
+        event = {
             "이벤트명": event_name,
             "시작일": start_date,
             "종료일": end_date or start_date,
             "비고": note,
             "학기": f"{base_year}-2",
-        })
+        }
+        if time_info:
+            event["시간"] = time_info
+        events.append(event)
 
     return events
 
@@ -406,6 +425,25 @@ def parse_registration_rules(pages: List[PageContent]) -> Dict[str, Dict]:
         )
         for key in rules:
             rules[key]["수강취소마감일시"] = deadline
+
+    # 수강신청 사이트 URL (sugang.bufs.ac.kr)
+    m_url = re.search(r"(https?://sugang\.bufs\.ac\.kr/?)", full_text)
+    if not m_url:
+        m_url = re.search(r"(sugang\.bufs\.ac\.kr)", full_text)
+    if m_url:
+        url_val = m_url.group(1)
+        if not url_val.startswith("http"):
+            url_val = f"http://{url_val}"
+        for key in rules:
+            rules[key]["수강신청사이트"] = url_val
+
+    # 재수강 기준 성적 (C+ 이하 등)
+    m_retake = re.search(r"([A-Da-d][+]?)\s*이하.*?(?:과목|성적).*?재수강", full_text)
+    if not m_retake:
+        m_retake = re.search(r"재수강.*?([A-Da-d][+]?)\s*이하", full_text)
+    if m_retake:
+        for key in rules:
+            rules[key]["재수강기준성적"] = f"{m_retake.group(1)}이하"
 
     # PDF 출처 메타데이터 — 실제 수강신청 학점 규칙이 있는 페이지만
     source_file = pages[0].source_file if pages else ""
@@ -1259,11 +1297,10 @@ def build_graph_from_pdf(
         ocu_data = parse_ocu_section(ocu_pages)
         logger.info(f"  OCU 파싱 완료: {ocu_data}")
 
-        # OCU 정보를 독립 노드로 생성 (수강규칙에 합치지 않음)
+        # OCU 정보를 독립 노드로 생성 (개강일/시간 포함)
         ocu_node_id = graph.add_static_page_info(
             name="OCU 수강안내",
-            data={k: v for k, v in ocu_data.items()
-                  if k not in ("개강일", "개강시간")},
+            data={k: v for k, v in ocu_data.items()},
             node_type="OCU", prefix="ocu_",
         )
         # 수강규칙 → OCU 엣지 (1-hop 탐색용)

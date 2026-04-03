@@ -178,6 +178,10 @@ class ContextMerger:
             urls = re.findall(r"https?://[^\s)\]가-힣]+", context)
             if urls:
                 return f"{urls[0]}입니다."
+            # 그래프 속성에서 URL 추출 (수강신청사이트 필드)
+            m = re.search(r"수강신청사이트[:\s]*(\S+bufs\S+)", context)
+            if m:
+                return f"{m.group(1)}입니다."
 
         # ── 2) 재수강 최고 성적 (매우 구체적 질문만) ──
         if "최고성적" in q or ("재수강" in q and "성적" in q and "최고" in q):
@@ -186,7 +190,10 @@ class ContextMerger:
                 return f"{m.group(1)}입니다."
 
         # ── 3) 재수강 가능 성적 기준 ──
-        if "재수강" in q and ("가능" in q or "기준" in q) and "성적" in q:
+        if "재수강" in q and ("가능" in q or "기준" in q or "몇" in q):
+            m = re.search(r"재수강기준성적[:\s]*([A-Da-d][+]?이하)", context)
+            if m:
+                return f"{m.group(1)} 과목만 재수강 가능합니다."
             m = re.search(r"([A-Da-d][+]?)\s*이하.*?(?:과목|가능|재수강)", context)
             if m:
                 return f"{m.group(1)} 이하의 과목만 가능합니다."
@@ -196,13 +203,43 @@ class ContextMerger:
             m = re.search(r"(\d+/\d+)\s*이상", context)
             if m:
                 return f"전체 출석일수의 {m.group(1)} 이상을 충족해야 합니다."
+            m = re.search(r"출석요건[:\s]*(\d+/\d+)", context)
+            if m:
+                return f"전체 출석일수의 {m.group(1)} 이상을 충족해야 합니다."
 
         # ── 5) 졸업 최소 학점 (학번 특정) ──
         if ("졸업" in q or "필요한" in q) and ("최소" in q or "학점" in q):
-            # 컨텍스트에서 졸업학점 추출 (단일 값만)
             m = re.search(r"졸업학점[은는:]?\s*(\d{2,3})", context)
             if m:
                 return f"{m.group(1)}학점 이상입니다."
+
+        # ── 6) OCU 개강일/시간 ──
+        if "ocu" in q and any(kw in q for kw in ("개강", "시작", "언제")):
+            m_date = re.search(r"개강일[:\s]*([\d\-]+)", context)
+            m_time = re.search(r"개강시간[:\s]*(오[전후]\s*\d+시)", context)
+            if m_date:
+                answer = f"OCU 개강일은 {m_date.group(1)}"
+                if m_time:
+                    answer += f" {m_time.group(1)}"
+                return answer + "입니다."
+
+        # ── 7) 마감 시간 ("몇 시", "마감 시간") ──
+        if any(kw in q for kw in ("몇시", "마감시간", "마감몇시")):
+            m = re.search(r"마감[^:]*?(\d{1,2}:\d{2})", context)
+            if not m:
+                m = re.search(r"(\d{1,2}:\d{2}).*?마감", context)
+            if not m:
+                m = re.search(r"시간[:\s]*(\d{1,2}:\d{2})", context)
+            if m:
+                return f"{m.group(1)}입니다."
+
+        # ── 8) 로그인 오픈 시간 ──
+        if "로그인" in q and any(kw in q for kw in ("시간", "오픈", "언제")):
+            m = re.search(r"로그인오픈시간[:\s]*(.+?)(?:\n|$)", context)
+            if not m:
+                m = re.search(r"(\d+분?\s*전).*?로그인", context)
+            if m:
+                return f"로그인은 {m.group(1).strip()} 오픈됩니다."
 
         return ""
 
