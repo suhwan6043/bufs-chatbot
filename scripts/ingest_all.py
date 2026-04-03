@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from scripts.ingest_pdf import ingest_pdf
 from scripts.pdf_to_graph import build_graph_from_pdf
 from app.crawler.static_page_crawler import StaticPageCrawler
-from app.crawler.change_detector import ChangeDetector
+from app.crawler.change_detector import ChangeDetector, ChangeType
 from app.crawler.blacklist import ContentBlacklist
 from app.ingestion.incremental_update import IncrementalUpdater
 from app.embedding import Embedder
@@ -117,9 +117,17 @@ def main():
     # ── 1. PDF 인제스트 (ChromaDB) ───────────────────────────
     if Path(pdf_path).exists():
         logger.info("=== PDF 인제스트: %s ===", pdf_path)
-        ingest_pdf(pdf_path=pdf_path, student_id="2025", doc_type="domestic")
+        ingest_pdf(pdf_path=pdf_path, student_id="2024", doc_type="domestic")
     else:
         logger.warning("PDF 없음: %s", pdf_path)
+
+    # ── 1-2. 수업시간표 PDF 인제스트 (ChromaDB) ─────────────
+    timetable_path = "data/pdfs/2026학년도 1학기 수업시간표.pdf"
+    if Path(timetable_path).exists():
+        logger.info("=== PDF 인제스트: %s ===", timetable_path)
+        ingest_pdf(pdf_path=timetable_path, student_id="", doc_type="timetable")
+    else:
+        logger.warning("PDF 없음: %s", timetable_path)
 
     # ── 2. 정적 페이지 전체 크롤링 ──────────────────────────
     with CONFIG_PATH.open(encoding="utf-8") as f:
@@ -245,11 +253,51 @@ def main():
         graph.G.number_of_nodes(), graph.G.number_of_edges(),
     )
 
-    # ── 5. 검증 ──────────────────────────────────────────────
+    # ── 5. 고정공지 인제스트 (벡터DB + 그래프DB) ──────────────
+    logger.info("=== 고정공지 인제스트 ===")
+    from app.crawler.notice_crawler import NoticeCrawler
+    from app.graphdb.notice_graph_builder import NoticeGraphBuilder
+
+    notice_crawler = NoticeCrawler()
+    notice_items = notice_crawler.crawl(pinned_only=True)
+    logger.info("고정공지 수집: %d건", len(notice_items))
+
+    if notice_items:
+        # ChromaDB 업데이트
+        notice_events = detector.detect(notice_items)
+        notice_events = [e for e in notice_events if e.change_type != ChangeType.DELETED]
+        if notice_events:
+            notice_report = updater.process_events(notice_events)
+            successful = [
+                e for e in notice_events
+                if e.source_id not in notice_report.failed_source_ids
+            ]
+            if successful:
+                detector.commit(successful)
+            logger.info(
+                "고정공지 ChromaDB: added=%d, updated=%d, errors=%d",
+                notice_report.added, notice_report.updated, len(notice_report.errors),
+            )
+        else:
+            logger.info("고정공지 변경 없음 — ChromaDB 스킵")
+
+        # 그래프DB 업데이트
+        graph = AcademicGraph()  # 최신 그래프 reload
+        notice_builder = NoticeGraphBuilder()
+        graph_stats = notice_builder.build_from_items(graph, notice_items)
+        graph.save()
+        logger.info(
+            "고정공지 그래프: 노드=%d, 엣지=%d",
+            graph_stats["added"] + graph_stats["updated"],
+            graph_stats["edges"],
+        )
+
+    # ── 6. 검증 ──────────────────────────────────────────────
     count = chroma_store.collection.count()
+    final_graph = AcademicGraph()
     logger.info("=== 최종 검증 ===")
     logger.info("ChromaDB: %d개 청크", count)
-    logger.info("Graph: %d개 노드, %d개 엣지", graph.G.number_of_nodes(), graph.G.number_of_edges())
+    logger.info("Graph: %d개 노드, %d개 엣지", final_graph.G.number_of_nodes(), final_graph.G.number_of_edges())
     logger.info("=== 전체 인제스트 완료 ===")
 
 

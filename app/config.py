@@ -24,7 +24,7 @@ DATA_DIR = BASE_DIR / "data"
 @dataclass
 class LLMConfig:
     base_url: str = os.getenv("LLM_BASE_URL", "http://localhost:1234")
-    model: str = os.getenv("LLM_MODEL", "qwen3.5-9b-4bit")
+    model: str = os.getenv("LLM_MODEL", "qwen/qwen3.5-9b")
     max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "2048"))
     temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
     top_p: float = float(os.getenv("LLM_TOP_P", "0.9"))

@@ -216,6 +216,36 @@ class ChromaStore:
         logger.info("ChromaDB에서 %d개 청크 삭제 완료: %s", deleted, source_identifier)
         return deleted
 
+    def delete_all_by_doc_type(self, doc_type: str) -> int:
+        """
+        특정 doc_type의 모든 청크를 ChromaDB에서 삭제합니다.
+
+        Returns:
+            삭제된 청크 수
+        """
+        try:
+            result = self.collection.get(
+                where={"doc_type": {"$eq": doc_type}},
+                include=[],
+            )
+            ids = result.get("ids", []) if result else []
+        except Exception as e:
+            logger.warning("doc_type=%s 조회 실패: %s", doc_type, e)
+            return 0
+
+        if not ids:
+            return 0
+
+        batch_size = 500
+        deleted = 0
+        for i in range(0, len(ids), batch_size):
+            batch = ids[i : i + batch_size]
+            self.collection.delete(ids=batch)
+            deleted += len(batch)
+
+        logger.info("doc_type=%s 청크 %d개 삭제 완료", doc_type, deleted)
+        return deleted
+
     def count(self) -> int:
         """저장된 문서 수를 반환합니다."""
         return self.collection.count()

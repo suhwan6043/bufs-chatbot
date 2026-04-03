@@ -194,12 +194,40 @@ _check_auth()
 
 
 # ════════════════════════════════════════════════════
-# 그래프 로더 (관리자 세션 전용)
+# 그래프 로더 (동시 접속 대응)
 # ════════════════════════════════════════════════════
 def _get_graph() -> AcademicGraph:
-    if "admin_graph" not in st.session_state:
+    """
+    세션 캐시 그래프를 반환합니다.
+    디스크 파일이 다른 세션에서 갱신되었으면 자동으로 다시 로드합니다.
+    """
+    cached: AcademicGraph | None = st.session_state.get("admin_graph")
+    if cached is None or cached.is_stale():
         st.session_state.admin_graph = AcademicGraph()
     return st.session_state.admin_graph
+
+
+def _save_graph(mutate_fn, audit_action: str = "", audit_detail: str = ""):
+    """
+    reload-merge-save 패턴으로 안전하게 그래프를 저장합니다.
+
+    동시 접속 시 다른 세션의 변경이 사라지지 않도록:
+      1. 디스크에서 최신 그래프를 다시 로드
+      2. mutate_fn(fresh_graph) 로 원하는 변경만 적용
+      3. 저장
+      4. 세션 캐시 갱신
+
+    사용 예:
+        def _apply(g):
+            g.add_graduation_req("2024_2025", "내국인", data)
+        _save_graph(_apply, "SAVE_GRAD_REQ", "group=2024_2025")
+    """
+    fresh = AcademicGraph()      # 최신 디스크 상태
+    mutate_fn(fresh)             # 변경 적용
+    fresh.save()                 # 원자적 저장
+    st.session_state.admin_graph = fresh  # 세션 캐시 갱신
+    if audit_action:
+        _audit(audit_action, audit_detail)
 
 
 graph = _get_graph()
@@ -505,18 +533,123 @@ with tab_grad:
         v = _int_or_none(f_micro);     new_data["마이크로전공이수학점"] = v
         v = _int_or_none(f_minor);     new_data["부전공이수학점"]      = v
 
-        graph.add_graduation_req(sel_group, sel_type, new_data, major=sel_major)
-        graph.save()
-        audit_detail = f"group={sel_group}, type={sel_type}"
-        if sel_major:
-            audit_detail += f", major={sel_major}"
-        _audit("SAVE_GRAD_REQ", audit_detail)
+        _grp, _stype, _mjr, _nd = sel_group, sel_type, sel_major, new_data
+        _save_graph(
+            lambda g: g.add_graduation_req(_grp, _stype, _nd, major=_mjr),
+            "SAVE_GRAD_REQ",
+            f"group={sel_group}, type={sel_type}" + (f", major={sel_major}" if sel_major else ""),
+        )
         st.success(
             f"저장 완료: **{disp_label}**  \n"
             f"채팅에 반영하려면 [그래프 현황] 탭 → '채팅 세션 초기화' 버튼을 누르세요."
         )
-        st.session_state.pop("admin_graph", None)
         st.rerun()
+
+    # ── 학과별 졸업인증 연동 편집 ─────────────────────────────────
+    if sel_major:
+        st.markdown("---")
+        st.markdown("#### 📝 학과별 졸업인증 요건")
+        st.caption(
+            f"**{sel_major_label}** 학과 노드에 저장된 졸업시험·졸업인증 요건을 편집합니다.  \n"
+            "학번 그룹/학생유형과 무관하게 학과 단위로 관리됩니다."
+        )
+
+        # ── 학과 노드 탐색 ──────────────────────────────────────────
+        def _find_cert_node(g, major: str) -> str | None:
+            """전공명으로 학과전공 노드 ID를 찾습니다 (최장 매칭 우선)."""
+            for candidate in (f"dept_{major}전공", f"dept_{major}"):
+                if candidate in g.G.nodes:
+                    return candidate
+            # 부분 매칭: 한국어 정규화 후 점수 계산 → 가장 긴 매칭 선택
+            mj = major.replace("어", "").replace(" ", "")
+            best_nid, best_score = None, 0
+            for nid, d in g.G.nodes(data=True):
+                if d.get("type") != "학과전공":
+                    continue
+                nm = d.get("전공명", nid.replace("dept_", ""))
+                nm_norm = nm.replace("전공", "").replace("학과", "").replace("어", "").replace(" ", "")
+                score = 0
+                if mj == nm_norm:
+                    score = 100
+                elif len(mj) >= 3 and mj in nm_norm:
+                    score = 50 + len(nm_norm)
+                elif len(nm_norm) >= 3 and nm_norm in mj:
+                    score = 30 + len(nm_norm)   # 더 긴 노드명일수록 높은 점수
+                if score > best_score:
+                    best_score, best_nid = score, nid
+            return best_nid
+
+        cert_nid = _find_cert_node(graph, sel_major)
+
+        if cert_nid is None:
+            st.warning(
+                f"**{sel_major}** 에 해당하는 학과 노드를 찾을 수 없습니다.  \n"
+                "학과 노드가 없으면 저장 시 새로 생성됩니다.",
+                icon="⚠️",
+            )
+            cert_nid = f"dept_{sel_major}전공"
+            cert_cur: dict = {}
+        else:
+            cert_cur = {
+                k: v for k, v in dict(graph.G.nodes[cert_nid]).items()
+                if k in ("졸업시험_요건", "졸업시험_과목", "졸업시험_합격기준", "졸업시험_대체방법")
+            }
+            if any(cert_cur.values()):
+                st.success(f"기존 졸업인증 데이터 로드: **{cert_nid}**", icon="✅")
+            else:
+                st.info("졸업인증 데이터가 아직 없습니다. 아래에서 입력 후 저장하세요.", icon="ℹ️")
+
+        with st.form("form_dept_cert"):
+            f_cert_req = st.text_area(
+                "졸업시험·졸업인증 요건 (전체 요약)",
+                value=cert_cur.get("졸업시험_요건", "") or "",
+                height=120,
+                placeholder="예: 졸업시험(정보보호개론, 암호론) 70점 이상 합격. 자격증으로 대체 가능.",
+            )
+            c1, c2 = st.columns(2)
+            with c1:
+                f_cert_subj = st.text_input(
+                    "시험 과목",
+                    value=cert_cur.get("졸업시험_과목", "") or "",
+                    placeholder="예: 정보보호개론, 암호론",
+                )
+            with c2:
+                f_cert_pass = st.text_input(
+                    "합격 기준",
+                    value=cert_cur.get("졸업시험_합격기준", "") or "",
+                    placeholder="예: 70점 이상 / 평균 70점 이상 (과락 50점)",
+                )
+            f_cert_alt = st.text_area(
+                "대체 방법",
+                value=cert_cur.get("졸업시험_대체방법", "") or "",
+                height=80,
+                placeholder="예: 정보처리기사 자격증 / 취업박람회 참가 등",
+            )
+            cert_saved = st.form_submit_button(
+                "💾 졸업인증 저장", type="primary", use_container_width=True
+            )
+
+        if cert_saved:
+            _cnid = cert_nid
+            _cmjr = sel_major
+            _cert_attrs = {
+                "졸업시험_요건":    f_cert_req.strip(),
+                "졸업시험_과목":    f_cert_subj.strip(),
+                "졸업시험_합격기준": f_cert_pass.strip(),
+                "졸업시험_대체방법": f_cert_alt.strip(),
+            }
+
+            def _apply_cert(g):
+                if _cnid not in g.G.nodes:
+                    g.G.add_node(_cnid, type="학과전공", 전공명=f"{_cmjr}전공")
+                g.G.nodes[_cnid].update(_cert_attrs)
+
+            _save_graph(_apply_cert, "SAVE_DEPT_CERT", f"node={cert_nid}")
+            st.success(
+                f"저장 완료: **{cert_nid}**  \n"
+                "채팅에 반영하려면 [그래프 현황] 탭 → '채팅 세션 초기화' 버튼을 누르세요."
+            )
+            st.rerun()
 
 
 # ════════════════════════════════════════════════════
@@ -564,24 +697,23 @@ with tab_early:
                 value="학생포털시스템(https://m.bufs.ac.kr) → 로그인 → 졸업 → 조기졸업 신청/조회",
             )
             if st.form_submit_button("신청기간 저장", use_container_width=True):
-                graph.add_schedule(
-                    "조기졸업신청",
-                    new_semester,
-                    {
-                        "시작일": new_start.strftime("%Y-%m-%d"),
-                        "종료일": new_end.strftime("%Y-%m-%d"),
-                        "신청방법": new_method,
-                    },
-                )
-                graph.add_relation(
-                    f"schedule_조기졸업신청_{new_semester}",
-                    "early_grad_신청자격",
-                    "기간정한다",
-                )
-                graph.save()
-                _audit("SAVE_EARLY_SCHEDULE", f"semester={new_semester}")
+                _ns = new_semester
+                _sd = {
+                    "시작일": new_start.strftime("%Y-%m-%d"),
+                    "종료일": new_end.strftime("%Y-%m-%d"),
+                    "신청방법": new_method,
+                }
+
+                def _apply_early_sched(g):
+                    g.add_schedule("조기졸업신청", _ns, _sd)
+                    g.add_relation(
+                        f"schedule_조기졸업신청_{_ns}",
+                        "early_grad_신청자격",
+                        "기간정한다",
+                    )
+
+                _save_graph(_apply_early_sched, "SAVE_EARLY_SCHEDULE", f"semester={new_semester}")
                 st.success(f"신청기간 저장 완료: {new_semester}")
-                st.session_state.pop("admin_graph", None)
                 st.rerun()
 
     # ── B. 졸업기준 (학번별 기준학점) ───────────────
@@ -622,20 +754,24 @@ with tab_early:
                 st.markdown("---")
 
             if st.form_submit_button("기준학점 저장", use_container_width=True):
-                for key, v in inputs.items():
-                    updated = dict(v["cur"])
-                    updated.update({
-                        "적용대상": GRAD_GROUPS[key],
-                        "기준학점": v["credits"],
-                        "이수조건": v["condition"],
-                    })
-                    if v["note"]:
-                        updated["비고"] = v["note"]
-                    else:
-                        updated.pop("비고", None)
-                    graph.add_early_graduation(f"기준_{key}", updated)
-                graph.save()
-                _audit("SAVE_GRAD_CRITERIA")
+                _inputs = {k: dict(v) for k, v in inputs.items()}
+                _gg = dict(GRAD_GROUPS)
+
+                def _apply_criteria(g):
+                    for key, v in _inputs.items():
+                        updated = dict(v["cur"])
+                        updated.update({
+                            "적용대상": _gg[key],
+                            "기준학점": v["credits"],
+                            "이수조건": v["condition"],
+                        })
+                        if v["note"]:
+                            updated["비고"] = v["note"]
+                        else:
+                            updated.pop("비고", None)
+                        g.add_early_graduation(f"기준_{key}", updated)
+
+                _save_graph(_apply_criteria, "SAVE_GRAD_CRITERIA")
                 st.success("기준학점 저장 완료")
 
     # ── C. 신청자격 (평점 기준) ─────────────────────
@@ -658,18 +794,21 @@ with tab_early:
             no_transfer    = st.checkbox("편입생 신청 불가", value=bool(elig.get("편입생_신청불가", True)))
 
             if st.form_submit_button("신청자격 저장", use_container_width=True):
-                updated_elig = dict(elig)
-                updated_elig.update({
+                _elig_data = {
                     "신청학기": semester_req,
                     "평점기준_2005이전": gpa_2005,
                     "평점기준_2006":     gpa_2006,
                     "평점기준_2007이후": gpa_2007,
                     "글로벌미래융합학부": global_college,
                     "편입생_신청불가":   no_transfer,
-                })
-                graph.add_early_graduation("신청자격", updated_elig)
-                graph.save()
-                _audit("SAVE_ELIGIBILITY")
+                }
+
+                def _apply_elig(g):
+                    node = dict(g.G.nodes.get("early_grad_신청자격", {}))
+                    node.update(_elig_data)
+                    g.add_early_graduation("신청자격", node)
+
+                _save_graph(_apply_elig, "SAVE_ELIGIBILITY")
                 st.success("신청자격 저장 완료")
 
     # ── D. 기타사항 ─────────────────────────────────
@@ -688,15 +827,18 @@ with tab_early:
                 height=100,
             )
             if st.form_submit_button("기타사항 저장", use_container_width=True):
-                updated_notes = dict(notes)
-                updated_notes.update({
+                _notes_data = {
                     "탈락자처리":   dropout,
                     "합격자졸업유예": pass_note,
                     "7학기등록주의": sem7_note,
-                })
-                graph.add_early_graduation("기타사항", updated_notes)
-                graph.save()
-                _audit("SAVE_NOTES")
+                }
+
+                def _apply_notes(g):
+                    node = dict(g.G.nodes.get("early_grad_기타사항", {}))
+                    node.update(_notes_data)
+                    g.add_early_graduation("기타사항", node)
+
+                _save_graph(_apply_notes, "SAVE_NOTES")
                 st.success("기타사항 저장 완료")
 
 
@@ -749,17 +891,15 @@ with tab_schedule:
 
             if st.form_submit_button("일정 추가", use_container_width=True):
                 if ev_name and ev_semester:
-                    sched_data = {
-                        "시작일": ev_start.strftime("%Y-%m-%d"),
-                        "종료일": ev_end.strftime("%Y-%m-%d"),
-                    }
+                    _en, _es = ev_name, ev_semester
+                    _sd2 = {"시작일": ev_start.strftime("%Y-%m-%d"), "종료일": ev_end.strftime("%Y-%m-%d")}
                     if ev_note:
-                        sched_data["비고"] = ev_note
-                    graph.add_schedule(ev_name, ev_semester, sched_data)
-                    graph.save()
-                    _audit("ADD_SCHEDULE", f"{ev_name} ({ev_semester})")
+                        _sd2["비고"] = ev_note
+                    _save_graph(
+                        lambda g: g.add_schedule(_en, _es, _sd2),
+                        "ADD_SCHEDULE", f"{ev_name} ({ev_semester})",
+                    )
                     st.success(f"일정 추가 완료: {ev_name} ({ev_semester})")
-                    st.session_state.pop("admin_graph", None)
                     st.rerun()
                 else:
                     st.error("이벤트명과 학기를 입력하세요.")
@@ -788,20 +928,18 @@ with tab_schedule:
                 edit_note = st.text_input("비고", value=chosen.get("비고", ""))
 
                 if st.form_submit_button("일정 수정 저장", use_container_width=True):
-                    updated_sched = dict(chosen)
-                    updated_sched["시작일"] = edit_start.strftime("%Y-%m-%d")
-                    updated_sched["종료일"] = edit_end.strftime("%Y-%m-%d")
+                    _us = dict(chosen)
+                    _us["시작일"] = edit_start.strftime("%Y-%m-%d")
+                    _us["종료일"] = edit_end.strftime("%Y-%m-%d")
                     if edit_note:
-                        updated_sched["비고"] = edit_note
-                    graph.add_schedule(
-                        chosen.get("이벤트명", ""),
-                        chosen.get("학기",    ""),
-                        updated_sched,
+                        _us["비고"] = edit_note
+                    _en2 = chosen.get("이벤트명", "")
+                    _es2 = chosen.get("학기", "")
+                    _save_graph(
+                        lambda g: g.add_schedule(_en2, _es2, _us),
+                        "EDIT_SCHEDULE", f"{_en2} ({_es2})",
                     )
-                    graph.save()
-                    _audit("EDIT_SCHEDULE", f"{chosen.get('이벤트명')} ({chosen.get('학기')})")
                     st.success("일정 수정 완료")
-                    st.session_state.pop("admin_graph", None)
                     st.rerun()
         else:
             st.info("수정할 일정이 없습니다.")
@@ -939,6 +1077,54 @@ with tab_crawler:
             _audit("HASH_RESET", "manual hash reset from admin")
             st.success("해시 초기화 완료. 다음 크롤링 시 전체 재수집됩니다.")
             st.rerun()
+
+    st.divider()
+
+    # ── 전체 재인제스트 ──────────────────────────────
+    st.markdown("**전체 재인제스트**")
+    st.caption(
+        "공지사항 청크(notice · notice_attachment)를 ChromaDB에서 전부 삭제한 뒤, "
+        "최신 청킹 로직(is_table=False 등)으로 즉시 재생성합니다. "
+        "졸업요건·시간표 등 수동 인제스트 데이터는 유지됩니다."
+    )
+
+    if st.button(
+        "♻️ 전체 재인제스트 실행",
+        type="primary",
+        use_container_width=True,
+        help="공지 청크를 모두 삭제하고 최신 청킹 로직으로 다시 생성합니다.",
+    ):
+        _audit("FULL_REINGEST_TRIGGERED", "manual full re-ingest from admin")
+
+        progress = st.progress(0, text="ChromaDB 공지 청크 삭제 중…")
+
+        from app.shared_resources import get_chroma_store as _get_chroma
+        _chroma = _get_chroma()
+
+        # 1단계: notice / notice_attachment 청크 삭제
+        deleted_notice = _chroma.delete_all_by_doc_type("notice")
+        progress.progress(33, text=f"notice 청크 {deleted_notice}개 삭제 완료…")
+
+        deleted_attach = _chroma.delete_all_by_doc_type("notice_attachment")
+        progress.progress(55, text=f"notice_attachment 청크 {deleted_attach}개 삭제 완료…")
+
+        # 2단계: 해시 초기화 (다음 크롤링 시 모두 NEW로 처리)
+        if _HASH_FILE.exists():
+            _HASH_FILE.write_text("{}", encoding="utf-8")
+        progress.progress(65, text="해시 초기화 완료… 크롤링 시작 중…")
+
+        # 3단계: 즉시 크롤링 실행 (최신 청킹 로직으로 재인제스트)
+        _sched.trigger_notice_now()
+        progress.progress(100, text="완료")
+
+        _audit(
+            "FULL_REINGEST_DONE",
+            f"deleted notice={deleted_notice} attach={deleted_attach}, crawl triggered",
+        )
+        st.success(
+            f"재인제스트 완료: notice {deleted_notice}개 · notice_attachment {deleted_attach}개 삭제 후 재수집."
+        )
+        st.rerun()
 
     st.divider()
 

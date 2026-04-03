@@ -4,8 +4,11 @@ JSX 스키마 기준: 9 노드 타입 × 14 엣지 타입 × 5 특수 분기 규
 """
 
 import logging
+import os
 import pickle
 import re
+import tempfile
+import threading
 from pathlib import Path
 from typing import Optional, List
 
@@ -139,9 +142,27 @@ class AcademicGraph:
         "공지_참조",     # 공지사항 → 도메인 노드 (수강신청규칙, 장학금, 졸업요건 등)
     ]
 
+    _save_lock = threading.Lock()
+
     def __init__(self, graph_path: str = None):
         self.path = graph_path or settings.graph.graph_path
         self.G = self._load_or_create()
+        self._loaded_mtime = self._file_mtime()
+        self._build_index()
+
+    def _file_mtime(self) -> float:
+        """그래프 파일의 최종 수정 시각을 반환합니다."""
+        path = Path(self.path)
+        return path.stat().st_mtime if path.exists() else 0.0
+
+    def is_stale(self) -> bool:
+        """디스크의 그래프 파일이 로드 시점 이후 변경되었는지 확인합니다."""
+        return self._file_mtime() > self._loaded_mtime
+
+    def reload(self) -> None:
+        """디스크에서 그래프를 다시 로드합니다."""
+        self.G = self._load_or_create()
+        self._loaded_mtime = self._file_mtime()
         self._build_index()
 
     def _load_or_create(self) -> nx.DiGraph:
@@ -158,12 +179,29 @@ class AcademicGraph:
         return nx.DiGraph()
 
     def save(self) -> None:
-        path = Path(self.path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "wb") as f:
-            pickle.dump(self.G, f)
-        logger.info(f"그래프 저장: {self.path}")
-        self._build_index()
+        """
+        스레드 안전 + 원자적 저장.
+        temp 파일에 쓴 뒤 os.replace()로 교체하여 동시 접속 시 파일 손상을 방지합니다.
+        """
+        with self._save_lock:
+            path = Path(self.path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(
+                dir=str(path.parent), suffix=".tmp", prefix=".graph_"
+            )
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    pickle.dump(self.G, f)
+                os.replace(tmp, str(path))
+            except BaseException:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
+            self._loaded_mtime = self._file_mtime()
+            self._build_index()
+            logger.info(f"그래프 저장: {self.path}")
 
     # ── 인덱스 ────────────────────────────────────────────────
 

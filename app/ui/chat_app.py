@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # ── Brand ──────────────────────────────────────────
 APP_NAME    = "캠챗"
 APP_SUBTITLE = "부산외대 학사 도우미"
-APP_VERSION  = "0.1.2"
+APP_VERSION  = "0.2.0"
 LOGO_PATH    = Path(__file__).parent / "static" / "logo.png"
 
 QUICK_FEATURES = [
@@ -553,6 +553,23 @@ def render_onboarding() -> None:
                 horizontal=True,
             )
 
+            st.divider()
+            st.markdown(
+                '<p style="font-size:0.78rem;color:#64748b;line-height:1.65;margin:0 0 0.3rem;">'
+                '본 서비스의 답변은 인공지능(AI)에 의해 자동 생성되며, '
+                '사실과 다르거나 부정확한 내용을 포함할 수 있습니다. '
+                '제공된 정보는 참고용이며, 중요한 학사 사항은 학과 사무실 또는 '
+                '학사지원팀을 통해 확인하시기 바랍니다. '
+                'AI 답변의 오류·누락으로 인해 발생한 직접적·간접적 불이익에 대해 '
+                '본 서비스는 책임을 지지 않습니다.</p>',
+                unsafe_allow_html=True,
+            )
+            disclaimer_checked = st.checkbox(
+                "위 내용을 확인하였으며, 이에 동의합니다.",
+                value=False,
+                key="disclaimer_check",
+            )
+
             c_start, c_skip = st.columns([3, 2])
             with c_start:
                 submitted = st.form_submit_button(
@@ -563,17 +580,19 @@ def render_onboarding() -> None:
                     "나중에 설정", use_container_width=True
                 )
 
-        if submitted:
-            st.session_state.user_profile = {
-                "student_id": str(year),
-                "department": dept if dept != "선택 안 함" else "",
-                "student_type": stype,
-            }
-            st.rerun()
-        if skipped:
-            # 빈 dict: 온보딩 건너뜀, 프로필 미설정 상태
-            st.session_state.user_profile = {}
-            st.rerun()
+        if submitted or skipped:
+            if not disclaimer_checked:
+                st.warning("면책 조항에 동의해야 시작할 수 있습니다.", icon="⚠️")
+            elif submitted:
+                st.session_state.user_profile = {
+                    "student_id": str(year),
+                    "department": dept if dept != "선택 안 함" else "",
+                    "student_type": stype,
+                }
+                st.rerun()
+            else:  # skipped
+                st.session_state.user_profile = {}
+                st.rerun()
 
 
 # ── Profile sidebar card ────────────────────────────
@@ -916,7 +935,7 @@ def _get_contact_footer(intent, entities: dict, question: str) -> str:
     """
     답변 마지막에 붙일 연락처 꼬리말을 반환합니다.
     - 학과별 졸업시험/과 행사 질문 → 해당 학과 사무실 번호
-    - 학사 일반 질문 → 학사지원팀 (051-509-5181)
+    - 학사 일반 질문 → 학사지원팀 (051-509-5182)
     """
     from app.models import Intent
 

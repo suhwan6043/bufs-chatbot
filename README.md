@@ -1,7 +1,7 @@
 # BUFS Academic Chatbot (캠챗)
 
 부산외국어대학교 학사 안내 RAG 챗봇입니다.
-로컬 LLM(Ollama)과 하이브리드 검색(Vector DB + Knowledge Graph)을 사용하여 학사 관련 질문에 답변합니다.
+로컬 LLM(LM Studio)과 하이브리드 검색(Vector DB + Knowledge Graph)을 사용하여 학사 관련 질문에 답변합니다.
 
 ## 아키텍처
 
@@ -20,7 +20,7 @@ QueryAnalyzer       → 의도(Intent) + 엔티티 추출, 학번 파싱
  ContextMerger ◀──┘  → Vector + Graph 결과 병합 (토큰 예산 관리)
     │
     ▼
-AnswerGenerator     → Ollama(exaone3.5) LLM으로 최종 답변 생성
+AnswerGenerator     → LM Studio(Qwen3.5-9B) LLM으로 최종 답변 생성
     │
     ▼
 ResponseValidator   → 답변 품질 검증
@@ -33,7 +33,7 @@ ChatLogger          → 대화 로그 JSONL 저장 (data/logs/)
 
 | 구성요소 | 기술 |
 |----------|------|
-| LLM | Ollama + exaone3.5:7.8b (로컬) |
+| LLM | LM Studio + Qwen3.5-9B-Q4_K_M (로컬) |
 | 임베딩 | BAAI/bge-m3 (multilingual, CPU) |
 | 리랭킹 | BAAI/bge-reranker-v2-m3 (Cross-Encoder, CPU) |
 | 벡터 DB | ChromaDB (SQLite 기반 로컬 파일) |
@@ -47,8 +47,9 @@ ChatLogger          → 대화 로그 JSONL 저장 (data/logs/)
 ### 요구사항
 
 - Python 3.10+
-- [Ollama](https://ollama.com) 설치 및 실행
-- 약 4GB+ RAM (BGE-M3 모델 포함)
+- [LM Studio](https://lmstudio.ai) 설치 및 로컬 서버 실행 (포트 1234)
+- 약 8GB+ VRAM (Qwen3.5-9B Q4_K_M 기준)
+- 약 4GB+ RAM (BGE-M3 임베딩 모델 포함)
 
 ### 1. 패키지 설치
 
@@ -56,23 +57,21 @@ ChatLogger          → 대화 로그 JSONL 저장 (data/logs/)
 pip install -r requirements.txt
 ```
 
-### 2. Ollama 모델 다운로드
+### 2. LM Studio 모델 로드
 
-```bash
-ollama pull exaone3.5:7.8b
-# 저사양 환경
-ollama pull exaone3.5:2.4b
-```
+LM Studio에서 `qwen/qwen3.5-9b` (Q4_K_M) 모델을 다운로드 후 로컬 서버를 시작합니다.
+기본 포트 `1234`에서 OpenAI 호환 API가 제공됩니다.
 
 ### 3. 환경 설정 (선택)
 
 `.env` 파일을 생성하여 설정을 커스터마이즈할 수 있습니다:
 
 ```env
-# LLM
-OLLAMA_MODEL=exaone3.5:7.8b
-OLLAMA_FALLBACK_MODEL=exaone3.5:2.4b
-OLLAMA_NUM_CTX=2048
+# LLM (LM Studio OpenAI 호환 API)
+LLM_BASE_URL=http://localhost:1234
+LLM_MODEL=qwen/qwen3.5-9b
+LLM_MAX_TOKENS=2048
+LLM_TEMPERATURE=0.1
 
 # 임베딩
 EMBEDDING_MODEL=BAAI/bge-m3
@@ -90,18 +89,36 @@ CHROMA_N_RESULTS=15
 
 ## 데이터 준비
 
-### PDF 인제스트 (Vector DB)
+### 전체 재학습 (한 번에)
 
 ```bash
-# 학사안내 PDF 인제스트 (내국인 기준)
-python scripts/ingest_pdf.py --pdf data/pdfs/학사안내.pdf --doc-type domestic --student-id 2023
+python scripts/ingest_all.py
+```
 
-# 수업시간표 PDF 인제스트
-python scripts/ingest_pdf.py --pdf data/pdfs/수업시간표.pdf --doc-type timetable --semester 2026-1
+내부 실행 순서: PDF 그래프 빌드 → PDF 벡터DB 인제스트(학사안내 + 수업시간표) → 정적 페이지 크롤링 → 고정공지 인제스트
 
-# 디렉토리 일괄 인제스트
-python scripts/ingest_pdf.py --dir data/pdfs/
+### 개별 실행 (단계별)
 
+```bash
+# 1단계: PDF → 벡터DB 인제스트
+python scripts/ingest_pdf.py --pdf "data/pdfs/2026학년도1학기학사안내.pdf" --student-id 2024
+python scripts/ingest_pdf.py --pdf "data/pdfs/2026학년도 1학기 수업시간표.pdf"
+
+# 2단계: 그래프 재빌드 (PDF → 그래프DB) — 반드시 고정공지 전에 실행
+python scripts/build_graph.py
+
+# 3단계: 고정공지 인제스트 (홈페이지 공지 → 벡터DB + 그래프DB)
+python scripts/ingest_pinned_notices.py
+
+# 4단계: 학과별 졸업인증 데이터 업데이트
+python scripts/update_dept_grad_exam.py
+```
+
+> **순서 중요**: `build_graph.py` 먼저, `ingest_pinned_notices.py` 나중에 실행해야 공지 노드가 기존 학사 그래프와 엣지로 연결됩니다.
+
+### 기타 인제스트 명령
+
+```bash
 # DB 현황 확인
 python scripts/ingest_pdf.py --status
 
@@ -110,25 +127,6 @@ python scripts/ingest_pdf.py --pdf data/pdfs/파일.pdf --save-json
 ```
 
 `--doc-type` 선택지: `domestic` (내국인, 기본값) / `foreign` (외국인) / `transfer` (편입생) / `schedule` (학사일정) / `timetable` (수업시간표)
-
-### 지식 그래프 구축
-
-```bash
-# PDF에서 자동으로 학사 데이터 파싱하여 그래프 생성
-python scripts/pdf_to_graph.py --pdf data/pdfs/2025학년도2학기학사안내.pdf
-
-# 실제 변경 없이 파싱 결과 확인
-python scripts/pdf_to_graph.py --pdf data/pdfs/2025학년도2학기학사안내.pdf --dry-run
-```
-
-### 임베딩 모델 변경 후 재인제스트
-
-BGE-M3로 모델을 변경한 경우 기존 ChromaDB 데이터를 삭제 후 재인제스트해야 합니다:
-
-```bash
-rm -rf data/chromadb/
-python scripts/ingest_pdf.py --pdf data/pdfs/파일.pdf
-```
 
 ## 실행
 
@@ -139,6 +137,7 @@ streamlit run main.py
 | 페이지 | URL | 설명 |
 |--------|-----|------|
 | 챗봇 (메인) | `http://localhost:8501` | 학사 질문 답변 |
+| 관리자 | `http://localhost:8501/admin` | 졸업요건·학사일정·크롤러 관리 |
 | 로그 뷰어 | `http://localhost:8501/logs` | 대화 기록 조회·CSV 다운로드 |
 
 ## 프로젝트 구조
@@ -161,7 +160,8 @@ streamlit run main.py
 │   ├── vectordb/
 │   │   └── chroma_store.py     # ChromaDB CRUD (department 필터 지원)
 │   ├── graphdb/
-│   │   └── academic_graph.py   # NetworkX 지식 그래프
+│   │   ├── academic_graph.py   # NetworkX 지식 그래프 (동시접속 안전)
+│   │   └── notice_graph_builder.py  # 공지사항 → 그래프 노드 변환
 │   ├── pdf/
 │   │   ├── detector.py         # PDF 유형 자동 감지
 │   │   ├── digital_extractor.py# 디지털 PDF 파싱 + 청킹
@@ -172,16 +172,17 @@ streamlit run main.py
 │   └── ui/
 │       └── chat_app.py         # Streamlit 채팅 UI
 ├── pages/
+│   ├── admin.py                # 관리자 페이지 (졸업요건·학사일정·크롤러)
 │   └── logs.py                 # 로그 뷰어 페이지
 ├── scripts/
+│   ├── ingest_all.py           # 전체 재학습 (PDF+그래프+정적페이지+고정공지)
 │   ├── ingest_pdf.py           # PDF → ChromaDB 인제스트
+│   ├── ingest_pinned_notices.py# 고정공지 → 벡터DB + 그래프DB
 │   ├── build_graph.py          # 지식 그래프 빌드
+│   ├── update_dept_grad_exam.py# 학과별 졸업인증 데이터 업데이트
 │   ├── pdf_to_graph.py         # PDF에서 학사 데이터 자동 파싱
-│   ├── make_eval_dataset.py    # 평가용 JSONL 생성
 │   ├── evaluate.py             # 자동 평가 + LLM-as-a-Judge
-│   ├── qualitative_judge.py    # 정성적 Judge (0-5 척도)
-│   ├── compare_eval.py         # 평가 결과 비교
-│   └── make_report.py          # 평가 보고서 생성
+│   └── eval_ragas.py           # RAGAS 기반 RAG 평가
 ├── data/
 │   ├── pdfs/                   # 학사 안내 PDF 파일
 │   ├── chromadb/               # ChromaDB 영구 저장소
@@ -199,11 +200,13 @@ streamlit run main.py
 |------|------|
 | 하이브리드 검색 | Vector(ChromaDB) + Graph(NetworkX) 결과 병합 |
 | 학과별 수업시간표 | `department` 필터로 타 학과 청크 혼입 방지 |
+| 관리자 페이지 | 졸업요건·졸업인증·학사일정·크롤러 관리 (동시접속 지원) |
+| 면책 조항 동의 | 온보딩 시 AI 답변 면책 동의 체크박스 |
 | 별점 피드백 | 답변 하단 1~5점 평가, 로그에 함께 저장 |
 | 대화 로그 | 날짜별 JSONL 저장, 웹 UI에서 CSV 다운로드 |
-| 로딩 애니메이션 | 답변 생성 중 책 넘기는 애니메이션 표시 |
 | 학번 인식 | 질문 내 학번 자동 파싱 → 맞춤 졸업요건 답변 |
 | 도메인 용어 정규화 | 한국어 약어/별칭 → 정규 명칭 변환 |
+| 고정공지 연동 | 학사공지 고정공지 자동 크롤링 → 벡터DB + 그래프 연결 |
 | 포털 링크 | 오른쪽 패널에 학사 포털 바로가기 |
 
 ## 평가
@@ -265,18 +268,20 @@ cd "C:\Users\User\Desktop\챗봇"
 |------|------|
 | 임베딩 | BGE-M3 (1024차원, CPU ~2-5초/배치) |
 | 리랭킹 | Cross-Encoder (후보 15-20개 → 상위 5개, CPU ~1-2초) |
-| LLM 응답 | exaone3.5:7.8b (GPU 스트리밍) |
+| LLM 응답 | Qwen3.5-9B Q4_K_M (GPU 스트리밍, LM Studio) |
 | 그래프 탐색 | NetworkX (즉시, <10ms) |
 
 ## 환경 변수 전체 목록
 
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama 서버 주소 |
-| `OLLAMA_MODEL` | `exaone3.5:7.8b` | 메인 LLM 모델 |
-| `OLLAMA_FALLBACK_MODEL` | `exaone3.5:2.4b` | 폴백 모델 |
-| `OLLAMA_NUM_CTX` | `2048` | 컨텍스트 길이 |
-| `OLLAMA_TEMPERATURE` | `0.1` | 생성 온도 |
+| `LLM_BASE_URL` | `http://localhost:1234` | LM Studio 서버 주소 |
+| `LLM_MODEL` | `qwen/qwen3.5-9b` | LLM 모델 (OpenAI 호환 API) |
+| `LLM_MAX_TOKENS` | `2048` | 최대 생성 토큰 |
+| `LLM_TEMPERATURE` | `0.1` | 생성 온도 |
+| `LLM_TOP_P` | `0.9` | Top-p 샘플링 |
+| `LLM_REPEAT_PENALTY` | `1.0` | 반복 페널티 |
+| `LLM_TIMEOUT` | `60` | 요청 타임아웃 (초) |
 | `EMBEDDING_MODEL` | `BAAI/bge-m3` | 임베딩 모델 |
 | `EMBEDDING_DEVICE` | `cpu` | 임베딩 디바이스 |
 | `RERANKER_MODEL` | `BAAI/bge-reranker-v2-m3` | 리랭커 모델 |
