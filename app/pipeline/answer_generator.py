@@ -104,6 +104,8 @@ class AnswerGenerator:
                     "POST", url, json=payload
                 ) as response:
                     response.raise_for_status()
+                    thinking = False
+                    content_started = False
                     async for line in response.aiter_lines():
                         if not line or not line.startswith("data: "):
                             continue
@@ -112,8 +114,19 @@ class AnswerGenerator:
                             break
                         data = json.loads(data_str)
                         delta = data["choices"][0].get("delta", {})
+
+                        # thinking 시작 시 UI에 표시
+                        if "reasoning_content" in delta and not thinking and not content_started:
+                            thinking = True
+                            yield "\u23f3 _분석 중..._\n\n"
+
+                        # 실제 답변 토큰
                         token = delta.get("content", "")
                         if token:
+                            if not content_started:
+                                content_started = True
+                                # thinking 표시를 지우고 답변 시작
+                                yield "\x00CLEAR\x00"
                             yield token
         except httpx.ConnectError:
             logger.error(

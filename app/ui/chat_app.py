@@ -1188,6 +1188,9 @@ async def generate_response_stream(question: str, placeholder) -> str:
         student_id=analysis.student_id,
         question_focus=analysis.entities.get("question_focus"),
     ):
+        if token == "\x00CLEAR\x00":
+            full_answer = ""
+            continue
         full_answer += token
         placeholder.markdown(full_answer + "▌")
 
