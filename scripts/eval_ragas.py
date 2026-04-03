@@ -2,6 +2,10 @@
 RAGAS 평가 — 표준 RAG 품질 5대 지표 측정
 LM Studio (OpenAI 호환 API) + LLM-as-Judge 방식으로 직접 구현.
 
+2-Phase 실행: 생성 모델과 평가(judge) 모델을 분리하여 자기 편향 방지.
+  Phase 1: 전체 파이프라인 실행 (생성 모델로 답변 생성)
+  Phase 2: 전체 평가 실행 (평가 모델로 judge)
+
 지표 (RAGAS 논문 기준):
   1. Faithfulness       : 답변이 컨텍스트에만 근거하는가         (0.0~1.0)
   2. Answer Relevancy   : 답변이 질문 의도에 부합하는가          (0.0~1.0)
@@ -10,8 +14,11 @@ LM Studio (OpenAI 호환 API) + LLM-as-Judge 방식으로 직접 구현.
   5. Answer Correctness  : 생성 답변이 정답과 일치하는 정도       (0.0~1.0)
 
 실행:
-  .venv/Scripts/python -X utf8 scripts/eval_ragas.py --n 5
-  .venv/Scripts/python -X utf8 scripts/eval_ragas.py --n 10 --metrics faithfulness answer_relevancy context_precision context_recall answer_correctness
+  # 동일 모델 (기존 호환)
+  .venv/Scripts/python -X utf8 scripts/eval_ragas.py --n 50
+
+  # 생성=Qwen, 평가=EXAONE (별도 judge 모델)
+  .venv/Scripts/python -X utf8 scripts/eval_ragas.py --n 50 --judge-model exaone3.5-7.8b-instruct
 """
 
 import argparse
@@ -24,7 +31,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Optional
 
 # ── Windows UTF-8 인코딩 픽스 ─────────────────────────────────────────────
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
@@ -51,7 +58,7 @@ router = QueryRouter(store, graph)
 merger = ContextMerger()
 generator = AnswerGenerator()
 
-# 임베딩 모델 워밍업 — q008 segfault 방지 (lazy-load 대신 즉시 로드)
+# 임베딩 모델 워밍업 — segfault 방지 (lazy-load 대신 즉시 로드)
 _ = store.embedder.embed_query("warmup")
 
 
@@ -59,10 +66,16 @@ _ = store.embedder.embed_query("warmup")
 # LLM 호출 헬퍼
 # ═══════════════════════════════════════════════════════════════════════════
 
-async def llm_judge(system: str, prompt: str, client: httpx.AsyncClient) -> str:
+async def llm_judge(
+    system: str,
+    prompt: str,
+    client: httpx.AsyncClient,
+    model: str = None,
+    base_url: str = None,
+) -> str:
     """LM Studio에 비스트리밍 요청을 보내고 content를 반환합니다."""
     payload = {
-        "model": settings.llm.model,
+        "model": model or settings.llm.model,
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},
@@ -71,10 +84,8 @@ async def llm_judge(system: str, prompt: str, client: httpx.AsyncClient) -> str:
         "max_tokens": settings.llm.max_tokens,
         "temperature": 0.0,
     }
-    resp = await client.post(
-        f"{settings.llm.base_url}/v1/chat/completions",
-        json=payload,
-    )
+    url = base_url or settings.llm.base_url
+    resp = await client.post(f"{url}/v1/chat/completions", json=payload)
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"].strip()
 
@@ -201,6 +212,8 @@ async def evaluate_metric(
     answer: str,
     reference: str,
     client: httpx.AsyncClient,
+    judge_model: str = None,
+    judge_url: str = None,
 ) -> tuple:
     """하나의 메트릭을 평가하고 (score, reason)을 반환합니다."""
     cfg = METRIC_CONFIG[metric_name]
@@ -211,7 +224,7 @@ async def evaluate_metric(
         reference=reference[:300],
     )
     try:
-        raw = await llm_judge(cfg["system"], prompt, client)
+        raw = await llm_judge(cfg["system"], prompt, client, model=judge_model, base_url=judge_url)
         score = extract_float(raw, "score", -1.0)
         obj = extract_json(raw)
         reason = obj.get("reason", "") if obj else ""
@@ -257,13 +270,18 @@ async def run_pipeline(question: str, student_id: str = None) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 메인 평가 루프
+# 2-Phase 평가 루프
 # ═══════════════════════════════════════════════════════════════════════════
 
 async def evaluate_dataset(
-    dataset_path: Path, n: int, metric_names: list, timeout: int
+    dataset_path: Path,
+    n: int,
+    metric_names: list,
+    timeout: int,
+    judge_model: str = None,
+    judge_url: str = None,
 ) -> list:
-    """데이터셋 전체 평가."""
+    """2-Phase 평가: Phase 1(생성) → Phase 2(평가)."""
     items = []
     with dataset_path.open(encoding="utf-8") as f:
         for line in f:
@@ -272,33 +290,57 @@ async def evaluate_dataset(
                 items.append(json.loads(line))
     items = items[:n]
 
+    # ── Phase 1: 전체 파이프라인 실행 (생성 모델) ──
+    print(f"\n{'─' * 65}")
+    print(f"Phase 1: 파이프라인 실행 (생성 모델: {settings.llm.model})")
+    print(f"{'─' * 65}")
+
+    pipe_results = []
+    for i, item in enumerate(items, 1):
+        q = item["question"]
+        sid = item.get("student_id")
+        print(f"  [{i:02d}/{len(items)}] {item.get('id', '?')} — {q[:50]}", end="", flush=True)
+
+        t0 = time.perf_counter()
+        pipe = await run_pipeline(q, sid)
+        elapsed = time.perf_counter() - t0
+
+        if not pipe["context"]:
+            print(f"  → 컨텍스트 없음 (스킵)")
+            pipe_results.append({"item": item, "pipe": pipe, "skipped": True})
+        else:
+            print(f"  ({elapsed:.1f}s, {len(pipe['answer'])}자)")
+            pipe_results.append({"item": item, "pipe": pipe, "skipped": False})
+
+    # ── Phase 2: 전체 평가 실행 (judge 모델) ──
+    judge_name = judge_model or settings.llm.model
+    judge_base = judge_url or settings.llm.base_url
+    print(f"\n{'─' * 65}")
+    print(f"Phase 2: 메트릭 평가 (judge 모델: {judge_name})")
+    print(f"{'─' * 65}")
+
     results = []
     async with httpx.AsyncClient(timeout=timeout) as client:
-        for i, item in enumerate(items, 1):
+        for i, pr in enumerate(pipe_results, 1):
+            item = pr["item"]
+            pipe = pr["pipe"]
             q = item["question"]
-            sid = item.get("student_id")
             reference = item.get("answer", "")
-            print(f"\n[{i:02d}/{len(items)}] {item.get('id', '?')} — {q[:50]}")
 
-            # ── 파이프라인 실행 ──
-            t0 = time.perf_counter()
-            pipe = await run_pipeline(q, sid)
-            pipe_elapsed = time.perf_counter() - t0
-
-            if not pipe["context"]:
-                print(f"  → 컨텍스트 없음 (스킵)")
+            if pr["skipped"]:
                 results.append({**item, "skipped": True})
                 continue
 
-            print(f"  Intent={pipe['intent']}  answer={len(pipe['answer'])}자  ({pipe_elapsed:.1f}s)")
+            print(f"\n[{i:02d}/{len(items)}] {item.get('id', '?')} — {q[:50]}")
+            print(f"  Intent={pipe['intent']}  answer={len(pipe['answer'])}자")
 
-            # ── 각 메트릭 평가 ──
             scores = {}
             reasons = {}
             for m_name in metric_names:
                 t1 = time.perf_counter()
                 score, reason = await evaluate_metric(
                     m_name, q, pipe["context"], pipe["answer"], reference, client,
+                    judge_model=judge_model, judge_url=judge_url,
                 )
                 m_elapsed = time.perf_counter() - t1
                 scores[m_name] = score
@@ -307,7 +349,6 @@ async def evaluate_dataset(
                 status = f"{score:.2f}" if score >= 0 else "ERR"
                 print(f"  {METRIC_CONFIG[m_name]['kr_name']:<35}  {status}  ({m_elapsed:.0f}s)")
 
-            total_elapsed = time.perf_counter() - t0
             results.append({
                 **item,
                 "intent": pipe["intent"],
@@ -315,7 +356,6 @@ async def evaluate_dataset(
                 "answer_preview": pipe["answer"][:200],
                 **scores,
                 "reasons": reasons,
-                "elapsed_s": round(total_elapsed, 2),
             })
 
     return results
@@ -365,6 +405,14 @@ async def main():
         "--timeout", type=int, default=300,
         help="LLM 호출 타임아웃 초 (기본값: 300)",
     )
+    parser.add_argument(
+        "--judge-model", type=str, default=None,
+        help="평가(judge) 모델명 (미지정 시 생성 모델과 동일)",
+    )
+    parser.add_argument(
+        "--judge-url", type=str, default=None,
+        help="평가(judge) 모델 서버 URL (미지정 시 생성 모델 서버와 동일)",
+    )
     args = parser.parse_args()
 
     dataset_path = Path(args.dataset)
@@ -375,17 +423,26 @@ async def main():
         print(f"[X] 데이터셋 없음: {dataset_path}")
         sys.exit(1)
 
+    judge_model = args.judge_model
+    judge_url = args.judge_url
+    judge_name = judge_model or settings.llm.model
+    judge_base = judge_url or settings.llm.base_url
+
     print("=" * 65)
     print("BUFS RAGAS 평가")
     print(f"시작: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"데이터셋: {dataset_path.name}  (최대 {args.n}개)")
     print(f"메트릭: {args.metrics}")
-    print(f"모델: {settings.llm.model} @ {settings.llm.base_url}")
+    print(f"생성 모델: {settings.llm.model} @ {settings.llm.base_url}")
+    print(f"평가 모델: {judge_name} @ {judge_base}")
     print("=" * 65)
 
-    # ── 평가 실행 ────────────────────────────────────────────────────
+    # ── 2-Phase 평가 실행 ─────────────────────────────────────────────
     t_start = time.perf_counter()
-    results = await evaluate_dataset(dataset_path, args.n, args.metrics, args.timeout)
+    results = await evaluate_dataset(
+        dataset_path, args.n, args.metrics, args.timeout,
+        judge_model=judge_model, judge_url=judge_url,
+    )
     total_elapsed = time.perf_counter() - t_start
 
     summary = summarize(results, args.metrics)
@@ -423,7 +480,9 @@ async def main():
             {
                 "timestamp": ts,
                 "dataset": str(dataset_path),
-                "model": settings.llm.model,
+                "generation_model": settings.llm.model,
+                "judge_model": judge_name,
+                "judge_url": judge_base,
                 "embedding": settings.embedding.model_name,
                 "ragas_metrics": args.metrics,
                 "n_evaluated": summary.get("n_evaluated", 0),

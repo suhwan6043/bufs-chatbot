@@ -103,12 +103,23 @@ class ChromaStore:
         if where_filter:
             kwargs["where"] = where_filter
 
-        results = self.collection.query(**kwargs)
+        try:
+            results = self.collection.query(**kwargs)
+        except Exception as e:
+            if where_filter and "Error finding id" in str(e):
+                logger.warning("ChromaDB 필터 쿼리 실패 (InternalError), 필터 없이 재시도: %s", e)
+                fallback_kwargs = {
+                    "query_embeddings": [query_embedding],
+                    "n_results": n_results,
+                }
+                results = self.collection.query(**fallback_kwargs)
+            else:
+                raise
 
         search_results = []
         if results and results["documents"]:
             for i, doc in enumerate(results["documents"][0]):
-                metadata = results["metadatas"][0][i] if results["metadatas"] else {}
+                metadata = (results["metadatas"][0][i] or {}) if results["metadatas"] else {}
                 distance = results["distances"][0][i] if results["distances"] else 0.0
                 score = 1.0 - distance  # 코사인 거리 -> 유사도
 
