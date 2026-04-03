@@ -22,15 +22,14 @@ DATA_DIR = BASE_DIR / "data"
 
 
 @dataclass
-class OllamaConfig:
-    base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    model: str = os.getenv("OLLAMA_MODEL", "exaone3.5:7.8b")
-    fallback_model: str = os.getenv("OLLAMA_FALLBACK_MODEL", "exaone3.5:2.4b")
-    num_ctx: int = int(os.getenv("OLLAMA_NUM_CTX", "2048"))
-    temperature: float = float(os.getenv("OLLAMA_TEMPERATURE", "0.1"))
-    top_p: float = float(os.getenv("OLLAMA_TOP_P", "0.9"))
-    repeat_penalty: float = float(os.getenv("OLLAMA_REPEAT_PENALTY", "1.0"))
-    timeout: int = int(os.getenv("OLLAMA_TIMEOUT", "60"))
+class LLMConfig:
+    base_url: str = os.getenv("LLM_BASE_URL", "http://localhost:1234")
+    model: str = os.getenv("LLM_MODEL", "qwen3.5-9b-4bit")
+    max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "2048"))
+    temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
+    top_p: float = float(os.getenv("LLM_TOP_P", "0.9"))
+    repeat_penalty: float = float(os.getenv("LLM_REPEAT_PENALTY", "1.0"))
+    timeout: int = int(os.getenv("LLM_TIMEOUT", "60"))
 
 
 @dataclass
@@ -121,7 +120,7 @@ class AdminConfig:
 
 @dataclass
 class Settings:
-    ollama: OllamaConfig = field(default_factory=OllamaConfig)
+    llm: LLMConfig = field(default_factory=LLMConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     reranker: RerankerConfig = field(default_factory=RerankerConfig)
     chroma: ChromaConfig = field(default_factory=ChromaConfig)

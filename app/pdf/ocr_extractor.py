@@ -3,7 +3,7 @@
 텍스트 레이어가 없는 스캔 PDF를 처리합니다.
 오프라인 배치 처리로 GPU를 독점 사용합니다.
 
-주의: 실행 전 반드시 Ollama를 중지해야 합니다 (ollama stop).
+주의: 실행 전 반드시 LM Studio를 중지해야 합니다.
 """
 
 import os
@@ -21,7 +21,7 @@ class SuryaOCRExtractor:
     [역할] 스캔 PDF -> 텍스트 추출 (Surya OCR)
     [VRAM] ~2.5GB (LLM과 동시 실행 불가!)
     [실행 시점] 오프라인, 학기당 1회
-    [주의] 실행 전 반드시 Ollama 중지: ollama stop
+    [주의] 실행 전 반드시 LM Studio 중지
     """
 
     def __init__(self):

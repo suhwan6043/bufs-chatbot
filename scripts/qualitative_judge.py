@@ -118,18 +118,21 @@ async def qualitative_judge(
         answer=answer[:500],
     )
     payload = {
-        "model": settings.ollama.model,
-        "prompt": prompt,
-        "system": JUDGE_SYSTEM,
+        "model": settings.llm.model,
+        "messages": [
+            {"role": "system", "content": JUDGE_SYSTEM},
+            {"role": "user", "content": prompt},
+        ],
         "stream": False,
-        "options": {"num_ctx": 1280, "temperature": 0.0},
+        "max_tokens": 1280,
+        "temperature": 0.0,
     }
     try:
         resp = await client.post(
-            f"{settings.ollama.base_url}/api/generate", json=payload
+            f"{settings.llm.base_url}/v1/chat/completions", json=payload
         )
         resp.raise_for_status()
-        raw = resp.json().get("response", "").strip()
+        raw = resp.json()["choices"][0]["message"]["content"].strip()
 
         # 마크다운 코드블록 제거
         if "```" in raw:
@@ -401,21 +404,21 @@ async def main() -> None:
         data = json.load(f)
 
     eval_results: List[Dict] = data.get("results", [])
-    model: str = data.get("model", settings.ollama.model)
+    model: str = data.get("model", settings.llm.model)
 
     print(f"[*] 총 문항    : {len(eval_results)}개")
     print(f"[*] 모델       : {model}")
 
-    # ── Ollama 연결 확인 ──
+    # ── LM Studio 연결 확인 ──
     import httpx
-    print("[*] Ollama 연결 확인 중...")
+    print("[*] LM Studio 연결 확인 중...")
     try:
         async with httpx.AsyncClient(timeout=5) as c:
-            await c.get(f"{settings.ollama.base_url}/api/tags")
+            await c.get(f"{settings.llm.base_url}/v1/models")
     except Exception:
-        print("[X] Ollama 연결 실패. 'ollama serve' 실행 후 재시도.")
+        print("[X] LM Studio 연결 실패. LM Studio를 실행하고 모델을 로드해주세요.")
         sys.exit(1)
-    print("[+] Ollama OK\n")
+    print("[+] LM Studio OK\n")
 
     # ── 정성 평가 실행 ──
     qual_results: List[Dict] = []

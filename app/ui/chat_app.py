@@ -683,7 +683,7 @@ def render_sidebar() -> bool:
             st.session_state.messages = []
             st.rerun()
 
-        # ── Ollama 경고 (에러 시에만) ────────────
+        # ── LLM 서버 경고 (에러 시에만) ────────────
         async def _chk():
             return await st.session_state.generator.health_check()
 
@@ -691,7 +691,7 @@ def render_sidebar() -> bool:
             st.markdown(
                 '<div style="margin-top:0.6rem;padding:0.5rem 0.6rem;border-radius:7px;'
                 'background:#fef3c7;border:1px solid #fcd34d;font-size:0.78rem;color:#92400e;">'
-                '⚠️ AI 서버 미연결<br><span style="font-size:0.72rem;">Ollama를 시작해주세요</span>'
+                '⚠️ AI 서버 미연결<br><span style="font-size:0.72rem;">LM Studio를 시작해주세요</span>'
                 '</div>',
                 unsafe_allow_html=True,
             )

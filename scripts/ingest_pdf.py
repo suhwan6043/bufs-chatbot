@@ -242,10 +242,10 @@ def ingest_pdf(
         extractor = DigitalPDFExtractor()
         pages = extractor.extract(str(path))
     else:
-        # 스캔 PDF: Ollama 중지 필요
+        # 스캔 PDF: LM Studio 중지 필요
         logger.warning(
             "스캔 PDF 감지. Surya OCR 사용.\n"
-            "⚠️  Ollama가 실행 중이면 'ollama stop' 후 진행하세요."
+            "⚠️  LM Studio가 실행 중이면 종료 후 진행하세요."
         )
         input("계속하려면 Enter를 누르세요...")
         from app.pdf.ocr_extractor import SuryaOCRExtractor

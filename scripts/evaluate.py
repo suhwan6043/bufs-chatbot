@@ -299,7 +299,7 @@ async def llm_judge(
     golden_context: str,
     answer: str,
 ) -> Dict[str, Optional[float]]:
-    """Ollama로 응답 품질을 평가합니다. 실패 시 None 반환."""
+    """LLM으로 응답 품질을 평가합니다. 실패 시 None 반환."""
     import httpx
 
     prompt = JUDGE_PROMPT.format(
@@ -309,20 +309,23 @@ async def llm_judge(
         answer=answer[:400],
     )
     payload = {
-        "model": settings.ollama.model,
-        "prompt": prompt,
-        "system": JUDGE_SYSTEM,
+        "model": settings.llm.model,
+        "messages": [
+            {"role": "system", "content": JUDGE_SYSTEM},
+            {"role": "user", "content": prompt},
+        ],
         "stream": False,
-        "options": {"num_ctx": 1024, "temperature": 0.0},
+        "max_tokens": 1024,
+        "temperature": 0.0,
     }
 
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             resp = await client.post(
-                f"{settings.ollama.base_url}/api/generate", json=payload
+                f"{settings.llm.base_url}/v1/chat/completions", json=payload
             )
             resp.raise_for_status()
-            raw = resp.json().get("response", "").strip()
+            raw = resp.json()["choices"][0]["message"]["content"].strip()
             # 마크다운 코드블록 제거
             if "```" in raw:
                 raw = raw.split("```")[1].replace("json", "").strip()
@@ -713,9 +716,9 @@ async def main(argv: List[str]) -> None:
     generator = AnswerGenerator()
 
     if not await generator.health_check():
-        print("[X] Ollama 연결 실패. 'ollama serve' 실행 필요")
+        print("[X] LM Studio 연결 실패. LM Studio를 실행하고 모델을 로드해주세요.")
         sys.exit(1)
-    print(f"   Ollama ({settings.ollama.model}) OK")
+    print(f"   LM Studio ({settings.llm.model}) OK")
 
     # ── 워밍업 (모델 로딩 시간 측정 제외) ──────────────────────────
     warmup_label = "BGE-M3" + (" + Reranker" if use_rerank else "")
@@ -844,7 +847,7 @@ async def main(argv: List[str]) -> None:
             {
                 "timestamp": timestamp,
                 "dataset": str(dataset_path),
-                "model": settings.ollama.model,
+                "model": settings.llm.model,
                 "embedding": settings.embedding.model_name,
                 "reranker": settings.reranker.model_name if use_rerank else "disabled",
                 "total_questions": len(items),
