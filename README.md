@@ -309,33 +309,58 @@ cd "C:\Users\User\Desktop\챗봇"
 
 ## 업데이트 이력
 
-### [2026-04-04 / 임성원] EN 파이프라인 개선 — FlashText 기반 다국어 쿼리 처리
+### [2026-04-05 / 임성원] EN 다국어 파이프라인 구축 및 One-Pass 스트리밍 아키텍처 도입
 
 #### 변경 배경
 
-기존 `QueryAnalyzer`는 한국어 키워드만 인식하여, 영어 질문이 들어오면 모두 `Intent.GENERAL`로 분류되고 잘못된 컨텍스트가 검색되는 문제가 있었습니다.
+기존 파이프라인은 영어 질문을 처리하지 못했습니다.
 
-#### 변경 내용
+- `QueryAnalyzer`가 한국어 키워드만 인식 → 영어 질문 전부 `Intent.GENERAL` 분류 → 무관한 컨텍스트 검색
+- LLM이 단일 호출로 KO 문서 검색·추론·EN 번역을 동시 수행 → 인지 부하 과다로 정확도 저하
+- LM Studio + Qwen3.5-9B에서 `think=False` 미동작 → 빈 답변 다수 발생
 
-- `app/pipeline/query_analyzer.py` — `EnTermMapper` 싱글톤 추가
-  - `config/academic_terms.yaml`의 `aliases_en` → `ko` 매핑을 서버 시작 시 메모리에 로드
-  - FlashText (Aho-Corasick, O(N)) 로 영어 쿼리에서 한국어 학술 용어 추출
-  - 추출된 KO 용어로 기존 Intent 분류기 재사용
-  - 키워드 미검출 시 `Intent.GENERAL` + BGE-M3 시맨틱 검색으로 fallback
-- `app/pipeline/answer_generator.py` — EN 전용 시스템 프롬프트(`EN_SYSTEM_PROMPT`) 추가
-  - `lang="en"` 일 때 영어로 답변하도록 프롬프트 분기
-  - 매칭된 학술 용어(`matched_terms`)를 프롬프트에 주입하여 정확한 영어 용어명 사용 유도
-- `app/models.py` — `QueryAnalysis.matched_terms` 필드 추가 (`[{"ko": ..., "en": ...}]`)
+#### 주요 변경 내용
+
+#### 1. FlashText 기반 EN→KO 키워드 매핑 (`app/pipeline/query_analyzer.py`)
+
+- `EnTermMapper` 싱글톤: `config/academic_terms.yaml`의 `aliases_en → ko` 매핑을 서버 시작 시 메모리 로드 (Aho-Corasick, O(N))
+- 영어 쿼리 → KO 용어 추출 → 기존 Intent 분류기 재사용
+- 키워드 미검출 시 `Intent.GENERAL` + BGE-M3 크로스링구얼 시맨틱 검색 fallback
+
+#### 2. One-Pass Streaming 아키텍처 (`app/pipeline/answer_generator.py`)
+
+단일 LLM 호출로 KO 초안 작성과 EN 번역을 순차 수행하여 TTFT(첫 토큰 응답 시간)를 1초 이내로 유지합니다.
+
+```text
+EN 질문 → LLM 단일 호출
+  <ko_draft>  : KO로 완벽한 초안 작성 → 화면에 "규정 원문 분석 중..." 표시
+  <final_answer>: EN으로 번역 → CLEAR 신호 후 메인 답변 스트리밍
+```
+
+Rolling Buffer State Machine으로 `<final_answer>` 태그가 여러 토큰에 쪼개져 오는 현상을 방어합니다. `<final_answer>` 미감지 시 KO 초안을 그대로 표시하는 fallback 포함.
+
+#### 3. LLM 변경
+
+LM Studio (Qwen3.5-9B) → Ollama (Qwen3:14b, `think=False`, `max_tokens=4096`)
+
+#### 4. 기타
+
+- `app/models.py` — `QueryAnalysis`에 `lang`, `matched_terms` 필드 추가
 - `requirements.txt` — `flashtext>=2.7`, `pyyaml>=6.0` 추가
+
+#### RAGAS 평가 결과 (Claude Haiku 판정)
+
+| 모델 / 방식 | 언어 | Faithfulness | Answer Relevancy | Context Recall | Answer Correctness | 평균 |
+|-------------|------|:------------:|:----------------:|:--------------:|:------------------:|:----:|
+| qwen3:8b 직접 생성 | KO | 0.897 | 0.747 | 0.901 | 0.715 | 0.828 |
+| qwen3:14b 직접 생성 | KO | 0.971 | 0.765 | 0.950 | 0.893 | **0.904** |
+| qwen2.5:7b 직접 생성 | EN (개선 전) | — | — | 0.171 | 0.332 | — |
+| qwen3:8b 직접 생성 | EN (FlashText) | 0.798 | 0.758 | 0.730 | 0.624 | 0.721 |
+| qwen3:14b One-Pass | EN (FlashText) | 0.714 | 0.714 | 0.738 | 0.630 | 0.698 |
 
 #### 설치 (팀원 필수)
 
 ```bash
 pip install -r requirements.txt
-# 또는 개별 설치
-pip install flashtext pyyaml
+ollama pull qwen3:14b
 ```
-
-#### LLM 변경
-
-LM Studio (Qwen3.5-9B) → Ollama (Qwen3:8B, `think=False`)

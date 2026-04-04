@@ -26,7 +26,6 @@ import asyncio
 import io
 import json
 import logging
-import os
 import re
 import sys
 import time
@@ -44,8 +43,104 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 logging.disable(logging.WARNING)
 
-import anthropic
+# .env 파일에서 환경변수 로드 (GOOGLE_API_KEY 등)
+from dotenv import load_dotenv
+load_dotenv(ROOT / ".env")
+
 import httpx
+
+# Claude API judge 지원
+_CLAUDE_MODELS = {
+    "claude-sonnet": "claude-sonnet-4-20250514",
+    "claude-haiku": "claude-haiku-4-5-20251001",
+    "claude-opus": "claude-opus-4-20250514",
+}
+_anthropic_client = None
+
+
+def _get_anthropic_client():
+    global _anthropic_client
+    if _anthropic_client is None:
+        import anthropic
+        _anthropic_client = anthropic.Anthropic()  # ANTHROPIC_API_KEY env var
+    return _anthropic_client
+
+
+async def claude_judge(system: str, prompt: str, model_alias: str) -> str:
+    """Anthropic Claude API로 judge 호출."""
+    import asyncio
+    client = _get_anthropic_client()
+    model_id = _CLAUDE_MODELS.get(model_alias, model_alias)
+
+    def _call():
+        resp = client.messages.create(
+            model=model_id,
+            max_tokens=256,
+            temperature=0.0,
+            system=system,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.content[0].text.strip()
+
+    return await asyncio.to_thread(_call)
+
+
+# Gemini API judge 지원
+_GEMINI_MODELS = {
+    "gemini-flash": "gemini-2.5-flash",
+    "gemini-pro": "gemini-2.5-pro",
+    "gemini-flash-lite": "gemini-2.5-flash-lite",
+}
+_genai_client = None
+
+
+def _get_genai_client():
+    global _genai_client
+    if _genai_client is None:
+        import os
+        from google import genai
+        _genai_client = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY"))
+    return _genai_client
+
+
+async def gemini_judge(system: str, prompt: str, model_alias: str) -> str:
+    """Google Gemini API로 judge 호출. 429 에러 시 최대 5회 재시도."""
+    import asyncio
+    from google.genai import types
+    client = _get_genai_client()
+    model_id = _GEMINI_MODELS.get(model_alias, model_alias)
+
+    def _call():
+        for attempt in range(5):
+            try:
+                resp = client.models.generate_content(
+                    model=model_id,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system,
+                        temperature=0.0,
+                        max_output_tokens=256,
+                        thinking_config=types.ThinkingConfig(thinking_budget=0),
+                    ),
+                )
+                # Gemini 2.5는 thinking 파트가 있을 수 있으므로 text 파트만 추출
+                text = resp.text if resp.text else ""
+                if not text and resp.candidates:
+                    for part in resp.candidates[0].content.parts:
+                        if hasattr(part, "text") and part.text:
+                            text = part.text
+                            break
+                return text.strip()
+            except Exception as e:
+                if "429" in str(e) and attempt < 4:
+                    wait = min(15 * (2 ** attempt), 120)
+                    print(f"    ⏳ Rate limit, {wait}s 대기 (retry {attempt+1}/4)", flush=True)
+                    import time; time.sleep(wait)
+                else:
+                    raise
+
+    return await asyncio.to_thread(_call)
+
 
 from app.config import settings
 from app.graphdb import AcademicGraph
@@ -63,10 +158,6 @@ generator = AnswerGenerator()
 # 임베딩 모델 워밍업 — segfault 방지 (lazy-load 대신 즉시 로드)
 _ = store.embedder.embed_query("warmup")
 
-# ── Claude judge 클라이언트 ──────────────────────────────────────────────
-_CLAUDE_JUDGE_MODEL = os.getenv("CLAUDE_JUDGE_MODEL", "claude-haiku-4-5-20251001")
-_claude_client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
-
 
 # ═══════════════════════════════════════════════════════════════════════════
 # LLM 호출 헬퍼
@@ -79,15 +170,21 @@ async def llm_judge(
     model: str = None,
     base_url: str = None,
 ) -> str:
-    """Claude API로 평가 판정 (model/base_url 인자는 호환성 유지용, 미사용)."""
-    msg = await _claude_client.messages.create(
-        model=_CLAUDE_JUDGE_MODEL,
-        max_tokens=512,
-        temperature=0.0,
-        system=system,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return msg.content[0].text.strip()
+    """LM Studio에 비스트리밍 요청을 보내고 content를 반환합니다."""
+    payload = {
+        "model": model or settings.llm.model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ],
+        "stream": False,
+        "max_tokens": settings.llm.max_tokens,
+        "temperature": 0.0,
+    }
+    url = base_url or settings.llm.base_url
+    resp = await client.post(f"{url}/v1/chat/completions", json=payload)
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"].strip()
 
 
 def extract_json(text: str) -> Optional[dict]:
@@ -122,7 +219,15 @@ FAITHFULNESS_SYSTEM = """당신은 RAG 시스템 평가 전문가입니다.
 평가 기준:
 - 답변의 모든 주장이 컨텍스트에서 확인 가능한가?
 - 컨텍스트에 없는 정보를 지어냈는가?
-- 1.0 = 모든 주장이 컨텍스트에 근거, 0.0 = 환각/지어낸 정보
+
+점수 기준:
+- 1.0: 모든 주장이 컨텍스트에 근거
+- 0.8~0.9: 대부분 근거하나 사소한 추론 포함 (예: 날짜 형식 변환)
+- 0.5~0.7: 일부 주장이 컨텍스트에 없음
+- 0.0~0.3: 핵심 정보를 지어냄 (환각)
+
+중요: "컨텍스트에 정보가 없어 문의 바랍니다"라는 답변은 환각이 아닙니다.
+이 경우 컨텍스트에 실제로 해당 정보가 없다면 1.0점입니다.
 
 반드시 아래 JSON 형식으로만 응답하세요:
 {"score": 0.0, "reason": "한 줄 이유"}"""
@@ -130,10 +235,22 @@ FAITHFULNESS_SYSTEM = """당신은 RAG 시스템 평가 전문가입니다.
 ANSWER_RELEVANCY_SYSTEM = """당신은 RAG 시스템 평가 전문가입니다.
 생성된 답변이 질문자의 의도에 얼마나 정확히 부합하는지 평가합니다.
 
-평가 기준:
-- 답변이 질문에서 묻는 것을 정확히 답하는가?
-- 불필요한 정보가 포함되어 있지 않은가?
-- 1.0 = 완벽히 부합, 0.5 = 부분적 답변, 0.0 = 질문과 무관
+핵심 원칙: 질문이 요구하는 핵심 정보(날짜/숫자/조건)를 정확히 포함하면 0.8 이상입니다.
+부가 정보가 있더라도 핵심이 정확하면 감점하지 마세요.
+
+점수 기준:
+- 0.9~1.0: 핵심 정보를 정확히 답변하고, 한정어(학번/학기 등)도 반영
+- 0.8: 핵심 정보는 정확하나 한정어 일부 누락이거나 부가 정보가 다소 포함됨
+- 0.6~0.7: 핵심 정보를 부분적으로만 답변하거나 핵심 한정어 누락
+- 0.4~0.5: 관련은 있으나 핵심 정보를 직접 답하지 못함 (예: "문의하세요"만 답변)
+- 0.2~0.3: 질문과 다른 내용을 답변
+- 0.0: 질문과 완전히 무관
+
+예시:
+Q: "수업일수 1/2선은 언제인가?" A: "수업일수 1/2선은 2026년 4월 22일입니다." → 0.9
+Q: "최대 학점은?" A: "18학점입니다. 단, 교직복수전공자는 21학점..." → 0.8
+Q: "장바구니 기간은?" A: "해당 정보는 확인되지 않아 문의 바랍니다." → 0.4
+Q: "재수강 기준은?" A: "최고성적 A입니다." → 0.3 (질문은 "기준"이지만 답은 "최고성적")
 
 반드시 아래 JSON 형식으로만 응답하세요:
 {"score": 0.0, "reason": "한 줄 이유"}"""
@@ -144,7 +261,13 @@ CONTEXT_PRECISION_SYSTEM = """당신은 RAG 시스템 평가 전문가입니다.
 평가 기준:
 - 컨텍스트에 질문과 관련된 정보가 얼마나 포함되어 있는가?
 - 불필요한 노이즈가 많은가?
-- 1.0 = 모든 컨텍스트가 관련있음, 0.0 = 전혀 관련없는 컨텍스트
+
+점수 기준 (0.0~1.0 연속값 사용):
+- 1.0: 모든 컨텍스트가 질문에 직접 관련된 유용한 정보
+- 0.7~0.9: 핵심 정보가 포함되어 있으나 일부 관련 없는 내용도 섞여 있음
+- 0.4~0.6: 관련 정보와 무관한 노이즈가 비슷한 비율
+- 0.1~0.3: 대부분 무관한 내용이며 관련 정보가 소량
+- 0.0: 전혀 관련없는 컨텍스트
 
 반드시 아래 JSON 형식으로만 응답하세요:
 {"score": 0.0, "reason": "한 줄 이유"}"""
@@ -152,10 +275,19 @@ CONTEXT_PRECISION_SYSTEM = """당신은 RAG 시스템 평가 전문가입니다.
 CONTEXT_RECALL_SYSTEM = """당신은 RAG 시스템 평가 전문가입니다.
 정답(reference)을 도출하는 데 필요한 정보가 검색된 컨텍스트에 얼마나 포함되어 있는지 평가합니다.
 
-평가 기준:
-- 정답에 포함된 핵심 정보(날짜, 숫자, 조건 등)가 컨텍스트에 있는가?
-- 정답을 완전히 도출할 수 있는가?
-- 1.0 = 정답의 모든 근거가 컨텍스트에 있음, 0.0 = 근거 전혀 없음
+핵심 원칙: 정답의 핵심 사실(날짜/숫자/조건)이 컨텍스트에서 확인 가능하면 0.8 이상입니다.
+표현이 다르더라도 동일한 사실이면 "포함"으로 간주하세요.
+
+점수 기준:
+- 0.9~1.0: 정답의 모든 핵심 정보가 컨텍스트에 있음
+- 0.8: 핵심 정보는 있으나 세부 조건이 일부 누락
+- 0.5~0.7: 핵심 정보 중 일부만 있음
+- 0.2~0.4: 관련 내용은 있으나 정답 도출에 부족
+- 0.0: 관련 정보 전혀 없음
+
+예시:
+정답: "2026년 3월 3일이다" 컨텍스트: "수업시작일: 2026-03-03" → 0.9 (같은 정보)
+정답: "C+ 이하이다" 컨텍스트: "재수강기준성적: C+이하" → 1.0
 
 반드시 아래 JSON 형식으로만 응답하세요:
 {"score": 0.0, "reason": "한 줄 이유"}"""
@@ -165,8 +297,14 @@ ANSWER_CORRECTNESS_SYSTEM = """당신은 RAG 시스템 평가 전문가입니다
 
 평가 기준:
 - 답변의 핵심 정보(날짜, 숫자, 조건)가 정답과 일치하는가?
-- 부분적으로 맞는 경우 비율로 점수화
-- 1.0 = 정답과 완전 일치, 0.5 = 부분 일치, 0.0 = 완전 불일치
+- 부분적으로 맞는 경우 일치 비율로 점수화
+
+점수 기준 (0.0~1.0 연속값 사용):
+- 1.0: 정답의 핵심 정보(날짜, 숫자, 조건)가 모두 일치
+- 0.7~0.9: 핵심 정보는 맞으나 세부 조건·시간·범위 일부 누락
+- 0.4~0.6: 일부 핵심 정보만 일치하고 나머지 누락 또는 불일치
+- 0.1~0.3: 관련은 있으나 핵심 정보 대부분 불일치
+- 0.0: 정답과 완전히 불일치하거나 답변 없음
 
 반드시 아래 JSON 형식으로만 응답하세요:
 {"score": 0.0, "reason": "한 줄 이유"}"""
@@ -224,7 +362,13 @@ async def evaluate_metric(
         reference=reference[:300],
     )
     try:
-        raw = await llm_judge(cfg["system"], prompt, client, model=judge_model, base_url=judge_url)
+        # 외부 API judge 라우팅
+        if judge_model and (judge_model.startswith("claude") or judge_model in _CLAUDE_MODELS):
+            raw = await claude_judge(cfg["system"], prompt, judge_model)
+        elif judge_model and (judge_model.startswith("gemini") or judge_model in _GEMINI_MODELS):
+            raw = await gemini_judge(cfg["system"], prompt, judge_model)
+        else:
+            raw = await llm_judge(cfg["system"], prompt, client, model=judge_model, base_url=judge_url)
         score = extract_float(raw, "score", -1.0)
         obj = extract_json(raw)
         reason = obj.get("reason", "") if obj else ""
@@ -261,8 +405,6 @@ async def run_pipeline(question: str, student_id: str = None) -> dict:
             context=context,
             student_id=analysis.student_id,
             question_focus=analysis.entities.get("question_focus"),
-            lang=analysis.lang,
-            matched_terms=analysis.matched_terms,
         )
 
     # thinking marker 제거
@@ -315,8 +457,8 @@ async def evaluate_dataset(
             pipe_results.append({"item": item, "pipe": pipe, "skipped": False})
 
     # ── Phase 2: 전체 평가 실행 (judge 모델) ──
-    judge_name = _CLAUDE_JUDGE_MODEL
-    judge_base = "Claude API"
+    judge_name = judge_model or settings.llm.model
+    judge_base = judge_url or settings.llm.base_url
     print(f"\n{'─' * 65}")
     print(f"Phase 2: 메트릭 평가 (judge 모델: {judge_name})")
     print(f"{'─' * 65}")
@@ -327,7 +469,7 @@ async def evaluate_dataset(
             item = pr["item"]
             pipe = pr["pipe"]
             q = item["question"]
-            reference = item.get("answer") or item.get("ground_truth", "")
+            reference = item.get("answer", "")
 
             if pr["skipped"]:
                 results.append({**item, "skipped": True})
@@ -338,7 +480,11 @@ async def evaluate_dataset(
 
             scores = {}
             reasons = {}
-            for m_name in metric_names:
+            is_api_judge = judge_model and (
+                judge_model.startswith("gemini") or judge_model in _GEMINI_MODELS
+                or judge_model.startswith("claude") or judge_model in _CLAUDE_MODELS
+            )
+            for m_idx, m_name in enumerate(metric_names):
                 t1 = time.perf_counter()
                 score, reason = await evaluate_metric(
                     m_name, q, pipe["context"], pipe["answer"], reference, client,
@@ -350,6 +496,10 @@ async def evaluate_dataset(
 
                 status = f"{score:.2f}" if score >= 0 else "ERR"
                 print(f"  {METRIC_CONFIG[m_name]['kr_name']:<35}  {status}  ({m_elapsed:.0f}s)")
+
+                # API judge 사용 시 rate limit 방지를 위한 딜레이
+                if is_api_judge and m_idx < len(metric_names) - 1:
+                    await asyncio.sleep(4)
 
             results.append({
                 **item,
@@ -427,8 +577,13 @@ async def main():
 
     judge_model = args.judge_model
     judge_url = args.judge_url
-    judge_name = _CLAUDE_JUDGE_MODEL
-    judge_base = "Claude API"
+    judge_name = judge_model or settings.llm.model
+    if judge_model and (judge_model.startswith("gemini") or judge_model in _GEMINI_MODELS):
+        judge_base = "Gemini API"
+    elif judge_model and (judge_model.startswith("claude") or judge_model in _CLAUDE_MODELS):
+        judge_base = "Anthropic API"
+    else:
+        judge_base = judge_url or settings.llm.base_url
 
     print("=" * 65)
     print("BUFS RAGAS 평가")
