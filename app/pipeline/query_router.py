@@ -83,11 +83,32 @@ class QueryRouter:
         Intent.GENERAL:        15,
     }
 
+    # ── 원칙 2: 인텐트별 우선 doc_type (공지 노이즈 차단) ──
+    _INTENT_DOC_TYPES = {
+        Intent.GRADUATION_REQ:    ["domestic"],
+        Intent.REGISTRATION:      ["domestic"],
+        Intent.SCHEDULE:          ["domestic"],
+        Intent.MAJOR_CHANGE:      ["domestic"],
+        Intent.EARLY_GRADUATION:  ["domestic"],
+        Intent.LEAVE_OF_ABSENCE:  ["domestic"],
+        Intent.COURSE_INFO:       ["domestic", "timetable"],
+        Intent.SCHOLARSHIP:       ["domestic", "scholarship"],
+        Intent.ALTERNATIVE:       ["domestic"],
+        Intent.GENERAL:           None,  # 전체 검색
+    }
+
+    _MIN_PHASE1_RESULTS = 3  # Phase 1 최소 결과 수 (미달 시 Phase 2 확장)
+
     def _search_vector(
         self, query: str, analysis: QueryAnalysis
     ) -> List[SearchResult]:
         # 원칙 2: 인텐트별 검색 후보 수 동적 조정
         intent_k = self._INTENT_K.get(analysis.intent, settings.chroma.n_results)
+
+        # 단일 토픽 쿼리(OCU 등)는 후보 수를 줄여 노이즈 억제
+        if analysis.entities.get("ocu"):
+            intent_k = min(intent_k, 6)
+
         n_candidates = (
             max(intent_k, settings.reranker.candidate_k)
             if settings.reranker.enabled
@@ -101,12 +122,36 @@ class QueryRouter:
             if department:
                 n_candidates = max(n_candidates, 20)
 
+        # ── 2단계 검색: 우선 doc_type → 부족 시 전체 확장 ──
+        preferred_types = self._INTENT_DOC_TYPES.get(analysis.intent)
+
+        # Phase 1: 우선 doc_type으로 검색
         candidates = self.chroma_store.search(
             query=query,
             n_results=n_candidates,
             student_id=analysis.student_id,
+            doc_type=preferred_types,
             department=department,
         )
+
+        # Phase 2: 결과 부족 시 전체 doc_type으로 확장
+        if preferred_types and len(candidates) < self._MIN_PHASE1_RESULTS:
+            logger.info(
+                "Phase 1 결과 %d개 < %d → Phase 2 전체 검색",
+                len(candidates), self._MIN_PHASE1_RESULTS,
+            )
+            all_candidates = self.chroma_store.search(
+                query=query,
+                n_results=n_candidates,
+                student_id=analysis.student_id,
+                department=department,
+            )
+            # 중복 제거 후 병합
+            seen_texts = {c.text[:100] for c in candidates}
+            for c in all_candidates:
+                if c.text[:100] not in seen_texts:
+                    candidates.append(c)
+                    seen_texts.add(c.text[:100])
 
         reranker = self.reranker
         if reranker and candidates:

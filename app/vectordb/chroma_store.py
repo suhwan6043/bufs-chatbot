@@ -4,7 +4,7 @@ ChromaDB 벡터 저장소
 """
 
 import logging
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import chromadb
 
@@ -86,7 +86,7 @@ class ChromaStore:
         query: str,
         n_results: int = None,
         student_id: Optional[str] = None,
-        doc_type: Optional[str] = None,
+        doc_type: Optional[Union[str, List[str]]] = None,
         semester: Optional[str] = None,
         department: Optional[str] = None,
     ) -> List[SearchResult]:
@@ -136,7 +136,7 @@ class ChromaStore:
     @staticmethod
     def _build_filter(
         student_id: Optional[str],
-        doc_type: Optional[str],
+        doc_type: Optional[Union[str, List[str]]] = None,
         semester: Optional[str] = None,
         department: Optional[str] = None,
     ) -> Optional[dict]:
@@ -162,7 +162,10 @@ class ChromaStore:
             except (ValueError, TypeError):
                 logger.warning("student_id '%s'를 정수로 변환할 수 없어 코호트 필터를 건너뜁니다.", student_id)
         if doc_type:
-            conditions.append({"doc_type": doc_type})
+            if isinstance(doc_type, list):
+                conditions.append({"doc_type": {"$in": doc_type}})
+            else:
+                conditions.append({"doc_type": doc_type})
         if semester:
             # 해당 학기 청크 OR 전 학기 공통("") 청크 모두 포함
             conditions.append({"$or": [{"semester": semester}, {"semester": ""}]})

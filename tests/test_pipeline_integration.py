@@ -159,7 +159,7 @@ class TestQueryRouterRouting:
             requires_vector=True,
         )
         results = router.route_and_search("졸업요건 질문", analysis)
-        mock_chroma.search.assert_called_once()
+        assert mock_chroma.search.call_count >= 1  # 2단계 검색으로 2회 호출 가능
         assert len(results["vector_results"]) > 0
 
     def test_requires_graph_calls_academic_graph(self, mock_chroma, mock_graph):

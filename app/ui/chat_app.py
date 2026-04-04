@@ -1033,10 +1033,15 @@ def _render_source_panel(results: list) -> None:
     if not results:
         return
 
-    # 출처별로 그룹화 (PDF: source:page, 공지: source_url), 최대 3개
+    # in_context 결과 우선, 스코어 내림차순 정렬
+    in_ctx = [r for r in results if r.metadata.get("in_context")]
+    source_pool = in_ctx if in_ctx else results
+    source_pool = sorted(source_pool, key=lambda r: r.score, reverse=True)
+
+    # 출처별로 그룹화 (PDF: source:page, 공지: source_url, 그래프: node_type), 최대 5개
     seen: set = set()
     items: list = []
-    for r in results:
+    for r in source_pool:
         doc_type = r.metadata.get("doc_type", "")
         if doc_type in ("notice", "notice_attachment"):
             key = r.metadata.get("source_url", "") or r.metadata.get("source_notice_url", "")
@@ -1048,7 +1053,12 @@ def _render_source_panel(results: list) -> None:
             if key not in seen:
                 seen.add(key)
                 items.append(("pdf", r))
-        if len(items) >= 3:
+        elif r.metadata.get("source_type") == "graph":
+            key = f"graph:{r.metadata.get('node_type', 'data')}:{r.text[:40]}"
+            if key not in seen:
+                seen.add(key)
+                items.append(("graph", r))
+        if len(items) >= 5:
             break
 
     if not items:
@@ -1064,6 +1074,11 @@ def _render_source_panel(results: list) -> None:
                     st.image(page_img, use_container_width=True)
                 else:
                     st.markdown(r.text[:300])
+            elif kind == "graph":
+                node_type = r.metadata.get("node_type", "학사 데이터")
+                st.caption(f"📊 **{node_type}** (그래프 데이터)")
+                st.markdown(r.text[:300])
+                st.divider()
             else:
                 title = r.metadata.get("title", "공지사항")
                 url   = r.metadata.get("source_url", "") or r.metadata.get("source_notice_url", "")
@@ -1109,6 +1124,7 @@ async def generate_response(question: str) -> str:
         graph_results=search_results["graph_results"],
         question=question,
         intent=analysis.intent,
+        entities=analysis.entities,
     )
 
     if not merged.formatted_context.strip():
@@ -1190,6 +1206,7 @@ async def generate_response_stream(question: str, placeholder) -> str:
         graph_results=search_results["graph_results"],
         question=question,
         intent=analysis.intent,
+        entities=analysis.entities,
     )
 
     def _log(answer: str) -> None:

@@ -91,6 +91,7 @@ class ContextMerger:
         graph_results: List[SearchResult],
         question: str = "",
         intent: Optional[Intent] = None,
+        entities: Optional[dict] = None,
     ) -> MergedContext:
         """검색 결과를 통합된 컨텍스트로 병합합니다.
 
@@ -106,12 +107,15 @@ class ContextMerger:
         direct_results = [r for r in graph_results if r.metadata.get("direct_answer")]
         if direct_results:
             if len(graph_results) <= 3:
-                vw = 0.0
+                vw = 0.2   # PDF 출처 확보용 벡터 최소 유지
             else:
-                vw = min(vw, 0.1)
+                vw = min(vw, 0.3)
 
         # RRF로 그래프·벡터 결과 병합 (rank 기반, 인텐트별 가중치 적용)
         all_results = _rrf_merge(graph_results, vector_results, gw, vw)
+
+        # 원칙 2: 엔티티 기반 필터 — 단일 토픽 쿼리에서 무관 청크 차단
+        all_results = self._filter_by_entity(all_results, entities)
 
         # 토큰 제한 내에서 컨텍스트 구성
         context_parts = []
@@ -129,7 +133,7 @@ class ContextMerger:
             text_len = len(result.text)
             remaining = max_chars - total_chars
 
-            if remaining <= 50:
+            if remaining <= 80:
                 break
 
             if text_len > remaining:
@@ -137,6 +141,7 @@ class ContextMerger:
                 truncated = result.text[:remaining] + "..."
                 context_parts.append(self._format_result(result, truncated))
                 total_chars += remaining
+                result.metadata["in_context"] = True
                 if result.metadata.get("source_type") == "graph":
                     selected_graph.append(result)
                 else:
@@ -145,6 +150,7 @@ class ContextMerger:
 
             context_parts.append(self._format_result(result))
             total_chars += text_len
+            result.metadata["in_context"] = True
 
             if result.metadata.get("source_type") == "graph":
                 selected_graph.append(result)
@@ -252,6 +258,31 @@ class ContextMerger:
                 return f"로그인은 {m.group(1).strip()} 오픈됩니다."
 
         return ""
+
+    @staticmethod
+    def _filter_by_entity(
+        results: List[SearchResult], entities: Optional[dict]
+    ) -> List[SearchResult]:
+        """엔티티 기반 필터: 단일 토픽 쿼리에서 무관 청크를 제거합니다.
+
+        원칙 2: 검색 정밀도 향상을 위한 동적 필터링.
+        최소 1개 결과는 항상 보장합니다.
+        """
+        if not entities or not results:
+            return results
+
+        # OCU 토픽 필터
+        if entities.get("ocu"):
+            _OCU_KW = ("ocu", "열린사이버", "컨소시엄", "cons.ocu")
+            filtered = [
+                r for r in results
+                if r.metadata.get("source_type") == "graph"
+                or any(kw in r.text.lower() for kw in _OCU_KW)
+            ]
+            if filtered:
+                return filtered
+
+        return results
 
     @staticmethod
     def _collect_source_urls(results: list) -> list:

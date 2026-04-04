@@ -800,6 +800,7 @@ class AcademicGraph:
         sp = node_data.get("_source_pages", [])
         meta = dict(extra_meta or {})
         meta["source_type"] = "graph"
+        meta["node_type"] = node_data.get("type", "학사 데이터")
         if len(sp) > 1:
             meta["source_pages"] = sp
         return SearchResult(
@@ -871,7 +872,7 @@ class AcademicGraph:
             (lambda q: "ocu" in q and ("수강신청" in q or "신청기간" in q),
              ["수강신청"]),  # OCU 수강신청은 본교와 동일
             (lambda q: "개강" in q and "수업시작" not in q and "ocu" not in q, ["개강"]),
-            (lambda q: "장바구니" in q and ("기간" in q or "언제" in q), ["장바구니"]),
+            (lambda q: "장바구니" in q and ("기간" in q or "언제" in q or "날짜" in q or "일자" in q or "일정" in q), ["장바구니"]),
             (lambda q: "수강신청확인" in q or "수강정정" in q, ["수강신청확인"]),
             (lambda q: "중간고사" in q, ["중간고사"]),
             (lambda q: "기말고사" in q, ["기말고사"]),
@@ -887,17 +888,17 @@ class AcademicGraph:
             (lambda q: "야간" in q or any(f"{i}교시" in q for i in range(10, 15)), ["야간수업시간표"]),
             (lambda q: "학위수여" in q or "졸업식" in q, ["학위수여식"]),
             (lambda q: "학위" in q and "유예" in q, ["학사학위취득유예"]),
-            (lambda q: "수강신청" in q and ("기간" in q or "언제" in q or "신청일" in q or "며칠" in q)
+            (lambda q: "수강신청" in q and ("기간" in q or "언제" in q or "신청일" in q or "며칠" in q or "날짜" in q or "일자" in q or "일정" in q)
              and "정정" not in q and "확인" not in q and "취소" not in q
              and "장바구니" not in q,
              ["수강신청", "수강신청_1학년", "수강신청_2학년", "수강신청_3학년",
               "수강신청_3,4학년", "수강신청_4학년", "수강신청_전학년"]),
             # 성적 공시/확인 기간
-            (lambda q: "성적" in q and ("공시" in q or "확인" in q or "언제" in q or "발표" in q)
+            (lambda q: "성적" in q and ("공시" in q or "확인" in q or "언제" in q or "발표" in q or "날짜" in q or "일자" in q or "일정" in q)
              and "이의" not in q and "정정" not in q and "포기" not in q and "선택" not in q,
              ["성적확인"]),
             # 성적포기
-            (lambda q: "성적포기" in q and ("기간" in q or "언제" in q or "신청" in q),
+            (lambda q: "성적포기" in q and ("기간" in q or "언제" in q or "신청" in q or "날짜" in q or "일자" in q or "일정" in q),
              ["부분적성적포기"]),
             # 전과/전공변경
             (lambda q: "전과" in q or "전공변경" in q or "전공바꾸" in q,
@@ -905,7 +906,7 @@ class AcademicGraph:
             # 복수전공/부전공/제2전공 신청기간
             (lambda q: ("복수전공" in q or "부전공" in q or "제2전공" in q or "융합전공" in q
                         or "마이크로전공" in q)
-             and ("신청" in q or "기간" in q or "언제" in q),
+             and ("신청" in q or "기간" in q or "언제" in q or "날짜" in q or "일자" in q or "일정" in q),
              ["제2전공", "제12전공"]),
             # 졸업시험
             (lambda q: "졸업시험" in q or "졸업논문" in q,
