@@ -2,17 +2,85 @@
 쿼리 분석기 - 규칙 기반 Intent 분류 + 엔티티 추출
 LLM 호출 없이 정규식 + 키워드 매칭으로 <5ms 처리
 JSX 스키마 기준 9 Intent, 학번 그룹/학생유형/과목명 엔티티 추출
+EN 쿼리: FlashText (aliases_en→ko) + BGE-M3 fallback
 """
 
 import re
 import logging
+from pathlib import Path
 from typing import Optional
+
+import yaml
+from flashtext import KeywordProcessor
 
 from app.models import Intent, QueryAnalysis
 from app.pipeline.glossary import Glossary
+from app.pipeline.language_detector import detect_language
 from app.graphdb.academic_graph import get_student_group
 
 logger = logging.getLogger(__name__)
+
+_TERMS_YAML = Path(__file__).parent.parent.parent / "config" / "academic_terms.yaml"
+
+
+class EnTermMapper:
+    """
+    FlashText 기반 EN→KO 학술 용어 매퍼 (모듈 싱글톤).
+
+    academic_terms.yaml의 aliases_en → ko 매핑을 메모리에 올려두고
+    O(N) 속도로 영어 쿼리에서 한국어 용어를 추출합니다.
+    """
+
+    _instance: Optional["EnTermMapper"] = None
+
+    @classmethod
+    def get(cls) -> "EnTermMapper":
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def __init__(self) -> None:
+        self._processor = KeywordProcessor(case_sensitive=False)
+        self._ko_to_en: dict[str, str] = {}  # ko → canonical en
+        self._load_terms()
+
+    def _load_terms(self) -> None:
+        try:
+            with open(_TERMS_YAML, encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+        except FileNotFoundError:
+            logger.warning("academic_terms.yaml not found: %s", _TERMS_YAML)
+            return
+
+        for term in data.get("terms", []):
+            ko: str = term.get("ko", "")
+            en: str = term.get("en", "")
+            if not ko:
+                continue
+            if en:
+                self._ko_to_en[ko] = en
+                self._processor.add_keyword(en, ko)
+            for alias in term.get("aliases_en", []):
+                if alias:
+                    self._processor.add_keyword(alias, ko)
+
+        logger.debug("EnTermMapper: %d keywords loaded", len(self._processor))
+
+    def extract(self, text: str) -> list[dict]:
+        """
+        영어 텍스트에서 매핑된 학술 용어를 추출합니다.
+
+        Returns:
+            [{"ko": "수강신청", "en": "Course Registration"}, ...]
+        """
+        ko_matches: list[str] = self._processor.extract_keywords(text)
+        seen: set[str] = set()
+        result: list[dict] = []
+        for ko in ko_matches:
+            if ko not in seen:
+                seen.add(ko)
+                result.append({"ko": ko, "en": self._ko_to_en.get(ko, ko)})
+        return result
 
 
 class QueryAnalyzer:
@@ -157,8 +225,13 @@ class QueryAnalyzer:
 
     def __init__(self):
         self.glossary = Glossary()
+        self._en_mapper = EnTermMapper.get()
 
     def analyze(self, question: str) -> QueryAnalysis:
+        lang = detect_language(question)
+        if lang == "en":
+            return self._analyze_en(question)
+
         normalized = self.glossary.normalize(question)
         student_groups = self._extract_student_groups(normalized)
         student_id = self._extract_student_id(normalized, student_groups)
@@ -219,6 +292,47 @@ class QueryAnalyzer:
             requires_graph=requires_graph,
             requires_vector=requires_vector,
             missing_info=missing_info,
+            lang="ko",
+        )
+
+    def _analyze_en(self, question: str) -> QueryAnalysis:
+        """
+        영어 쿼리 분석:
+          1. FlashText로 aliases_en → ko 용어 추출
+          2. KO 용어로 Intent 분류 (기존 규칙 재사용)
+          3. 키워드 미검출 시 → GENERAL + BGE-M3 시맨틱 fallback
+        """
+        matched_terms = self._en_mapper.extract(question)
+        ko_terms = [t["ko"] for t in matched_terms]
+
+        # KO 용어 문자열로 기존 Intent 분류기 재사용
+        ko_text = " ".join(ko_terms) if ko_terms else ""
+        intent = self._classify_intent(ko_text) if ko_text else Intent.GENERAL
+
+        requires_graph = intent in (
+            Intent.GRADUATION_REQ, Intent.EARLY_GRADUATION,
+            Intent.ALTERNATIVE, Intent.SCHEDULE,
+            Intent.COURSE_INFO, Intent.MAJOR_CHANGE, Intent.REGISTRATION,
+            Intent.SCHOLARSHIP, Intent.LEAVE_OF_ABSENCE,
+        )
+        # EN은 항상 vector 검색 (BGE-M3 크로스링구얼)
+        requires_vector = True
+
+        logger.debug(
+            "EN query analyzed: intent=%s, matched=%s",
+            intent.value, [t["ko"] for t in matched_terms],
+        )
+
+        return QueryAnalysis(
+            intent=intent,
+            student_id=None,
+            student_type=None,
+            entities={},
+            requires_graph=requires_graph,
+            requires_vector=requires_vector,
+            missing_info=[],
+            lang="en",
+            matched_terms=matched_terms,
         )
 
     @staticmethod

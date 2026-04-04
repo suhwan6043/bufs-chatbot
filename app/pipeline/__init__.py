@@ -5,6 +5,7 @@ from .reranker import Reranker
 from .context_merger import ContextMerger
 from .answer_generator import AnswerGenerator
 from .response_validator import ResponseValidator
+from .translator import ContextTranslator
 
 __all__ = [
     "Glossary",
@@ -14,4 +15,5 @@ __all__ = [
     "ContextMerger",
     "AnswerGenerator",
     "ResponseValidator",
+    "ContextTranslator",
 ]

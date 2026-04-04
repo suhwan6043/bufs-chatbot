@@ -15,6 +15,10 @@ chromadb>=0.4.0
 # 그래프
 networkx>=3.0
 
+# EN 키워드 매핑 (FlashText Aho-Corasick)
+flashtext>=2.7
+pyyaml>=6.0
+
 # 환경 설정
 python-dotenv>=1.0.0
 

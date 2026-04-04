@@ -9,7 +9,12 @@
 사용자 질문
     │
     ▼
+LanguageDetector    → 언어 감지 (ko / en), <1ms 휴리스틱
+    │
+    ▼
 QueryAnalyzer       → 의도(Intent) + 엔티티 추출, 학번 파싱
+    │  [EN 쿼리] FlashText(aliases_en→ko) 키워드 매핑
+    │            키워드 미검출 시 → GENERAL + BGE-M3 시맨틱 fallback
     │
     ├──▶ ChromaDB (Vector)   → BGE-M3 임베딩 + 상위 15~20개 후보
     │        │                  (수업시간표: department 필터 적용)
@@ -20,7 +25,8 @@ QueryAnalyzer       → 의도(Intent) + 엔티티 추출, 학번 파싱
  ContextMerger ◀──┘  → Vector + Graph 결과 병합 (토큰 예산 관리)
     │
     ▼
-AnswerGenerator     → LM Studio(Qwen3.5-9B) LLM으로 최종 답변 생성
+AnswerGenerator     → Ollama(Qwen3:8B) LLM으로 최종 답변 생성
+    │  [EN 쿼리] EN 전용 시스템 프롬프트 + 매칭 용어 주입
     │
     ▼
 ResponseValidator   → 답변 품질 검증
@@ -33,13 +39,14 @@ ChatLogger          → 대화 로그 JSONL 저장 (data/logs/)
 
 | 구성요소 | 기술 |
 |----------|------|
-| LLM | LM Studio + Qwen3.5-9B-Q4_K_M (로컬) |
+| LLM | Ollama + Qwen3:8B (로컬, think=False) |
 | 임베딩 | BAAI/bge-m3 (multilingual, CPU) |
 | 리랭킹 | BAAI/bge-reranker-v2-m3 (Cross-Encoder, CPU) |
 | 벡터 DB | ChromaDB (SQLite 기반 로컬 파일) |
 | 지식 그래프 | NetworkX (pkl 파일) |
 | PDF 처리 | PyMuPDF + pdfplumber |
 | 수업시간표 파싱 | timetable_parser (교시→시각 변환, 학과명 정규화) |
+| EN 키워드 매핑 | FlashText (Aho-Corasick, aliases_en→ko, O(N)) |
 | UI | Streamlit (멀티페이지: 챗봇 + 로그 뷰어) |
 
 ## 설치
@@ -57,19 +64,27 @@ ChatLogger          → 대화 로그 JSONL 저장 (data/logs/)
 pip install -r requirements.txt
 ```
 
-### 2. LM Studio 모델 로드
+> **주요 신규 의존성** (`pip install` 후 추가 설치 불필요, requirements.txt에 포함됨)
+>
+> - `flashtext>=2.7` — EN 키워드 매핑 (Aho-Corasick)
+> - `pyyaml>=6.0` — academic_terms.yaml 로드
 
-LM Studio에서 `qwen/qwen3.5-9b` (Q4_K_M) 모델을 다운로드 후 로컬 서버를 시작합니다.
-기본 포트 `1234`에서 OpenAI 호환 API가 제공됩니다.
+### 2. Ollama 모델 설치
+
+[Ollama](https://ollama.com)를 설치한 후 아래 명령으로 모델을 다운로드합니다.
+
+```bash
+ollama pull qwen3:8b
+```
 
 ### 3. 환경 설정 (선택)
 
 `.env` 파일을 생성하여 설정을 커스터마이즈할 수 있습니다:
 
 ```env
-# LLM (LM Studio OpenAI 호환 API)
-LLM_BASE_URL=http://localhost:1234
-LLM_MODEL=qwen/qwen3.5-9b
+# LLM (Ollama OpenAI 호환 API)
+LLM_BASE_URL=http://localhost:11434
+LLM_MODEL=qwen3:8b
 LLM_MAX_TOKENS=2048
 LLM_TEMPERATURE=0.1
 
@@ -275,8 +290,8 @@ cd "C:\Users\User\Desktop\챗봇"
 
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
-| `LLM_BASE_URL` | `http://localhost:1234` | LM Studio 서버 주소 |
-| `LLM_MODEL` | `qwen/qwen3.5-9b` | LLM 모델 (OpenAI 호환 API) |
+| `LLM_BASE_URL` | `http://localhost:11434` | Ollama 서버 주소 |
+| `LLM_MODEL` | `qwen3:8b` | LLM 모델 (OpenAI 호환 API) |
 | `LLM_MAX_TOKENS` | `2048` | 최대 생성 토큰 |
 | `LLM_TEMPERATURE` | `0.1` | 생성 온도 |
 | `LLM_TOP_P` | `0.9` | Top-p 샘플링 |
@@ -289,5 +304,38 @@ cd "C:\Users\User\Desktop\챗봇"
 | `RERANKER_ENABLED` | `true` | 리랭킹 활성화 |
 | `RERANKER_TOP_K` | `5` | 리랭킹 후 선택 수 |
 | `RERANKER_CANDIDATE_K` | `15` | 리랭킹 전 후보 수 |
-| `CHROMA_N_RESULTS` | `15` | ChromaDB 검색 결과 수 |
+| `CHROMA_N_RESULTS` | `15` | ChromaDB 검색 결색 수 |
 | `CHROMA_COLLECTION` | `bufs_academic` | 컬렉션 이름 |
+
+## 업데이트 이력
+
+### [2026-04-04 / 임성원] EN 파이프라인 개선 — FlashText 기반 다국어 쿼리 처리
+
+#### 변경 배경
+
+기존 `QueryAnalyzer`는 한국어 키워드만 인식하여, 영어 질문이 들어오면 모두 `Intent.GENERAL`로 분류되고 잘못된 컨텍스트가 검색되는 문제가 있었습니다.
+
+#### 변경 내용
+
+- `app/pipeline/query_analyzer.py` — `EnTermMapper` 싱글톤 추가
+  - `config/academic_terms.yaml`의 `aliases_en` → `ko` 매핑을 서버 시작 시 메모리에 로드
+  - FlashText (Aho-Corasick, O(N)) 로 영어 쿼리에서 한국어 학술 용어 추출
+  - 추출된 KO 용어로 기존 Intent 분류기 재사용
+  - 키워드 미검출 시 `Intent.GENERAL` + BGE-M3 시맨틱 검색으로 fallback
+- `app/pipeline/answer_generator.py` — EN 전용 시스템 프롬프트(`EN_SYSTEM_PROMPT`) 추가
+  - `lang="en"` 일 때 영어로 답변하도록 프롬프트 분기
+  - 매칭된 학술 용어(`matched_terms`)를 프롬프트에 주입하여 정확한 영어 용어명 사용 유도
+- `app/models.py` — `QueryAnalysis.matched_terms` 필드 추가 (`[{"ko": ..., "en": ...}]`)
+- `requirements.txt` — `flashtext>=2.7`, `pyyaml>=6.0` 추가
+
+#### 설치 (팀원 필수)
+
+```bash
+pip install -r requirements.txt
+# 또는 개별 설치
+pip install flashtext pyyaml
+```
+
+#### LLM 변경
+
+LM Studio (Qwen3.5-9B) → Ollama (Qwen3:8B, `think=False`)

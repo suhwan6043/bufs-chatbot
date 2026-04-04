@@ -14,6 +14,22 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+EN_SYSTEM_PROMPT = """You are an academic affairs AI for Busan University of Foreign Studies (BUFS).
+
+## Absolute Rules
+1. Answer ONLY using the information provided in the [Context] section.
+2. Copy all numbers (credits, dates, amounts), URLs, and proper nouns exactly from the context. Never change or guess them.
+3. If specific rules differ by student cohort year, state which cohort applies.
+4. Always include conditional information (exceptions, restrictions, special cases).
+
+## Format
+- Lead with the direct answer in the first sentence.
+- Be concise. No preamble, repetition, or filler phrases.
+- Use bullet points (-) for lists or multiple conditions.
+- Do not speculate or add information not present in the context.
+- If the context contains no relevant answer, reply: "Please contact the Academic Affairs Office at +82-51-509-5182."
+"""
+
 SYSTEM_PROMPT = """당신은 부산외국어대학교(BUFS) 학사 안내 AI입니다.
 
 ## 절대 규칙
@@ -57,27 +73,42 @@ class AnswerGenerator:
         context: str,
         student_id: Optional[str] = None,
         question_focus: Optional[str] = None,
+        lang: Optional[str] = None,
+        matched_terms: Optional[list] = None,
     ) -> str:
         """LLM에 전달할 프롬프트를 구성합니다."""
         parts = []
 
-        if student_id:
-            parts.append(f"[학번] {student_id}학번 기준으로 답변하세요.\n")
+        if lang == "en":
+            # EN 쿼리: 매칭된 학술 용어를 정확한 영어 표기와 함께 주입
+            if matched_terms:
+                term_list = ", ".join(
+                    f"{t['en']} ({t['ko']})" for t in matched_terms
+                )
+                parts.append(
+                    f"[Matched Terms] {term_list}\n"
+                    "Use the exact English term names above in your answer.\n"
+                )
+            parts.append(f"[Context]\n{context}\n")
+            parts.append(f"[Question] {question}")
+        else:
+            if student_id:
+                parts.append(f"[학번] {student_id}학번 기준으로 답변하세요.\n")
 
-        if question_focus == "period":
-            parts.append(
-                "[주목] 이 질문은 날짜·기간·시간을 묻습니다. "
-                "컨텍스트에서 날짜, 시간, 기간 정보를 찾아 답하세요. "
-                "학점·수치가 아닌 날짜·기간으로 답해야 합니다.\n"
-            )
-        elif question_focus == "limit":
-            parts.append(
-                "[주목] 이 질문은 학점·횟수·금액 등 한도·수치를 묻습니다. "
-                "컨텍스트에서 최대·최소 값을 찾아 답하세요.\n"
-            )
+            if question_focus == "period":
+                parts.append(
+                    "[주목] 이 질문은 날짜·기간·시간을 묻습니다. "
+                    "컨텍스트에서 날짜, 시간, 기간 정보를 찾아 답하세요. "
+                    "학점·수치가 아닌 날짜·기간으로 답해야 합니다.\n"
+                )
+            elif question_focus == "limit":
+                parts.append(
+                    "[주목] 이 질문은 학점·횟수·금액 등 한도·수치를 묻습니다. "
+                    "컨텍스트에서 최대·최소 값을 찾아 답하세요.\n"
+                )
 
-        parts.append(f"[컨텍스트]\n{context}\n")
-        parts.append(f"[질문] {question}")
+            parts.append(f"[컨텍스트]\n{context}\n")
+            parts.append(f"[질문] {question}")
 
         return "\n".join(parts)
 
@@ -87,15 +118,20 @@ class AnswerGenerator:
         context: str,
         student_id: Optional[str] = None,
         question_focus: Optional[str] = None,
+        lang: Optional[str] = None,
+        matched_terms: Optional[list] = None,
     ) -> AsyncGenerator[str, None]:
         """스트리밍으로 답변을 생성합니다."""
-        prompt = self._build_prompt(question, context, student_id, question_focus)
+        prompt = self._build_prompt(
+            question, context, student_id, question_focus, lang, matched_terms
+        )
+        system = EN_SYSTEM_PROMPT if lang == "en" else SYSTEM_PROMPT
         url = f"{self.base_url}/v1/chat/completions"
 
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system},
                 {"role": "user", "content": prompt},
             ],
             "stream": True,
@@ -103,6 +139,7 @@ class AnswerGenerator:
             "temperature": settings.llm.temperature,
             "top_p": settings.llm.top_p,
             "repeat_penalty": settings.llm.repeat_penalty,
+            "think": False,  # qwen3 thinking 비활성화 (학사 Q&A는 추론 불필요)
         }
 
         try:
@@ -151,10 +188,15 @@ class AnswerGenerator:
         context: str,
         student_id: Optional[str] = None,
         question_focus: Optional[str] = None,
+        lang: Optional[str] = None,
+        matched_terms: Optional[list] = None,
+        context_lang: Optional[str] = None,
     ) -> str:
         """전체 답변을 한 번에 반환합니다 (비스트리밍)."""
         parts = []
-        async for token in self.generate(question, context, student_id, question_focus):
+        async for token in self.generate(
+            question, context, student_id, question_focus, lang, matched_terms
+        ):
             parts.append(token)
         return "".join(parts)
 

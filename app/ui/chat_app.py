@@ -1127,6 +1127,8 @@ async def generate_response(question: str) -> str:
         context=merged.formatted_context,
         student_id=analysis.student_id,
         question_focus=analysis.entities.get("question_focus"),
+        lang=analysis.lang,
+        matched_terms=analysis.matched_terms,
     )
 
     all_results = search_results["vector_results"] + search_results["graph_results"]
@@ -1228,6 +1230,8 @@ async def generate_response_stream(question: str, placeholder) -> str:
         context=merged.formatted_context,
         student_id=analysis.student_id,
         question_focus=analysis.entities.get("question_focus"),
+        lang=analysis.lang,
+        matched_terms=analysis.matched_terms,
     ):
         if token == "\x00CLEAR\x00":
             full_answer = ""

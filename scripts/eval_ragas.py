@@ -26,6 +26,7 @@ import asyncio
 import io
 import json
 import logging
+import os
 import re
 import sys
 import time
@@ -43,6 +44,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 logging.disable(logging.WARNING)
 
+import anthropic
 import httpx
 
 from app.config import settings
@@ -61,6 +63,10 @@ generator = AnswerGenerator()
 # 임베딩 모델 워밍업 — segfault 방지 (lazy-load 대신 즉시 로드)
 _ = store.embedder.embed_query("warmup")
 
+# ── Claude judge 클라이언트 ──────────────────────────────────────────────
+_CLAUDE_JUDGE_MODEL = os.getenv("CLAUDE_JUDGE_MODEL", "claude-haiku-4-5-20251001")
+_claude_client = anthropic.AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY", ""))
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # LLM 호출 헬퍼
@@ -73,21 +79,15 @@ async def llm_judge(
     model: str = None,
     base_url: str = None,
 ) -> str:
-    """LM Studio에 비스트리밍 요청을 보내고 content를 반환합니다."""
-    payload = {
-        "model": model or settings.llm.model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ],
-        "stream": False,
-        "max_tokens": settings.llm.max_tokens,
-        "temperature": 0.0,
-    }
-    url = base_url or settings.llm.base_url
-    resp = await client.post(f"{url}/v1/chat/completions", json=payload)
-    resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"].strip()
+    """Claude API로 평가 판정 (model/base_url 인자는 호환성 유지용, 미사용)."""
+    msg = await _claude_client.messages.create(
+        model=_CLAUDE_JUDGE_MODEL,
+        max_tokens=512,
+        temperature=0.0,
+        system=system,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return msg.content[0].text.strip()
 
 
 def extract_json(text: str) -> Optional[dict]:
@@ -261,6 +261,8 @@ async def run_pipeline(question: str, student_id: str = None) -> dict:
             context=context,
             student_id=analysis.student_id,
             question_focus=analysis.entities.get("question_focus"),
+            lang=analysis.lang,
+            matched_terms=analysis.matched_terms,
         )
 
     # thinking marker 제거
@@ -313,8 +315,8 @@ async def evaluate_dataset(
             pipe_results.append({"item": item, "pipe": pipe, "skipped": False})
 
     # ── Phase 2: 전체 평가 실행 (judge 모델) ──
-    judge_name = judge_model or settings.llm.model
-    judge_base = judge_url or settings.llm.base_url
+    judge_name = _CLAUDE_JUDGE_MODEL
+    judge_base = "Claude API"
     print(f"\n{'─' * 65}")
     print(f"Phase 2: 메트릭 평가 (judge 모델: {judge_name})")
     print(f"{'─' * 65}")
@@ -325,7 +327,7 @@ async def evaluate_dataset(
             item = pr["item"]
             pipe = pr["pipe"]
             q = item["question"]
-            reference = item.get("answer", "")
+            reference = item.get("answer") or item.get("ground_truth", "")
 
             if pr["skipped"]:
                 results.append({**item, "skipped": True})
@@ -425,8 +427,8 @@ async def main():
 
     judge_model = args.judge_model
     judge_url = args.judge_url
-    judge_name = judge_model or settings.llm.model
-    judge_base = judge_url or settings.llm.base_url
+    judge_name = _CLAUDE_JUDGE_MODEL
+    judge_base = "Claude API"
 
     print("=" * 65)
     print("BUFS RAGAS 평가")
