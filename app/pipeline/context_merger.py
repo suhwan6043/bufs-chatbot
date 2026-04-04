@@ -35,7 +35,7 @@ _DEFAULT_WEIGHTS = (1.5, 1.0)
 
 # 인텐트별 컨텍스트 토큰 예산 — 단답형은 작게, 복합형은 크게
 _INTENT_BUDGET = {
-    Intent.SCHEDULE:       800,
+    Intent.SCHEDULE:       400,
     Intent.ALTERNATIVE:    800,
     Intent.GRADUATION_REQ: 1400,
     Intent.REGISTRATION:   1200,
@@ -43,7 +43,7 @@ _INTENT_BUDGET = {
 }
 
 # RRF 상수
-_RRF_K = 60
+_RRF_K = 10
 
 
 def _rrf_merge(
@@ -99,6 +99,16 @@ class ContextMerger:
         # 인텐트별 가중치 + 예산 결정
         gw, vw = _INTENT_WEIGHTS.get(intent, _DEFAULT_WEIGHTS)
         budget = _INTENT_BUDGET.get(intent, _DEFAULT_CONTEXT_TOKENS)
+
+        # 그래프 direct_answer 존재 시 벡터 노이즈 억제
+        # focused handler(≤3 결과)가 정확한 답을 제공 → 벡터 완전 차단
+        # 다수 결과(>3) → 벡터 최소 보조만 허용
+        direct_results = [r for r in graph_results if r.metadata.get("direct_answer")]
+        if direct_results:
+            if len(graph_results) <= 3:
+                vw = 0.0
+            else:
+                vw = min(vw, 0.1)
 
         # RRF로 그래프·벡터 결과 병합 (rank 기반, 인텐트별 가중치 적용)
         all_results = _rrf_merge(graph_results, vector_results, gw, vw)

@@ -1290,6 +1290,40 @@ def build_graph_from_pdf(
     if grade_sched:
         logger.info(f"  수강신청 학년별 일정 {len(grade_sched)}개 추가")
 
+    # ── 2-0-1. 장바구니 신청 기간 + 로그인 오픈 시간 ─────────────
+    reg_full_text = "\n".join((p.text or "") for p in reg_pages)
+    # 장바구니 기간: "1. 28.(수) 10:00 - 2. 1.(일) 16:00 장바구니 신청" 또는 유사 패턴
+    # 실제 PDF 형식: 월.공백일.(요일) — "1. 28.(수)" 또는 "1.28.(수)"
+    basket_m = re.search(
+        r"(\d{1,2})\.\s*(\d{1,2})\.\s*\([월화수목금토일]\)\s*(\d{1,2}:\d{2})\s*"
+        r"[-–~]\s*(\d{1,2})\.\s*(\d{1,2})\.\s*\([월화수목금토일]\)\s*(\d{1,2}:\d{2})"
+        r"[\s\S]*?장바구니",
+        reg_full_text,
+    )
+    if basket_m:
+        bm, bd = int(basket_m.group(1)), int(basket_m.group(2))
+        em, ed = int(basket_m.group(4)), int(basket_m.group(5))
+        b_time, e_time = basket_m.group(3), basket_m.group(6)
+        graph.add_schedule("장바구니 신청", sem, {
+            "시작일": f"{base_year}-{bm:02d}-{bd:02d}",
+            "종료일": f"{base_year}-{em:02d}-{ed:02d}",
+            "비고": f"{b_time}~{e_time}",
+            "_source_pages": reg_source_pages,
+            "_source_file": reg_source_file,
+        })
+        logger.info(f"  장바구니 신청 기간 추가: {bm}/{bd}~{em}/{ed}")
+
+    # 로그인 오픈 시간: "09:45부터 로그인 가능" 등
+    login_m = re.search(r"(\d{1,2}:\d{2})\s*부터\s*로그인", reg_full_text)
+    if login_m:
+        login_time = login_m.group(1)
+        # 수강신청규칙 노드에 로그인오픈시간 추가
+        for grp in ("2023이후", "2022이전"):
+            reg_nid = f"reg_{grp}"
+            if reg_nid in graph.G.nodes:
+                graph.G.nodes[reg_nid]["로그인오픈시간"] = login_time
+        logger.info(f"  로그인 오픈 시간 추가: {login_time}")
+
     # ── 2-1. OCU 파싱 및 수강신청규칙에 추가 ──────────────────
     logger.info("OCU 섹션 파싱 중...")
     ocu_pages = [p for p in pages if any(k in (p.text or "") for k in SECTION_KEYS["ocu"])]

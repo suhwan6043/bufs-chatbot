@@ -710,51 +710,56 @@ class AcademicGraph:
         elif intent == "LEAVE_OF_ABSENCE":
             results.extend(self._query_leave_of_absence(entities, question))
 
-        # ── 보충 탐색: 교양영역 / 마이크로전공 / 교직 ──
-        if entities.get("liberal_arts_area"):
-            results.extend(self._query_liberal_arts(entities["liberal_arts_area"]))
+        # ── 보충 탐색 게이팅: direct_answer가 이미 있으면 보충 스킵 ──
+        # focused handler가 정확한 답을 제공한 경우 추가 노이즈 방지
+        has_direct = any(r.metadata.get("direct_answer") for r in results)
 
-        if "마이크로전공" in question or "융합전공" in question:
-            results.extend(self._query_micro_majors())
+        if not has_direct:
+            # ── 보충 탐색: 교양영역 / 마이크로전공 / 교직 ──
+            if entities.get("liberal_arts_area"):
+                results.extend(self._query_liberal_arts(entities["liberal_arts_area"]))
 
-        if "교직" in question:
-            results.extend(
-                self._query_teacher_training(entities.get("department", ""))
-            )
+            if "마이크로전공" in question or "융합전공" in question:
+                results.extend(self._query_micro_majors())
 
-        # ── 보충 탐색: 정적 페이지 신규 노드 타입들 ──
-        if "자유학기" in question or "7+1" in question:
-            results.extend(self._query_by_node_type("자유학기제", question))
+            if "교직" in question:
+                results.extend(
+                    self._query_teacher_training(entities.get("department", ""))
+                )
 
-        if "출결" in question or "출석" in question or "전자출결" in question:
-            results.extend(self._query_by_node_type("전자출결", question))
+            # ── 보충 탐색: 정적 페이지 신규 노드 타입들 ──
+            if "자유학기" in question or "7+1" in question:
+                results.extend(self._query_by_node_type("자유학기제", question))
 
-        if "성적처리" in question or "평점산출" in question or (
-            "성적" in question and "기준" in question
-        ) or ("평가" in question and ("방법" in question or "방식" in question)) or (
-            "절대평가" in question or "상대평가" in question
-        ) or ("학사경고" in question) or (
-            "성적" in question and ("평가" in question or "산출" in question or "처리" in question)
-        ) or ("시험" in question and ("평가" in question or "기준" in question)):
-            results.extend(self._query_grading(question))
+            if "출결" in question or "출석" in question or "전자출결" in question:
+                results.extend(self._query_by_node_type("전자출결", question))
 
-        if "등록금" in question and (
-            "반환" in question or "환불" in question or "납부" in question
-        ):
-            results.extend(self._query_by_node_type("등록금반환", question))
+            if "성적처리" in question or "평점산출" in question or (
+                "성적" in question and "기준" in question
+            ) or ("평가" in question and ("방법" in question or "방식" in question)) or (
+                "절대평가" in question or "상대평가" in question
+            ) or ("학사경고" in question) or (
+                "성적" in question and ("평가" in question or "산출" in question or "처리" in question)
+            ) or ("시험" in question and ("평가" in question or "기준" in question)):
+                results.extend(self._query_grading(question))
 
-        if "계절학기" in question or "계절수업" in question or (
-            ("하계" in question or "동계" in question) and "학기" in question
-        ):
-            if not any(r.source == "graph" and "계절학기" in r.text for r in results):
-                results.extend(self._query_by_node_type("계절학기", question))
+            if "등록금" in question and (
+                "반환" in question or "환불" in question or "납부" in question
+            ):
+                results.extend(self._query_by_node_type("등록금반환", question))
 
-        # ── 보충 탐색: 관련 공지사항 ──
+            if "계절학기" in question or "계절수업" in question or (
+                ("하계" in question or "동계" in question) and "학기" in question
+            ):
+                if not any(r.source == "graph" and "계절학기" in r.text for r in results):
+                    results.extend(self._query_by_node_type("계절학기", question))
+
+        # ── 보충 탐색: 관련 공지사항 (direct_answer 있어도 최소 1개 허용) ──
         notice_results = self._query_notices(question, intent)
         if notice_results:
-            # 이미 충분한 결과가 있으면 공지는 최대 1개만
-            max_notices = 1 if len(results) >= 2 else 2
-            results.extend(notice_results[:max_notices])
+            max_notices = 0 if has_direct else (1 if len(results) >= 2 else 2)
+            if max_notices > 0:
+                results.extend(notice_results[:max_notices])
 
         return results
 
@@ -826,9 +831,14 @@ class AcademicGraph:
         start = schedule.get("시작일", "")
         end = schedule.get("종료일", "")
         period = start if start == end else f"{start}~{end}"
-        line = f"학사일정: {schedule.get('이벤트명', '')} {period}"
+        event_name = schedule.get("이벤트명", "")
+        semester = schedule.get("학기", "")
+
+        # 학기 헤더 + 이벤트 정보로 컨텍스트 보강 (고립된 날짜 방지)
+        header = f"[{semester} 학사일정]" if semester else "[학사일정]"
+        line = f"{header}\n- {event_name}: {period}"
         if schedule.get("비고"):
-            line += f" (비고: {schedule['비고']})"
+            line += f" ({schedule['비고']})"
         metadata = {"direct_answer": answer_text} if answer_text else {}
         return self._make_graph_result(
             text=line, node_data=schedule, score=score,
@@ -1086,6 +1096,12 @@ class AcademicGraph:
         if not rule:
             return []
 
+        # 휴학생 수강신청 질문 → 복학 필요 안내
+        if "휴학" in question and "수강" in question:
+            answer = "휴학생은 수강신청이 불가합니다. 수강신청을 하려면 먼저 복학 신청이 필요합니다."
+            context = "[수강신청 유의사항]\n- 휴학 중인 학생은 수강신청 불가\n- 수강신청 전 복학 신청 필요"
+            return [self._make_direct_result(context, answer, score=1.3)]
+
         # 계절학기 전용 핸들러
         if "계절학기" in question or "계절수업" in question:
             seasonal = self._nodes_by_type("계절학기")
@@ -1100,12 +1116,24 @@ class AcademicGraph:
                     results.append(self._schedule_to_result(s, score=1.1))
                 return results
 
-        # 재수강 제한 전용 핸들러 (focused context)
+        # 재수강 제한 전용 핸들러 (focused context) — "제한" 우선 매칭
         if "재수강" in question and any(kw in question for kw in ("제한", "한도", "최대")):
             retake_limit = rule.get("재수강제한", "")
             if retake_limit:
                 context = f"[재수강 제한 규정]\n- {retake_limit}"
                 return [self._make_direct_result(context, "", score=1.3)]
+
+        # 재수강 기준 성적 전용 핸들러 ("재수강 가능한 성적 기준")
+        if "재수강" in question and any(kw in question for kw in ("기준", "가능", "성적")):
+            grade_limit = rule.get("재수강기준성적", "")
+            max_grade = rule.get("재수강최고성적", "")
+            if grade_limit:
+                answer = f"재수강은 {grade_limit} 과목만 가능합니다."
+                lines = [f"[재수강 성적 규정]\n- 재수강기준성적: {grade_limit}"]
+                if max_grade:
+                    answer += f" 재수강 후 받을 수 있는 최고 성적은 {max_grade}입니다."
+                    lines.append(f"- 재수강최고성적: {max_grade}")
+                return [self._make_direct_result("\n".join(lines), answer, score=1.3)]
 
         # 성적선택제/성적포기 전용 핸들러 → 성적처리 노드에서 분류태그 탐색
         q_lower = question.lower()
@@ -1146,6 +1174,23 @@ class AcademicGraph:
             answer = " ".join(answer_parts) if answer_parts else ""
             return [self._make_direct_result("\n".join(lines), answer, score=1.3)]
 
+        # 수강신청 사이트/URL 질문
+        q_norm = self._normalize_text(question)
+        if any(kw in q_norm for kw in ("사이트", "주소", "홈페이지", "url")):
+            url = rule.get("수강신청사이트", "")
+            if url:
+                answer = f"수강신청 사이트 주소는 {url} 입니다."
+                context = f"[수강신청]\n- 수강신청사이트: {url}"
+                return [self._make_direct_result(context, answer, score=1.3, node_data=rule)]
+
+        # 로그인 시간 질문
+        if "로그인" in q_norm and any(kw in q_norm for kw in ("시간", "언제", "가능", "몇시")):
+            login_time = rule.get("로그인오픈시간", "")
+            if login_time:
+                answer = f"수강신청 시작 전 {login_time}부터 로그인이 가능합니다."
+                context = f"[수강신청]\n- 로그인오픈시간: {login_time}"
+                return [self._make_direct_result(context, answer, score=1.3, node_data=rule)]
+
         if entities.get("gpa_exception"):
             limit = rule.get("평점4이상최대학점")
             if limit is not None:
@@ -1162,6 +1207,19 @@ class AcademicGraph:
                     ]
                 )
                 return [self._make_direct_result(context, answer, score=1.3)]
+
+        # 장바구니 기간 질문 → 학사일정 탐색
+        if "장바구니" in question and any(kw in question for kw in ("기간", "언제", "신청")):
+            sched_matches = self._find_schedule_matches("장바구니")
+            if sched_matches:
+                sm = sched_matches[0]
+                start = sm.get("시작일", "")
+                end = sm.get("종료일", "")
+                answer = f"수강신청 장바구니 신청 기간은 {self._format_period(start, end)}입니다."
+                if sm.get("비고"):
+                    answer += f" ({sm['비고']})"
+                context = f"[학사일정]\n- 장바구니 신청: {start}~{end}"
+                return [self._make_direct_result(context, answer, score=1.3, node_data=sm)]
 
         if entities.get("basket_limit"):
             basket_limit = rule.get("장바구니최대학점")
@@ -1220,6 +1278,17 @@ class AcademicGraph:
                         answer = f"OCU 시스템 사용료 납부기간은 {self._format_period(start, end)}입니다."
                         context = f"[OCU 납부기간]\n- 납부기간: {start}~{end}"
                         return [self._make_direct_result(context, answer, score=1.3, node_data=ocu_data)]
+
+                # 초과학점 예외 전용
+                if "초과" in question or ("예외" in question and "학점" in question):
+                    ocu_excess = rule.get("OCU초과학점", "")
+                    answer = "OCU 수강 신청자는 최대 신청학점에서 3학점(1과목) 초과 신청이 가능합니다."
+                    context = (
+                        f"[OCU 초과학점 예외]\n"
+                        f"- OCU 수강 신청자: 최대 신청학점에서 3학점 초과 신청 가능\n"
+                        f"- OCU 정규학기 최대: {ocu_data.get('정규학기_최대학점', '')}학점({ocu_data.get('정규학기_최대과목', '')}과목)"
+                    )
+                    return [self._make_direct_result(context, answer, score=1.3, node_data=ocu_data)]
 
                 # 출석요건 전용
                 if "출석" in question:
@@ -1291,11 +1360,38 @@ class AcademicGraph:
         self, question: str = "", entities: dict = None
     ) -> List[SearchResult]:
         entities = entities or {}
+
+        # 수강신청 취소 질문 → 수강취소마감일시 직접 반환
+        if "취소" in (question or "") and "수강" in (question or ""):
+            rule = self.get_registration_rule("2023")
+            deadline = rule.get("수강취소마감일시", "") if rule else ""
+            if deadline:
+                parts = deadline.split(maxsplit=1)
+                date_part = parts[0]
+                time_part = parts[1] if len(parts) > 1 else ""
+                _qual_m = re.search(r"(20\d{2}학년도)\s*(1학기|2학기)?", question or "")
+                _qualifier = (_qual_m.group(0) + " ") if _qual_m else ""
+                if time_part:
+                    answer = (
+                        f"{_qualifier}수강신청 취소는 "
+                        f"{self._format_date(date_part)} {time_part[:2]}시까지 가능합니다."
+                    )
+                else:
+                    answer = (
+                        f"{_qualifier}수강신청 취소는 "
+                        f"{self._format_date(date_part)}까지 가능합니다."
+                    )
+                context = f"[수강신청 취소]\n- 수강취소마감일시: {deadline}"
+                return [self._make_direct_result(context, answer, score=1.3, node_data=rule)]
+
         matches = self._find_schedule_matches(question)
         if matches:
+            # 질문에서 학년도/학기 한정어 추출 (답변 미러링용)
+            _qual_m = re.search(r"(20\d{2}학년도)\s*(1학기|2학기)?", question or "")
+            _qualifier = (_qual_m.group(0) + " ") if _qual_m else ""
+
             # 학년 키워드가 있으면 해당 학년 일정 우선 필터링
-            import re as _re
-            grade_m = _re.search(r"(\d)학년", question)
+            grade_m = re.search(r"(\d)학년", question)
             if grade_m:
                 grade = grade_m.group(1)
                 grade_matches = [
@@ -1319,35 +1415,62 @@ class AcademicGraph:
                     text="\n".join(lines), node_data=first, score=1.3,
                 )]
 
-            answer = (
-                f"{first.get('이벤트명', '')} 기간은 "
-                f"{self._format_period(first.get('시작일', ''), first.get('종료일', ''))}입니다."
-            )
+            # ── 기간 중복 방지 + 단일 날짜/기간 구분 ──
+            event_name = first.get("이벤트명", "")
+            event_display = re.sub(r"\s*기간$", "", event_name)   # 끝 "기간" 제거
+            start = first.get("시작일", "")
+            end = first.get("종료일", "")
+            is_single = not end or start == end
+
+            if is_single:
+                # 한국어 조사 자동 선택: 받침 있으면 "은", 없으면 "는"
+                _last = event_display.rstrip()[-1] if event_display.strip() else ""
+                _particle = "은" if _last and 0xAC00 <= ord(_last) <= 0xD7A3 and (ord(_last) - 0xAC00) % 28 != 0 else "는"
+                answer = f"{_qualifier}{event_display}{_particle} {self._format_date(start)}입니다."
+            else:
+                answer = (
+                    f"{_qualifier}{event_display} 기간은 "
+                    f"{self._format_period(start, end)}입니다."
+                )
 
             question_norm = self._normalize_text(question)
             if "ocu" in question_norm and "개강" in question_norm:
-                answer = f"OCU 개강일은 {self._format_date(first.get('시작일', ''))}입니다."
+                answer = f"{_qualifier}OCU 개강일은 {self._format_date(start)}입니다."
                 if first.get("비고"):
                     answer += f" {first['비고']}."
 
             elif "개강" in question_norm and "수업시작" not in question_norm:
-                answer = (
-                    f"개강일은 {self._format_date(first.get('시작일', ''))}입니다."
-                )
+                answer = f"{_qualifier}개강일은 {self._format_date(start)}입니다."
             elif "수업시작" in question_norm:
-                answer = (
-                    f"수업시작일은 {self._format_date(first.get('시작일', ''))}입니다."
-                )
+                answer = f"{_qualifier}수업시작일은 {self._format_date(start)}입니다."
             elif "전과" in question_norm or "제1·2전공" in question or "제1,2전공" in question_norm:
+                # 이벤트명에서 학번 범위 추출 (예: "2024~2025학번")
+                year_prefix = ""
+                yr_m = re.search(r"(\d{4}[~\-]\d{4}학번)", event_name)
+                if yr_m:
+                    year_prefix = yr_m.group(1) + " "
                 answer = (
-                    f"제1·2전공 신청 및 변경(전과) 기간은 "
-                    f"{self._format_period(first.get('시작일', ''), first.get('종료일', ''))}입니다."
+                    f"{_qualifier}{year_prefix}제1·2전공 신청 및 변경(전과) 기간은 "
+                    f"{self._format_period(start, end)}입니다."
                 )
             elif "ocu" in question_norm and "납부" in question_norm:
                 answer = (
-                    f"OCU 시스템 사용료 납부기간은 "
-                    f"{self._format_period(first.get('시작일', ''), first.get('종료일', ''))}입니다."
+                    f"{_qualifier}OCU 시스템 사용료 납부기간은 "
+                    f"{self._format_period(start, end)}입니다."
                 )
+
+            # 학년별 수강신청 일정이 여러 개인데 학년 미지정이면 통합 답변
+            if (len(matches) > 1 and not grade_m
+                    and "수강신청" in question_norm
+                    and any("학년" in m.get("이벤트명", "") for m in matches)):
+                lines = [f"{_qualifier}수강신청 기간:"]
+                for m in matches:
+                    m_start = m.get("시작일", "")
+                    m_end = m.get("종료일", "")
+                    m_name = m.get("이벤트명", "")
+                    period = self._format_date(m_start) if (not m_end or m_start == m_end) else self._format_period(m_start, m_end)
+                    lines.append(f"- {m_name}: {period}")
+                answer = "\n".join(lines)
 
             results.append(self._schedule_to_result(first, answer, score=1.3))
             for extra in matches[1:3]:
@@ -1631,6 +1754,24 @@ class AcademicGraph:
         results: List[SearchResult] = []
         question_norm = self._normalize_text(question)
 
+        # 휴복학 "기간/언제" 질문 → 학사일정에서 휴/복학 신청 기간 탐색
+        if any(kw in question_norm for kw in ("기간", "언제", "신청")):
+            sched_matches = self._find_schedule_matches("휴복학")
+            if not sched_matches:
+                sched_matches = self._find_schedule_matches("휴/복학")
+            for sm in sched_matches[:1]:
+                _qual_m = re.search(r"(20\d{2}학년도)\s*(1학기|2학기)?", question or "")
+                _qualifier = (_qual_m.group(0) + " ") if _qual_m else ""
+                start = sm.get("시작일", "")
+                end = sm.get("종료일", "")
+                answer = (
+                    f"{_qualifier}온라인 휴/복학 신청 기간은 "
+                    f"{self._format_period(start, end)}입니다."
+                )
+                context = f"[학사일정]\n- 온라인 휴/복학 신청: {start}~{end}"
+                results.append(self._make_direct_result(context, answer, score=1.3, node_data=sm))
+                return results
+
         # 그래프에서 휴복학 노드 수집 (인덱스)
         all_leave_nodes = self._nodes_by_type("휴복학")
         if not all_leave_nodes:
@@ -1667,7 +1808,8 @@ class AcademicGraph:
                     node_data=data, score=1.2,
                 ))
         else:
-            for nid, data in all_leave_nodes:
+            # 키워드 미매칭 시 전체 덤프 대신 상위 2개만 (노이즈 제한)
+            for nid, data in all_leave_nodes[:2]:
                 results.append(self._make_graph_result(
                     text=self._fmt_leave_of_absence(data),
                     node_data=data, score=1.0,
@@ -1678,17 +1820,35 @@ class AcademicGraph:
     def _query_by_node_type(
         self, node_type: str, question: str = "",
     ) -> List[SearchResult]:
-        """특정 node_type의 모든 노드를 검색 결과로 반환 (정적 페이지 범용)."""
-        results: List[SearchResult] = []
+        """특정 node_type의 노드를 키워드 관련도 기반으로 필터링하여 반환."""
         question_norm = self._normalize_text(question)
 
         all_nodes = self._nodes_by_type(node_type)
         if not all_nodes:
             return []
 
+        # 질문 키워드와 노드 내용의 겹침(overlap) 계산
+        q_tokens = set(
+            question_norm[i:i+2]
+            for i in range(len(question_norm) - 1)
+        ) if len(question_norm) >= 2 else {question_norm}
+
+        scored = []
         for nid, data in all_nodes:
-            section_norm = self._normalize_text(data.get("구분", ""))
-            score = 1.2 if section_norm and section_norm in question_norm else 1.0
+            content_norm = self._normalize_text(
+                " ".join(str(v) for v in data.values() if isinstance(v, str))
+            )
+            overlap = sum(1 for t in q_tokens if t in content_norm)
+            scored.append((nid, data, overlap))
+
+        # 겹침 > 0인 노드만 선별, 없으면 상위 2개 fallback
+        matched = [(n, d, ov) for n, d, ov in scored if ov > 0]
+        if not matched:
+            matched = sorted(scored, key=lambda x: x[2], reverse=True)[:2]
+
+        results: List[SearchResult] = []
+        for nid, data, ov in sorted(matched, key=lambda x: x[2], reverse=True)[:3]:
+            score = 1.2 if ov >= 3 else 1.0
             results.append(self._make_graph_result(
                 text=self._fmt_static_info(data, node_type),
                 node_data=data, score=score,

@@ -62,11 +62,15 @@ class Reranker:
 
         top_k = top_k or settings.reranker.top_k
 
-        pairs = [[query, r.text] for r in results]
+        # None/비문자열 텍스트 방어 (ChromaDB에서 None document 반환 시)
+        valid = [(i, r) for i, r in enumerate(results) if r.text and isinstance(r.text, str)]
+        if not valid:
+            return results[:top_k]
+        pairs = [[query, r.text] for _, r in valid]
         scores = self.model.predict(pairs)
 
         scored = sorted(
-            zip(scores, results),
+            zip(scores, [r for _, r in valid]),
             key=lambda x: x[0],
             reverse=True,
         )
