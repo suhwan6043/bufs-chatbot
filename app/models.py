@@ -62,6 +62,8 @@ class QueryAnalysis:
     requires_graph: bool = False
     requires_vector: bool = True
     missing_info: list = field(default_factory=list)
+    lang: str = "ko"  # 감지된 질문 언어: 'ko' | 'en'
+    matched_terms: list = field(default_factory=list)  # [{"ko": "수강신청", "en": "Course Registration"}]
 
 
 @dataclass

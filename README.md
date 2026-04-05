@@ -9,7 +9,12 @@
 사용자 질문
     │
     ▼
+LanguageDetector    → 언어 감지 (ko / en), <1ms 휴리스틱
+    │
+    ▼
 QueryAnalyzer       → 의도(Intent) + 엔티티 추출, 학번 파싱
+    │  [EN 쿼리] FlashText(aliases_en→ko) 키워드 매핑
+    │            키워드 미검출 시 → GENERAL + BGE-M3 시맨틱 fallback
     │
     ├──▶ ChromaDB (Vector)   → BGE-M3 임베딩 + 상위 15~20개 후보
     │        │                  (수업시간표: department 필터 적용)
@@ -20,7 +25,8 @@ QueryAnalyzer       → 의도(Intent) + 엔티티 추출, 학번 파싱
  ContextMerger ◀──┘  → Vector + Graph 결과 병합 (토큰 예산 관리)
     │
     ▼
-AnswerGenerator     → LM Studio(Qwen3.5-9B) LLM으로 최종 답변 생성
+AnswerGenerator     → Ollama(Qwen3:8B) LLM으로 최종 답변 생성
+    │  [EN 쿼리] EN 전용 시스템 프롬프트 + 매칭 용어 주입
     │
     ▼
 ResponseValidator   → 답변 품질 검증
@@ -33,13 +39,14 @@ ChatLogger          → 대화 로그 JSONL 저장 (data/logs/)
 
 | 구성요소 | 기술 |
 |----------|------|
-| LLM | LM Studio + Qwen3.5-9B-Q4_K_M (로컬) |
+| LLM | Ollama + Qwen3:8B (로컬, think=False) |
 | 임베딩 | BAAI/bge-m3 (multilingual, CPU) |
 | 리랭킹 | BAAI/bge-reranker-v2-m3 (Cross-Encoder, CPU) |
 | 벡터 DB | ChromaDB (SQLite 기반 로컬 파일) |
 | 지식 그래프 | NetworkX (pkl 파일) |
 | PDF 처리 | PyMuPDF + pdfplumber |
 | 수업시간표 파싱 | timetable_parser (교시→시각 변환, 학과명 정규화) |
+| EN 키워드 매핑 | FlashText (Aho-Corasick, aliases_en→ko, O(N)) |
 | UI | Streamlit (멀티페이지: 챗봇 + 로그 뷰어) |
 
 ## 설치
@@ -57,19 +64,27 @@ ChatLogger          → 대화 로그 JSONL 저장 (data/logs/)
 pip install -r requirements.txt
 ```
 
-### 2. LM Studio 모델 로드
+> **주요 신규 의존성** (`pip install` 후 추가 설치 불필요, requirements.txt에 포함됨)
+>
+> - `flashtext>=2.7` — EN 키워드 매핑 (Aho-Corasick)
+> - `pyyaml>=6.0` — academic_terms.yaml 로드
 
-LM Studio에서 `qwen/qwen3.5-9b` (Q4_K_M) 모델을 다운로드 후 로컬 서버를 시작합니다.
-기본 포트 `1234`에서 OpenAI 호환 API가 제공됩니다.
+### 2. Ollama 모델 설치
+
+[Ollama](https://ollama.com)를 설치한 후 아래 명령으로 모델을 다운로드합니다.
+
+```bash
+ollama pull qwen3:8b
+```
 
 ### 3. 환경 설정 (선택)
 
 `.env` 파일을 생성하여 설정을 커스터마이즈할 수 있습니다:
 
 ```env
-# LLM (LM Studio OpenAI 호환 API)
-LLM_BASE_URL=http://localhost:1234
-LLM_MODEL=qwen/qwen3.5-9b
+# LLM (Ollama OpenAI 호환 API)
+LLM_BASE_URL=http://localhost:11434
+LLM_MODEL=qwen3:8b
 LLM_MAX_TOKENS=2048
 LLM_TEMPERATURE=0.1
 
@@ -275,8 +290,8 @@ cd "C:\Users\User\Desktop\챗봇"
 
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
-| `LLM_BASE_URL` | `http://localhost:1234` | LM Studio 서버 주소 |
-| `LLM_MODEL` | `qwen/qwen3.5-9b` | LLM 모델 (OpenAI 호환 API) |
+| `LLM_BASE_URL` | `http://localhost:11434` | Ollama 서버 주소 |
+| `LLM_MODEL` | `qwen3:8b` | LLM 모델 (OpenAI 호환 API) |
 | `LLM_MAX_TOKENS` | `2048` | 최대 생성 토큰 |
 | `LLM_TEMPERATURE` | `0.1` | 생성 온도 |
 | `LLM_TOP_P` | `0.9` | Top-p 샘플링 |
@@ -289,5 +304,63 @@ cd "C:\Users\User\Desktop\챗봇"
 | `RERANKER_ENABLED` | `true` | 리랭킹 활성화 |
 | `RERANKER_TOP_K` | `5` | 리랭킹 후 선택 수 |
 | `RERANKER_CANDIDATE_K` | `15` | 리랭킹 전 후보 수 |
-| `CHROMA_N_RESULTS` | `15` | ChromaDB 검색 결과 수 |
+| `CHROMA_N_RESULTS` | `15` | ChromaDB 검색 결색 수 |
 | `CHROMA_COLLECTION` | `bufs_academic` | 컬렉션 이름 |
+
+## 업데이트 이력
+
+### [2026-04-05 / 임성원] EN 다국어 파이프라인 구축 및 One-Pass 스트리밍 아키텍처 도입
+
+#### 변경 배경
+
+기존 파이프라인은 영어 질문을 처리하지 못했습니다.
+
+- `QueryAnalyzer`가 한국어 키워드만 인식 → 영어 질문 전부 `Intent.GENERAL` 분류 → 무관한 컨텍스트 검색
+- LLM이 단일 호출로 KO 문서 검색·추론·EN 번역을 동시 수행 → 인지 부하 과다로 정확도 저하
+- LM Studio + Qwen3.5-9B에서 `think=False` 미동작 → 빈 답변 다수 발생
+
+#### 주요 변경 내용
+
+#### 1. FlashText 기반 EN→KO 키워드 매핑 (`app/pipeline/query_analyzer.py`)
+
+- `EnTermMapper` 싱글톤: `config/academic_terms.yaml`의 `aliases_en → ko` 매핑을 서버 시작 시 메모리 로드 (Aho-Corasick, O(N))
+- 영어 쿼리 → KO 용어 추출 → 기존 Intent 분류기 재사용
+- 키워드 미검출 시 `Intent.GENERAL` + BGE-M3 크로스링구얼 시맨틱 검색 fallback
+
+#### 2. One-Pass Streaming 아키텍처 (`app/pipeline/answer_generator.py`)
+
+단일 LLM 호출로 KO 초안 작성과 EN 번역을 순차 수행하여 TTFT(첫 토큰 응답 시간)를 1초 이내로 유지합니다.
+
+```text
+EN 질문 → LLM 단일 호출
+  <ko_draft>  : KO로 완벽한 초안 작성 → 화면에 "규정 원문 분석 중..." 표시
+  <final_answer>: EN으로 번역 → CLEAR 신호 후 메인 답변 스트리밍
+```
+
+Rolling Buffer State Machine으로 `<final_answer>` 태그가 여러 토큰에 쪼개져 오는 현상을 방어합니다. `<final_answer>` 미감지 시 KO 초안을 그대로 표시하는 fallback 포함.
+
+#### 3. LLM 변경
+
+LM Studio (Qwen3.5-9B) → Ollama (Qwen3:14b, `think=False`, `max_tokens=4096`)
+
+#### 4. 기타
+
+- `app/models.py` — `QueryAnalysis`에 `lang`, `matched_terms` 필드 추가
+- `requirements.txt` — `flashtext>=2.7`, `pyyaml>=6.0` 추가
+
+#### RAGAS 평가 결과 (Claude Haiku 판정)
+
+| 모델 / 방식 | 언어 | Faithfulness | Answer Relevancy | Context Recall | Answer Correctness | 평균 |
+|-------------|------|:------------:|:----------------:|:--------------:|:------------------:|:----:|
+| qwen3:8b 직접 생성 | KO | 0.897 | 0.747 | 0.901 | 0.715 | 0.828 |
+| qwen3:14b 직접 생성 | KO | 0.971 | 0.765 | 0.950 | 0.893 | **0.904** |
+| qwen2.5:7b 직접 생성 | EN (개선 전) | — | — | 0.171 | 0.332 | — |
+| qwen3:8b 직접 생성 | EN (FlashText) | 0.798 | 0.758 | 0.730 | 0.624 | 0.721 |
+| qwen3:14b One-Pass | EN (FlashText) | 0.714 | 0.714 | 0.738 | 0.630 | 0.698 |
+
+#### 설치 (팀원 필수)
+
+```bash
+pip install -r requirements.txt
+ollama pull qwen3:14b
+```

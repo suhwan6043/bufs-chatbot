@@ -22,13 +22,16 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from app.embedding import Embedder
     from app.vectordb import ChromaStore
+    from app.pipeline.translator import ContextTranslator
 
 logger = logging.getLogger(__name__)
 
 _embedder_lock = threading.Lock()
 _chroma_lock = threading.Lock()
+_translator_lock = threading.Lock()
 _embedder = None
 _chroma_store = None
+_translator = None
 
 
 def get_embedder() -> "Embedder":
@@ -42,6 +45,31 @@ def get_embedder() -> "Embedder":
                 _embedder = Embedder()
                 logger.info("[shared] Embedder 초기화 완료")
     return _embedder
+
+
+def get_translator() -> "ContextTranslator":
+    """
+    프로세스 전역 ContextTranslator 싱글톤을 반환합니다.
+
+    최초 호출 시 인스턴스를 생성하고 백그라운드 스레드에서 warmup()을 실행합니다.
+    warmup은 M2M-100 모델을 미리 로드하여 첫 번째 사용자 요청의 cold start를 방지합니다.
+    """
+    global _translator
+    if _translator is None:
+        with _translator_lock:
+            if _translator is None:
+                logger.info("[shared] ContextTranslator 초기화 중...")
+                from app.pipeline.translator import ContextTranslator
+                _translator = ContextTranslator()
+                # 모델 로드를 백그라운드 스레드에서 실행 (앱 기동 블로킹 방지)
+                t = threading.Thread(
+                    target=_translator.warmup,
+                    name="translator-warmup",
+                    daemon=True,
+                )
+                t.start()
+                logger.info("[shared] ContextTranslator 초기화 완료 (warmup 백그라운드 실행 중)")
+    return _translator
 
 
 def get_chroma_store() -> "ChromaStore":
