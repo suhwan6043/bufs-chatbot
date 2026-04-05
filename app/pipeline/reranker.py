@@ -67,23 +67,31 @@ class Reranker:
         if not valid:
             return results[:top_k]
         pairs = [[query, r.text] for _, r in valid]
-        scores = self.model.predict(pairs)
+        raw_scores = self.model.predict(pairs)
 
-        scored = sorted(
-            zip(scores, [r for _, r in valid]),
-            key=lambda x: x[0],
-            reverse=True,
-        )
+        # FAQ boost: FAQ 청크는 단문·핵심 답을 담고 있어 cross-encoder가 과소평가하기 쉬움
+        # → 동적 가중치(top_score 비례)로 보정하여 범용 가이드 청크에 밀리지 않도록 함
+        top_raw = max(raw_scores) if len(raw_scores) else 0.0
+        faq_bonus = abs(top_raw) * 0.15 if top_raw != 0 else 0.0
+        boosted_scored = []
+        for raw, (_, r) in zip(raw_scores, valid):
+            s = float(raw)
+            if r.metadata.get("doc_type") == "faq":
+                s += faq_bonus
+            boosted_scored.append((s, r))
+
+        scored = sorted(boosted_scored, key=lambda x: x[0], reverse=True)
 
         # 동적 컷오프: 최고 점수 대비 50% 미만인 결과 제거
         # 원칙 2: 무관한 청크의 컨텍스트 오염 방지 → 검색 정밀도 향상
+        # 0.35 → 0.5 상향: 크롤링 확장 후 노이즈 청크가 threshold 아래로 대량 통과하던 문제 해결
         reranked = []
         top_score = scored[0][0] if scored else 0.0
         threshold = top_score * 0.5 if top_score > 0 else -float("inf")
 
         for score, result in scored[:top_k]:
-            if score < threshold and len(reranked) >= 2:
-                # 최소 2개는 유지, 이후 threshold 미달 시 중단
+            if score < threshold and len(reranked) >= 3:
+                # 최소 3개는 유지, 이후 threshold 미달 시 중단
                 break
             result.score = float(score)
             reranked.append(result)

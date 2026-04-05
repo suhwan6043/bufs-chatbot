@@ -29,13 +29,13 @@ class ChangeType(str, Enum):
 @dataclass
 class CrawledItem:
     """크롤러가 수집한 단일 콘텐츠 항목"""
-    source_id: str          # 고유 식별자 (URL 또는 파일 경로)
+    source_id: str          # 고유 식별자 (URL/파일 경로/faq://FAQ-xxxx)
     title: str
-    content: str            # HTML 제거된 순수 텍스트
-    content_type: str       # "notice", "news", "event", "guide", "timetable"
+    content: str            # HTML 제거된 순수 텍스트 (FAQ의 경우 Q+A 결합)
+    content_type: str       # "notice", "news", "event", "guide", "timetable", "faq"
     content_hash: str       # SHA-256 of content
     crawled_at: datetime
-    source_name: str        # "학사공지", "일반공지" 등
+    source_name: str        # "학사공지", "일반공지", "FAQ" 등
     attachments: list[str] = field(default_factory=list)  # 첨부파일 URL
     metadata: dict = field(default_factory=dict)
     is_pinned: bool = False  # 고정공지 여부

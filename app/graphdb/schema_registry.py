@@ -97,6 +97,13 @@ SCHEMA: Dict[str, Dict[str, List[str]]] = {
             "전화번호", "사무실위치", "졸업시험_요건",
         ],
     },
+    "FAQ": {
+        "required": ["구분", "설명", "카테고리"],
+        "optional": [
+            "faq_id", "출처URL", "출처파일", "관련노드",
+            "is_category_root",
+        ],
+    },
 }
 
 

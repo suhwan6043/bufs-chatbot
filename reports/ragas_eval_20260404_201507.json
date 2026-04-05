@@ -1,0 +1,105 @@
+{
+  "timestamp": "20260404_201507",
+  "dataset": "C:\\Users\\suhwa\\Desktop\\bufs-chatbot\\data\\eval\\user_eval_dataset_50.jsonl",
+  "generation_model": "qwen/qwen3.5-9b",
+  "judge_model": "gemini-flash",
+  "judge_url": "Gemini API",
+  "embedding": "BAAI/bge-m3",
+  "ragas_metrics": [
+    "faithfulness",
+    "answer_relevancy",
+    "context_precision",
+    "context_recall",
+    "answer_correctness"
+  ],
+  "n_evaluated": 3,
+  "n_skipped": 0,
+  "elapsed_seconds": 68.2,
+  "summary": {
+    "n_evaluated": 3,
+    "n_skipped": 0,
+    "faithfulness": 1.0,
+    "answer_relevancy": 0.9,
+    "context_precision": 1.0,
+    "context_recall": 0.9667,
+    "answer_correctness": 1.0,
+    "avg": 0.9733
+  },
+  "results": [
+    {
+      "id": "q001",
+      "difficulty": "easy",
+      "question": "2026학년도 1학기 개강일은 언제인가?",
+      "answer": "2026년 3월 2일이다.",
+      "context": "2(월) 개강, 공휴일(삼일절 대체 휴일) / 3(화) 수업시작일",
+      "source": "p.5",
+      "answerable": true,
+      "source_page": 5,
+      "intent": "SCHEDULE",
+      "context_preview": "--- [p.5]\n[2026-1 학사일정]\n- 개강, 공휴일(삼일절 대체 휴일): 2026-03-02",
+      "answer_preview": "2026학년도 1학기 개강일은 2026년 3월 2일입니다.",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.9,
+      "context_precision": 1.0,
+      "context_recall": 1.0,
+      "answer_correctness": 1.0,
+      "reasons": {
+        "faithfulness": "답변의 모든 정보가 컨텍스트의 '2026-1 학사일정'에 명시된 '개강: 2026-03-02'에 정확히 근거합니다.",
+        "answer_relevancy": "질문에서 요구하는 2026학년도 1학기 개강일을 정확히 답변했습니다.",
+        "context_precision": "검색된 컨텍스트에 2026학년도 1학기 개강일이 '2026-03-02'로 명확하게 제시되어 있어 질문에 직접적으로 답하는 데 매우 유용합니다.",
+        "context_recall": "정답의 핵심 정보인 날짜 '2026년 3월 2일'이 컨텍스트에 '2026-03-02'로 정확히 포함되어 있습니다.",
+        "answer_correctness": "생성된 답변의 개강일(2026년 3월 2일)이 정답과 완벽하게 일치합니다."
+      }
+    },
+    {
+      "id": "q002",
+      "difficulty": "easy",
+      "question": "2026학년도 1학기 수업시작일은 언제인가?",
+      "answer": "2026년 3월 3일이다.",
+      "context": "3(화) 수업시작일",
+      "source": "p.5",
+      "answerable": true,
+      "source_page": 5,
+      "intent": "SCHEDULE",
+      "context_preview": "--- [p.5]\n[2026-1 학사일정]\n- 수업시작일: 2026-03-03",
+      "answer_preview": "2026학년도 1학기 수업시작일은 2026년 3월 3일입니다.",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.9,
+      "context_precision": 1.0,
+      "context_recall": 0.9,
+      "answer_correctness": 1.0,
+      "reasons": {
+        "faithfulness": "답변의 모든 정보가 제공된 컨텍스트(p.5)에 명시된 '수업시작일: 2026-03-03'에 정확히 근거합니다.",
+        "answer_relevancy": "질문에서 요구하는 2026학년도 1학기 수업시작일을 정확히 답변했습니다.",
+        "context_precision": "컨텍스트에 2026학년도 1학기 수업시작일이 2026-03-03으로 명확하게 제시되어 있어 질문에 직접적으로 답하는 데 매우 유용합니다.",
+        "context_recall": "정답의 핵심 정보인 '2026년 3월 3일'이 컨텍스트에 '수업시작일: 2026-03-03'로 명확히 포함되어 있습니다.",
+        "answer_correctness": "생성된 답변이 정답의 핵심 정보(날짜)와 완전히 일치합니다."
+      }
+    },
+    {
+      "id": "q003",
+      "difficulty": "easy",
+      "question": "수강신청 확인기간(수강정정기간)은 언제인가?",
+      "answer": "2026년 3월 4일부터 3월 6일까지이다.",
+      "context": "4(수) ~ 6(금) 수강신청 확인기간",
+      "source": "p.5",
+      "answerable": true,
+      "source_page": 5,
+      "intent": "SCHEDULE",
+      "context_preview": "--- [p.5]\n[2026-1 학사일정]\n- 수강신청 확인기간: 2026-03-04~2026-03-06",
+      "answer_preview": "수강신청 확인 기간은 2026년 3월 4일부터 3월 6일까지입니다.",
+      "faithfulness": 1.0,
+      "answer_relevancy": 0.9,
+      "context_precision": 1.0,
+      "context_recall": 1.0,
+      "answer_correctness": 1.0,
+      "reasons": {
+        "faithfulness": "답변의 모든 정보가 제공된 컨텍스트에서 직접적으로 확인 가능합니다.",
+        "answer_relevancy": "질문에서 요구하는 핵심 정보인 수강신청 확인기간(수강정정기간)을 정확한 날짜로 답변했습니다.",
+        "context_precision": "컨텍스트에 질문에서 요구하는 수강신청 확인기간(수강정정기간)이 정확한 날짜로 명시되어 있어 매우 유용하다.",
+        "context_recall": "정답의 모든 핵심 정보(날짜)가 컨텍스트에 정확히 포함되어 있습니다.",
+        "answer_correctness": "생성된 답변의 날짜 정보가 정답과 완벽하게 일치합니다."
+      }
+    }
+  ]
+}

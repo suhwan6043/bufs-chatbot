@@ -1,0 +1,45 @@
+{
+  "_comment": "BUFS 그래프 커뮤니티 — 원칙 2: 동적 커뮤니티 선택으로 비용·지연 최적화. Intent별 필요한 노드 타입 군집만 선별 검색.",
+  "communities": {
+    "graduation": {
+      "node_types": ["졸업요건", "학번그룹", "학생유형", "조건", "조기졸업"],
+      "description": "졸업·학위 관련 규정"
+    },
+    "registration": {
+      "node_types": ["수강신청규칙", "학사일정", "계절학기", "OCU"],
+      "description": "수강신청·학사일정·계절학기"
+    },
+    "curriculum": {
+      "node_types": ["교과목", "학과전공", "교양영역", "마이크로전공", "전공이수방법"],
+      "description": "교과목·전공 체계"
+    },
+    "student_status": {
+      "node_types": ["휴복학", "자유학기제"],
+      "description": "학적 변동"
+    },
+    "academic_support": {
+      "node_types": ["장학금", "등록금반환", "전자출결", "성적처리", "교직"],
+      "description": "학생 지원·학사 관리"
+    },
+    "notices": {
+      "node_types": ["공지사항"],
+      "description": "고정 공지"
+    },
+    "faq": {
+      "node_types": ["FAQ"],
+      "description": "자주 묻는 질문"
+    }
+  },
+  "intent_routing": {
+    "GRADUATION_REQ":    ["graduation", "curriculum", "faq", "notices"],
+    "EARLY_GRADUATION":  ["graduation", "registration", "faq"],
+    "REGISTRATION":      ["registration", "curriculum", "faq", "notices"],
+    "SCHEDULE":          ["registration", "notices", "faq"],
+    "ALTERNATIVE":       ["curriculum", "faq"],
+    "MAJOR_CHANGE":      ["curriculum", "faq", "notices"],
+    "COURSE_INFO":       ["curriculum", "faq"],
+    "LEAVE_OF_ABSENCE":  ["student_status", "faq", "notices"],
+    "SCHOLARSHIP":       ["academic_support", "faq", "notices"],
+    "GENERAL":           ["faq", "notices", "academic_support"]
+  }
+}

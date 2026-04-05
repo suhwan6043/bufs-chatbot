@@ -15,9 +15,17 @@ from typing import Optional, List
 import networkx as nx
 
 from app.config import settings
-from app.models import SearchResult
+from app.models import SearchResult, Intent
 
 logger = logging.getLogger(__name__)
+
+
+def _intent_from_string(intent_str: str) -> Intent:
+    """문자열 intent 값을 Intent enum으로 변환 (CommunitySelector 호출용)."""
+    try:
+        return Intent(intent_str)
+    except (ValueError, KeyError):
+        return Intent.GENERAL
 
 
 # ── 학번 그룹 매핑 ──────────────────────────────────────────
@@ -121,13 +129,14 @@ class AcademicGraph:
         "계절학기",       # 계절학기 수강 안내
         "OCU",            # OCU(한국열린사이버대학교) 수강 안내
         "공지사항",       # 게시판 공지 (고정공지 + 번호게시글)
+        "FAQ",            # 자주 묻는 질문 (카테고리별 Q/A 노드)
     ]
 
     EDGE_TYPES = [
         "개설한다",       # 학과전공 → 교과목
         "소속된다",       # 교과목 → 교양영역
         "요구한다",       # 졸업요건 → 교양영역 / 교직 → 교과목
-        "포함한다",       # 졸업요건 → 전공이수방법
+        "포함한다",       # 졸업요건 → 전공이수방법 / FAQ_root → FAQ
         "적용된다",       # 전공이수방법 → 학과전공 / 수강신청규칙 → 교과목
         "연결된다",       # 학과전공 → 마이크로전공
         "제약한다",       # 수강신청규칙 → 졸업요건
@@ -140,6 +149,7 @@ class AcademicGraph:
         "신청자격적용",   # 조기졸업(신청자격) → 조기졸업(기준)
         "졸업기준적용",   # 조기졸업(기준) → 졸업요건
         "공지_참조",     # 공지사항 → 도메인 노드 (수강신청규칙, 장학금, 졸업요건 등)
+        "FAQ_참조",      # FAQ → 관련 도메인 노드 (수강신청규칙, 졸업요건 등)
     ]
 
     _save_lock = threading.Lock()
@@ -526,6 +536,119 @@ class AcademicGraph:
         self._index_add(node_id, "공지사항")
         return node_id
 
+    def add_faq_node(
+        self,
+        faq_id: str,
+        question: str,
+        answer: str,
+        category: str,
+        metadata: dict = None,
+    ) -> str:
+        """
+        FAQ 노드. ID = faq_{faq_id_sanitized}
+
+        원칙 1(스키마 진화): FAQ는 벡터 전용이 아닌 그래프 1급 시민으로 편입.
+        direct_answer 플래그로 검색 시 RRF 부스트를 받아 범용 청크에 밀리지 않음.
+        """
+        node_key = self._sanitize_node_key(faq_id)
+        node_id = f"faq_{node_key}"
+        base = {
+            "type": "FAQ",
+            "구분": question,
+            "설명": answer,
+            "카테고리": category,
+            "faq_id": faq_id,
+        }
+        if metadata:
+            base.update({k: v for k, v in metadata.items() if v is not None})
+        attrs = self._merge(base, {})
+        self.G.add_node(node_id, **attrs)
+        self._index_add(node_id, "FAQ")
+        return node_id
+
+    def search_faq(
+        self,
+        question: str,
+        category: str = None,
+        top_k: int = 5,
+    ) -> List[SearchResult]:
+        """
+        FAQ 그래프 검색 — 질문/답변 키워드 매칭 기반.
+
+        원칙 2(동적 커뮤니티 선택): FAQ 노드만 대상으로 O(M) 스캔,
+        다른 노드 타입을 건드리지 않음.
+
+        Returns: direct_answer=True 플래그가 부착된 SearchResult 리스트
+        """
+        if not question:
+            return []
+
+        # 질문 토큰화 (2글자 이상 한글/영문 단어)
+        import re as _re
+        tokens = [t for t in _re.findall(r"[가-힣A-Za-z]{2,}", question) if len(t) >= 2]
+        if not tokens:
+            return []
+
+        scored: list[tuple[float, str, dict]] = []
+        for nid in self._type_index.get("FAQ", []):
+            # 방어: _type_index는 stale할 수 있음 (G 교체 시)
+            if nid not in self.G.nodes:
+                continue
+            data = self.G.nodes[nid]
+            if category and data.get("카테고리") != category:
+                continue
+            if data.get("is_category_root"):
+                # 카테고리 루트 노드는 검색 대상에서 제외
+                continue
+            q_text = data.get("구분", "") or ""
+            a_text = data.get("설명", "") or ""
+            haystack = q_text + " " + a_text
+            # 토큰 매칭 개수 + 질문 매칭 가중치
+            match_q = sum(1 for t in tokens if t in q_text)
+            match_a = sum(1 for t in tokens if t in a_text)
+            score = match_q * 2.0 + match_a * 1.0
+            if score > 0:
+                scored.append((score, nid, data))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+
+        # 의미적 매칭 강도 판정 기준
+        # - 상위 FAQ가 질문 토큰과 충분히 일치할 때만 direct_answer 부여 (오남용 방지)
+        # - 매칭 점수/최대가능 점수 비율이 50% 이상이면 강한 매칭으로 간주
+        # - 단문 질문(토큰 ≤3)은 낮은 절대 점수라도 통과 허용
+        top_score = scored[0][0] if scored else 0.0
+        max_possible = len(tokens) * 2.0 + len(tokens) * 1.0  # q_match*2 + a_match*1 (이상적)
+        if len(tokens) <= 3:
+            strong_match_threshold = 2.0  # 단문: 질문 토큰 1개+답변 1개 매칭이면 OK
+        else:
+            strong_match_threshold = max(3.0, max_possible * 0.4)
+
+        results: List[SearchResult] = []
+        for rank, (score, nid, data) in enumerate(scored[:top_k]):
+            category_tag = data.get("카테고리", "")
+            header = f"[{category_tag}] " if category_tag else ""
+            question_text = data.get("구분", "") or ""
+            answer_text = data.get("설명", "") or ""
+            text = f"{header}Q: {question_text}\n\nA: {answer_text}"
+            metadata = {
+                "node_id": nid,
+                "node_type": "FAQ",
+                "doc_type": "faq",
+                "카테고리": category_tag,
+                "faq_id": data.get("faq_id", ""),
+            }
+            # 상위 1개 FAQ가 의미적으로 강하게 매칭된 경우에만 direct_answer 부여
+            # context_merger가 이를 우선 사용하고 LLM이 FAQ 답을 뼈대로 사용
+            if rank == 0 and score >= strong_match_threshold and answer_text:
+                metadata["direct_answer"] = answer_text
+            results.append(SearchResult(
+                text=text,
+                source=f"FAQ:{data.get('faq_id', nid)}",
+                score=float(score),
+                metadata=metadata,
+            ))
+        return results
+
     def remove_notice(self, source_url: str, title: str = "") -> bool:
         """공지사항 노드 및 관련 엣지 삭제. 성공 여부 반환."""
         node_key = self._sanitize_node_key(title or source_url)
@@ -669,9 +792,23 @@ class AcademicGraph:
         """
         의도 + 엔티티에 따라 그래프를 탐색하고 SearchResult 리스트로 반환.
         student_id 없는 intent(SCHEDULE, ALTERNATIVE)도 처리.
+
+        원칙 2(동적 커뮤니티): CommunitySelector로 Intent별 필요한 노드 타입만 선별.
+        focused handler는 기존대로 유지(세밀한 쿼리 로직 보존), 보충 탐색은 커뮤니티 게이트로 필터.
         """
         entities = entities or {}
         results = []
+
+        # 원칙 2: config 기반 커뮤니티 선택 (fallback: 빈 리스트 → 하드 분기만 동작)
+        try:
+            from app.pipeline.community_selector import get_default_selector
+            selector = get_default_selector()
+            allowed_node_types = set(selector.get_node_types(
+                _intent_from_string(intent), entities,
+            )) if selector.is_loaded else None
+        except Exception as e:
+            logger.debug("CommunitySelector 사용 실패, 하드 분기로 동작: %s", e)
+            allowed_node_types = None
 
         if intent == "GRADUATION_REQ":
             results.extend(
@@ -710,47 +847,63 @@ class AcademicGraph:
         elif intent == "LEAVE_OF_ABSENCE":
             results.extend(self._query_leave_of_absence(entities, question))
 
+        # ── FAQ 그래프 검색 (모든 intent 공통) ──
+        # 원칙 1: FAQ는 그래프 1급 시민 → direct_answer 플래그로 RRF 부스트
+        # 원칙 2: FAQ 커뮤니티만 O(M) 스캔 (전체 그래프 순회 X)
+        if self._type_index.get("FAQ"):
+            # 커뮤니티 화이트리스트에 FAQ가 없는 경우에도 GENERAL 외에는 기본 2개 유지 (호환)
+            faq_allowed = allowed_node_types is None or "FAQ" in allowed_node_types
+            if faq_allowed:
+                faq_top_k = 3 if intent in ("GENERAL", "REGISTRATION", "MAJOR_CHANGE", "ALTERNATIVE") else 2
+                results.extend(self.search_faq(question, top_k=faq_top_k))
+
         # ── 보충 탐색 게이팅: direct_answer가 이미 있으면 보충 스킵 ──
         # focused handler가 정확한 답을 제공한 경우 추가 노이즈 방지
         has_direct = any(r.metadata.get("direct_answer") for r in results)
 
+        # 원칙 2: 커뮤니티 화이트리스트 적용 헬퍼 — 선택된 커뮤니티에 속한 노드 타입만 탐색
+        def _community_allows(node_type: str) -> bool:
+            return allowed_node_types is None or node_type in allowed_node_types
+
         if not has_direct:
             # ── 보충 탐색: 교양영역 / 마이크로전공 / 교직 ──
-            if entities.get("liberal_arts_area"):
+            if entities.get("liberal_arts_area") and _community_allows("교양영역"):
                 results.extend(self._query_liberal_arts(entities["liberal_arts_area"]))
 
-            if "마이크로전공" in question or "융합전공" in question:
+            if ("마이크로전공" in question or "융합전공" in question) and _community_allows("마이크로전공"):
                 results.extend(self._query_micro_majors())
 
-            if "교직" in question:
+            if "교직" in question and _community_allows("교직"):
                 results.extend(
                     self._query_teacher_training(entities.get("department", ""))
                 )
 
             # ── 보충 탐색: 정적 페이지 신규 노드 타입들 ──
-            if "자유학기" in question or "7+1" in question:
+            if ("자유학기" in question or "7+1" in question) and _community_allows("자유학기제"):
                 results.extend(self._query_by_node_type("자유학기제", question))
 
-            if "출결" in question or "출석" in question or "전자출결" in question:
+            if ("출결" in question or "출석" in question or "전자출결" in question) and _community_allows("전자출결"):
                 results.extend(self._query_by_node_type("전자출결", question))
 
-            if "성적처리" in question or "평점산출" in question or (
-                "성적" in question and "기준" in question
-            ) or ("평가" in question and ("방법" in question or "방식" in question)) or (
-                "절대평가" in question or "상대평가" in question
-            ) or ("학사경고" in question) or (
-                "성적" in question and ("평가" in question or "산출" in question or "처리" in question)
-            ) or ("시험" in question and ("평가" in question or "기준" in question)):
+            if (
+                "성적처리" in question or "평점산출" in question or (
+                    "성적" in question and "기준" in question
+                ) or ("평가" in question and ("방법" in question or "방식" in question)) or (
+                    "절대평가" in question or "상대평가" in question
+                ) or ("학사경고" in question) or (
+                    "성적" in question and ("평가" in question or "산출" in question or "처리" in question)
+                ) or ("시험" in question and ("평가" in question or "기준" in question))
+            ) and _community_allows("성적처리"):
                 results.extend(self._query_grading(question))
 
             if "등록금" in question and (
                 "반환" in question or "환불" in question or "납부" in question
-            ):
+            ) and _community_allows("등록금반환"):
                 results.extend(self._query_by_node_type("등록금반환", question))
 
-            if "계절학기" in question or "계절수업" in question or (
+            if ("계절학기" in question or "계절수업" in question or (
                 ("하계" in question or "동계" in question) and "학기" in question
-            ):
+            )) and _community_allows("계절학기"):
                 if not any(r.source == "graph" and "계절학기" in r.text for r in results):
                     results.extend(self._query_by_node_type("계절학기", question))
 

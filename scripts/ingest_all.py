@@ -43,6 +43,13 @@ _TYPE_MAP = {
     "grading": "성적처리",
     "tuition_refund": "등록금반환",
     "teacher_training": "교직",
+    # v3: 학생포털 11개 카테고리 확장
+    "registration": "수강신청안내",
+    "graduation": "졸업안내",
+    "curriculum": "교육과정",
+    "major_change": "전공/전과",
+    "scholarship": "장학금",
+    "exchange": "교류프로그램",
 }
 _PREFIX_MAP = {
     "leave_of_absence": "leave_info_",
@@ -51,6 +58,13 @@ _PREFIX_MAP = {
     "grading": "grade_",
     "tuition_refund": "refund_",
     "teacher_training": "teacher_page_",
+    # v3 확장
+    "registration": "reg_guide_",
+    "graduation": "grad_guide_",
+    "curriculum": "curr_",
+    "major_change": "major_page_",
+    "scholarship": "sch_page_",
+    "exchange": "exch_",
 }
 _METHOD_MAP = {
     "leave_of_absence": "add_leave_info",
@@ -59,6 +73,13 @@ _METHOD_MAP = {
     "attendance": "add_static_page_info",
     "grading": "add_static_page_info",
     "tuition_refund": "add_static_page_info",
+    # v3 확장 — 범용 메서드로 처리
+    "registration": "add_static_page_info",
+    "graduation": "add_static_page_info",
+    "curriculum": "add_static_page_info",
+    "major_change": "add_static_page_info",
+    "scholarship": "add_static_page_info",
+    "exchange": "add_static_page_info",
 }
 # 루트 노드 생성 대상 (grading_root 패턴 확장)
 _ROOT_NODE_MAP = {
@@ -68,6 +89,13 @@ _ROOT_NODE_MAP = {
     "tuition_refund": "refund_root",
     "teacher_training": "teacher_root",
     # grading: 이미 별도 로직에서 grading_root 생성
+    # v3 확장
+    "registration": "reg_guide_root",
+    "graduation": "grad_guide_root",
+    "curriculum": "curr_root",
+    "major_change": "major_page_root",
+    "scholarship": "sch_page_root",
+    "exchange": "exch_root",
 }
 
 
@@ -292,12 +320,80 @@ def main():
             graph_stats["edges"],
         )
 
-    # ── 6. 검증 ──────────────────────────────────────────────
+    # ── 6. FAQ 인제스트 (벡터DB + 그래프DB) ────────────────────
+    # 원칙 1: FAQ를 그래프 1급 시민으로 편입 (FaqNodeBuilder)
+    # 원칙 3: ChangeDetector 기반 증분 업데이트
+    logger.info("=== FAQ 인제스트 ===")
+    from app.graphdb.faq_node_builder import FaqNodeBuilder
+    from scripts.ingest_faq import (
+        load_faq as _faq_load,
+        to_crawled_item as _faq_to_item,
+        create_chunk as _faq_chunk,
+    )
+
+    faq_path = Path("data/faq_academic.json")
+    if faq_path.exists():
+        faq_data = _faq_load(faq_path)
+        logger.info("FAQ 로드: %d개 항목", len(faq_data))
+
+        # 증분 감지
+        faq_crawled = [_faq_to_item(item) for item in faq_data]
+        faq_events = detector.detect(faq_crawled)
+
+        if not faq_events:
+            logger.info("FAQ 변경 없음 — 벡터/그래프 스킵")
+        else:
+            # ChromaDB 업데이트 (변경/신규 FAQ만)
+            item_by_id = {item.get("id"): item for item in faq_data if item.get("id")}
+            chunks_to_add = []
+            ids_to_delete = []
+            for event in faq_events:
+                faq_id = event.metadata.get("faq_id") if event.metadata else None
+                if not faq_id and event.source_id.startswith("faq://"):
+                    faq_id = event.source_id[len("faq://"):]
+
+                existing = chroma_store.collection.get(where={"faq_id": faq_id}) if faq_id else None
+                if existing and existing.get("ids"):
+                    ids_to_delete.extend(existing["ids"])
+
+                if event.change_type != ChangeType.DELETED:
+                    item = item_by_id.get(faq_id)
+                    if item:
+                        chunk = _faq_chunk(item, faq_path.name)
+                        if chunk:
+                            chunks_to_add.append(chunk)
+
+            if ids_to_delete:
+                chroma_store.collection.delete(ids=ids_to_delete)
+            if chunks_to_add:
+                chroma_store.add_chunks(chunks_to_add)
+            logger.info(
+                "FAQ ChromaDB: +%d -%d",
+                len(chunks_to_add), len(ids_to_delete),
+            )
+
+            # 그래프 업데이트 — build_from_items이 upsert + 미존재 삭제 처리
+            graph = AcademicGraph()
+            faq_builder = FaqNodeBuilder()
+            faq_stats = faq_builder.build_from_items(graph, faq_data)
+            graph.save()
+            logger.info(
+                "FAQ 그래프: 추가=%d, 업데이트=%d, 제거=%d, 엣지=%d",
+                faq_stats["added"], faq_stats["updated"],
+                faq_stats["removed"], faq_stats["edges"],
+            )
+
+            detector.commit(faq_events)
+    else:
+        logger.warning("FAQ 파일 없음: %s", faq_path)
+
+    # ── 7. 검증 ──────────────────────────────────────────────
     count = chroma_store.collection.count()
     final_graph = AcademicGraph()
     logger.info("=== 최종 검증 ===")
     logger.info("ChromaDB: %d개 청크", count)
     logger.info("Graph: %d개 노드, %d개 엣지", final_graph.G.number_of_nodes(), final_graph.G.number_of_edges())
+    logger.info("FAQ 노드: %d개", len(final_graph._type_index.get("FAQ", [])))
     logger.info("=== 전체 인제스트 완료 ===")
 
 

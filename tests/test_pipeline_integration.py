@@ -203,8 +203,9 @@ class TestQueryRouterRouting:
         router.route_and_search("일반 질문", analysis)
         mock_graph.query_to_search_results.assert_not_called()
 
-    def test_graduation_req_no_student_id_skips_graph(self, mock_chroma, mock_graph):
-        """GRADUATION_REQ + student_id 없음 → 그래프 탐색 스킵 (StudentId 없는 특수 엔티티도 없을 때)."""
+    def test_graduation_req_no_student_id_calls_graph(self, mock_chroma, mock_graph):
+        """GRADUATION_REQ + student_id 없음 → 기본 학번('2023')으로 그래프 탐색 실행."""
+        mock_graph.query_to_search_results.return_value = []
         router = self._make_router(chroma=mock_chroma, graph=mock_graph)
         analysis = QueryAnalysis(
             intent=Intent.GRADUATION_REQ,
@@ -213,7 +214,7 @@ class TestQueryRouterRouting:
             requires_vector=True,
         )
         router.route_and_search("졸업요건", analysis)
-        mock_graph.query_to_search_results.assert_not_called()
+        mock_graph.query_to_search_results.assert_called_once()
 
     def test_schedule_intent_no_student_id_calls_graph(self, mock_chroma, mock_graph):
         """SCHEDULE intent는 student_id 없어도 그래프 탐색 가능."""

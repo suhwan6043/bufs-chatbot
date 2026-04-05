@@ -1,0 +1,55 @@
+{
+  "timestamp": "20260404_201250",
+  "dataset": "C:\\Users\\suhwa\\Desktop\\bufs-chatbot\\data\\eval\\user_eval_dataset_50.jsonl",
+  "generation_model": "qwen/qwen3.5-9b",
+  "judge_model": "gemini-flash",
+  "judge_url": "Gemini API",
+  "embedding": "BAAI/bge-m3",
+  "ragas_metrics": [
+    "faithfulness",
+    "answer_relevancy",
+    "context_precision",
+    "context_recall",
+    "answer_correctness"
+  ],
+  "n_evaluated": 1,
+  "n_skipped": 0,
+  "elapsed_seconds": 27.3,
+  "summary": {
+    "n_evaluated": 1,
+    "n_skipped": 0,
+    "faithfulness": null,
+    "answer_relevancy": null,
+    "context_precision": 1.0,
+    "context_recall": 1.0,
+    "answer_correctness": null,
+    "avg": 1.0
+  },
+  "results": [
+    {
+      "id": "q001",
+      "difficulty": "easy",
+      "question": "2026학년도 1학기 개강일은 언제인가?",
+      "answer": "2026년 3월 2일이다.",
+      "context": "2(월) 개강, 공휴일(삼일절 대체 휴일) / 3(화) 수업시작일",
+      "source": "p.5",
+      "answerable": true,
+      "source_page": 5,
+      "intent": "SCHEDULE",
+      "context_preview": "--- [p.5]\n[2026-1 학사일정]\n- 개강, 공휴일(삼일절 대체 휴일): 2026-03-02",
+      "answer_preview": "2026학년도 1학기 개강일은 2026년 3월 2일입니다.",
+      "faithfulness": -1.0,
+      "answer_relevancy": -1.0,
+      "context_precision": 1.0,
+      "context_recall": 1.0,
+      "answer_correctness": -1.0,
+      "reasons": {
+        "faithfulness": "",
+        "answer_relevancy": "",
+        "context_precision": "컨텍스트에 2026학년도 1학기 개강일이 '2026-03-02'로 명확하게 제시되어 있어 질문에 답하는 데 필요한 모든 정보를 포함하고 있습니다.",
+        "context_recall": "정답의 핵심 정보인 '2026년 3월 2일'이 컨텍스트에 '2026-03-02'로 명확하게 포함되어 있습니다.",
+        "answer_correctness": ""
+      }
+    }
+  ]
+}

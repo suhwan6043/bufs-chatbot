@@ -85,15 +85,15 @@ class QueryRouter:
 
     # ── 원칙 2: 인텐트별 우선 doc_type (공지 노이즈 차단) ──
     _INTENT_DOC_TYPES = {
-        Intent.GRADUATION_REQ:    ["domestic"],
-        Intent.REGISTRATION:      ["domestic"],
-        Intent.SCHEDULE:          ["domestic"],
-        Intent.MAJOR_CHANGE:      ["domestic"],
-        Intent.EARLY_GRADUATION:  ["domestic"],
-        Intent.LEAVE_OF_ABSENCE:  ["domestic"],
-        Intent.COURSE_INFO:       ["domestic", "timetable"],
-        Intent.SCHOLARSHIP:       ["domestic", "scholarship"],
-        Intent.ALTERNATIVE:       ["domestic"],
+        Intent.GRADUATION_REQ:    ["domestic", "faq"],
+        Intent.REGISTRATION:      ["domestic", "faq"],
+        Intent.SCHEDULE:          ["domestic", "faq"],
+        Intent.MAJOR_CHANGE:      ["domestic", "faq"],
+        Intent.EARLY_GRADUATION:  ["domestic", "faq"],
+        Intent.LEAVE_OF_ABSENCE:  ["domestic", "faq"],
+        Intent.COURSE_INFO:       ["domestic", "timetable", "faq"],
+        Intent.SCHOLARSHIP:       ["domestic", "scholarship", "faq"],
+        Intent.ALTERNATIVE:       ["domestic", "faq"],
         Intent.GENERAL:           None,  # 전체 검색
     }
 
@@ -153,6 +153,27 @@ class QueryRouter:
                     candidates.append(c)
                     seen_texts.add(c.text[:100])
 
+        # Phase 2.5: FAQ 최소 보장
+        # preferred_types에 "faq"가 있는데 FAQ 청크가 2개 미만이면 FAQ 전용 추가 검색
+        # 이유: 크롤링된 범용 페이지(수강신청안내 등)가 상위 랭킹을 차지해
+        # FAQ 청크가 reranker에 도달하지 못하는 회귀 현상 방지
+        if preferred_types and "faq" in preferred_types:
+            faq_count = sum(1 for c in candidates if c.metadata.get("doc_type") == "faq")
+            if faq_count < 2:
+                faq_only = self.chroma_store.search(
+                    query=query,
+                    n_results=5,
+                    student_id=analysis.student_id,
+                    doc_type=["faq"],
+                )
+                seen_texts = {c.text[:100] for c in candidates}
+                for c in faq_only:
+                    if c.text and c.text[:100] not in seen_texts:
+                        candidates.append(c)
+                        seen_texts.add(c.text[:100])
+                        if sum(1 for x in candidates if x.metadata.get("doc_type") == "faq") >= 2:
+                            break
+
         reranker = self.reranker
         if reranker and candidates:
             return reranker.rerank(
@@ -176,6 +197,7 @@ class QueryRouter:
             Intent.SCHEDULE, Intent.ALTERNATIVE,
             Intent.REGISTRATION, Intent.EARLY_GRADUATION,
             Intent.SCHOLARSHIP, Intent.LEAVE_OF_ABSENCE,
+            Intent.GRADUATION_REQ, Intent.MAJOR_CHANGE,
         )
 
         if analysis.intent not in no_id_intents and not analysis.student_id:

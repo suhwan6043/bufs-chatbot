@@ -66,13 +66,16 @@ def find_duplicates(db_path: str) -> list:
         count = cur.fetchone()[0]
         logger.info("  [%d chunks] %s", count, sf[-80:])
 
-    # 해당 source_file의 embedding ID 수집
+    # 해당 source_file의 ChromaDB 청크 ID 수집 (embeddings.embedding_id)
+    # embedding_metadata.id는 내부 row id, 실제 chunk id는 embeddings.embedding_id
     placeholders = ",".join("?" * len(duplicate_sources))
     cur.execute(f"""
-        SELECT id FROM embedding_metadata
-        WHERE key = 'source_file' AND string_value IN ({placeholders})
+        SELECT DISTINCT e.embedding_id
+        FROM embeddings e
+        JOIN embedding_metadata em ON e.id = em.id
+        WHERE em.key = 'source_file' AND em.string_value IN ({placeholders})
     """, duplicate_sources)
-    ids = [row[0] for row in cur.fetchall()]
+    ids = [row[0] for row in cur.fetchall() if row[0]]
 
     conn.close()
     return ids

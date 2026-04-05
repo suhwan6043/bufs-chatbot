@@ -57,9 +57,12 @@ class DigitalPDFExtractor:
     def _extract_text(self, pdf_path: str) -> dict:
         """PyMuPDF로 페이지별 텍스트를 추출합니다."""
         doc = fitz.open(pdf_path)
+        # MuPDF annotation 경고 억제 (기능 무관, 로그 오염 방지)
+        fitz.TOOLS.mupdf_warnings(reset=True)
         text_by_page = {}
         for page_num, page in enumerate(doc):
             text_by_page[page_num] = page.get_text("text")
+        fitz.TOOLS.mupdf_warnings(reset=True)
         return text_by_page
 
     def _extract_tables(self, pdf_path: str) -> dict:

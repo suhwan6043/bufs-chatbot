@@ -21,13 +21,13 @@ _DEFAULT_CONTEXT_TOKENS = 1200
 # (graph_weight, vector_weight) — 인텐트에 따라 검색 채널 가중치 조정
 _INTENT_WEIGHTS = {
     Intent.SCHEDULE:         (2.0, 0.5),   # 그래프(학사일정) 강력 우선
-    Intent.ALTERNATIVE:      (2.0, 0.5),
+    Intent.ALTERNATIVE:      (1.5, 1.0),   # FAQ가 핵심 소스 → 벡터 가중치 정상화
     Intent.GRADUATION_REQ:   (1.8, 1.0),
     Intent.REGISTRATION:     (1.5, 1.0),
     Intent.EARLY_GRADUATION: (1.5, 1.0),
     Intent.MAJOR_CHANGE:     (1.5, 1.0),
     Intent.SCHOLARSHIP:      (1.0, 1.2),   # 벡터(크롤링 공지) 우선
-    Intent.LEAVE_OF_ABSENCE: (1.0, 1.2),
+    Intent.LEAVE_OF_ABSENCE: (1.5, 0.8),
     Intent.COURSE_INFO:      (0.8, 1.5),   # 벡터(시간표 청크) 우선
     Intent.GENERAL:          (0.5, 1.5),
 }
@@ -35,11 +35,15 @@ _DEFAULT_WEIGHTS = (1.5, 1.0)
 
 # 인텐트별 컨텍스트 토큰 예산 — 단답형은 작게, 복합형은 크게
 _INTENT_BUDGET = {
-    Intent.SCHEDULE:       400,
+    Intent.SCHEDULE:       700,
     Intent.ALTERNATIVE:    800,
     Intent.GRADUATION_REQ: 1400,
     Intent.REGISTRATION:   1200,
     Intent.COURSE_INFO:    1200,
+    Intent.SCHOLARSHIP:    1000,
+    Intent.LEAVE_OF_ABSENCE: 1000,
+    Intent.EARLY_GRADUATION: 1200,
+    Intent.MAJOR_CHANGE:   1200,
 }
 
 # RRF 상수
@@ -117,6 +121,22 @@ class ContextMerger:
         # 원칙 2: 엔티티 기반 필터 — 단일 토픽 쿼리에서 무관 청크 차단
         all_results = self._filter_by_entity(all_results, entities)
 
+        # 원칙 1: FAQ 청크 최우선 배치
+        # FAQ Q/A는 질문-답변 매칭이 명확해 LLM이 더 정확히 활용 가능.
+        # 학사일정/공지 청크가 앞에 오면 LLM이 날짜·목록에 현혹되어 FAQ 답을 무시하는 회귀 발생.
+        # → FAQ 청크를 맨 앞으로, 나머지는 RRF 순서 유지
+        faq_chunks = [
+            r for r in all_results
+            if r.metadata.get("doc_type") == "faq"
+            or r.metadata.get("node_type") == "FAQ"
+        ]
+        non_faq = [
+            r for r in all_results
+            if r.metadata.get("doc_type") != "faq"
+            and r.metadata.get("node_type") != "FAQ"
+        ]
+        all_results = faq_chunks + non_faq
+
         # 토큰 제한 내에서 컨텍스트 구성
         context_parts = []
         total_chars = 0
@@ -126,7 +146,23 @@ class ContextMerger:
         selected_graph = []
         direct_answer = ""
 
+        # 원칙 1: FAQ direct_answer 우선 선택
+        # FAQ에 정답이 있는데 학사일정 등 다른 노드의 direct_answer가 먼저 선택되어
+        # 틀린 날짜/숫자가 답변되는 회귀 방지. FAQ는 큐레이션된 정답이므로 최우선.
         for result in all_results:
+            is_faq = (
+                result.metadata.get("doc_type") == "faq"
+                or result.metadata.get("node_type") == "FAQ"
+            )
+            if is_faq and result.metadata.get("direct_answer"):
+                direct_answer = result.metadata["direct_answer"]
+                break
+
+        for result in all_results:
+            if not result.text:
+                continue
+
+            # FAQ direct_answer가 없을 때만 다른 소스의 direct_answer 수락
             if not direct_answer and result.metadata.get("direct_answer"):
                 direct_answer = result.metadata["direct_answer"]
 

@@ -120,7 +120,7 @@ class QueryAnalyzer:
             "휴학 기간", "복학 기간", "휴학 방법",
             "휴학 서류", "복학 절차", "휴학신청",
             "복학신청", "휴학연장", "휴학 취소", "입대 휴학",
-            "전과", "전부", "전부(과)", "전학과", "학과 변경", "학과변경",
+            "전부", "전부(과)", "전학과",
             "재입학", "재입학 신청", "재입학 조건",
             "자퇴", "자퇴 신청", "자퇴 방법", "자퇴하고",
             "제적", "중도이탈", "학적 변동", "학적변동",
@@ -318,6 +318,36 @@ class QueryAnalyzer:
         ):
             return Intent.REGISTRATION
 
+        # 학사경고 + 학점/수강신청 → REGISTRATION (SCHEDULE에 빠지지 않도록)
+        if "학사경고" in text and any(kw in text for kw in ("학점", "수강신청", "몇", "줄어")):
+            return Intent.REGISTRATION
+
+        # 대체과목/동일과목 질문 → ALTERNATIVE (REGISTRATION에 빠지지 않도록)
+        if any(kw in text for kw in ("대체과목", "동일과목")):
+            return Intent.ALTERNATIVE
+
+        # 이수구분 변경 → REGISTRATION
+        if "이수구분" in text:
+            return Intent.REGISTRATION
+
+        # 과목명 중복/동일 수강 → REGISTRATION
+        if "과목명" in text and any(kw in text for kw in ("동일", "같은", "중복", "코드", "다르")):
+            return Intent.REGISTRATION
+
+        # 계절학기 질문 → REGISTRATION (SCHEDULE 아님)
+        if "계절학기" in text and not any(kw in text for kw in ("기간", "언제", "일정")):
+            return Intent.REGISTRATION
+
+        # 졸업유보/유예 + 수강/등록금 → REGISTRATION
+        if any(kw in text for kw in ("졸업유보", "학사학위취득유예", "유예")) and any(
+            kw in text for kw in ("수강", "등록금", "학점")
+        ):
+            return Intent.REGISTRATION
+
+        # 증명서/발급 → GENERAL (전용 처리)
+        if any(kw in text for kw in ("증명서", "발급", "재학증명", "성적증명", "휴학증명")):
+            return Intent.GENERAL
+
 
         if (
             any(kw in text for kw in ("전과", "제1·2전공", "제1,2전공", "제2전공"))
@@ -340,6 +370,12 @@ class QueryAnalyzer:
         if any(kw in text for kw in ("방법1", "방법2", "방법3", "이수방법1", "이수방법2", "이수방법3")):
             return Intent.MAJOR_CHANGE
 
+        # ���과(학과 변경) 질문 → MAJOR_CHANGE (LEAVE_OF_ABSENCE와 혼동 방지)
+        if any(kw in text for kw in ("전���", "학과 변경", "학과변경")) and not any(
+            kw in text for kw in ("휴학", "복학", "자퇴", "제적")
+        ):
+            return Intent.MAJOR_CHANGE
+
         scores = {}
         for intent, keywords in self.INTENT_KEYWORDS.items():
             score = sum(1 for kw in keywords if kw in text)
@@ -350,7 +386,7 @@ class QueryAnalyzer:
             return Intent.GENERAL
 
         # 학적변동 관련 키워드는 SCHEDULE의 "기간" 등에 잡히지 않도록 우선 처리
-        _LOA_KW = ("휴학", "복학", "전과", "전부(과)", "재입학", "자퇴", "제적", "학적변동",
+        _LOA_KW = ("휴학", "복학", "전부(과)", "재입학", "자퇴", "제적", "학적변동",
                    "졸업유보", "학사학위취득유예", "학위취득유예", "유예자")
         if any(kw in text for kw in _LOA_KW) and not any(
             kw in text for kw in ("조기졸업", "수강신청", "수업")
