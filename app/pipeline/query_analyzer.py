@@ -20,7 +20,7 @@ from app.graphdb.academic_graph import get_student_group
 
 logger = logging.getLogger(__name__)
 
-_TERMS_YAML = Path(__file__).parent.parent.parent / "config" / "academic_terms.yaml"
+_TERMS_YAML = Path(__file__).parent.parent.parent / "config" / "en_glossary.yaml"
 
 
 class EnTermMapper:
