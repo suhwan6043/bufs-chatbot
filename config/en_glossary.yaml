@@ -140,12 +140,12 @@ terms:
   - ko: 졸업요건
     en: Graduation Requirements
     aliases_ko: [졸업 조건, 졸업기준]
-    aliases_en: [graduation requirements, degree requirements, graduation criteria]
+    aliases_en: [graduation requirements, degree requirements, graduation criteria, graduate, graduation, degree completion]
 
   - ko: 졸업이수학점
     en: Required Credits for Graduation
     aliases_ko: [졸업학점]
-    aliases_en: [graduation credits, credits required to graduate]
+    aliases_en: [graduation credits, credits required to graduate, credits to graduate]
 
   - ko: 졸업인증제
     en: Graduation Certification System
