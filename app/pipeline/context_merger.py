@@ -44,6 +44,7 @@ _INTENT_BUDGET = {
     Intent.LEAVE_OF_ABSENCE: 1000,
     Intent.EARLY_GRADUATION: 1200,
     Intent.MAJOR_CHANGE:   1200,
+    Intent.TRANSCRIPT:     1600,
 }
 
 # RRF 상수
@@ -96,14 +97,30 @@ class ContextMerger:
         question: str = "",
         intent: Optional[Intent] = None,
         entities: Optional[dict] = None,
+        transcript_context: str = "",
     ) -> MergedContext:
         """검색 결과를 통합된 컨텍스트로 병합합니다.
 
         원칙 2: intent에 따라 RRF 가중치와 컨텍스트 예산을 동적 조정합니다.
+        transcript_context가 있으면 합성 SearchResult로 선두 삽입합니다.
         """
+        # 성적표 컨텍스트 주입 (PII 제거 상태)
+        if transcript_context:
+            from app.models import SearchResult as SR
+            transcript_result = SR(
+                text=transcript_context,
+                score=2.0,
+                source="transcript",
+                metadata={"source_type": "transcript"},
+            )
+            graph_results = [transcript_result] + list(graph_results)
+
         # 인텐트별 가중치 + 예산 결정
         gw, vw = _INTENT_WEIGHTS.get(intent, _DEFAULT_WEIGHTS)
         budget = _INTENT_BUDGET.get(intent, _DEFAULT_CONTEXT_TOKENS)
+        # 성적표 컨텍스트가 있으면 예산 확장
+        if transcript_context:
+            budget = max(budget, 2000)
 
         # 그래프 direct_answer 존재 시 벡터 노이즈 억제
         # focused handler(≤3 결과)가 정확한 답을 제공 → 벡터 완전 차단

@@ -18,6 +18,7 @@ class Intent(str, Enum):
     ALTERNATIVE = "ALTERNATIVE"
     SCHOLARSHIP = "SCHOLARSHIP"             # 장학금 신청·자격·유형·금액
     LEAVE_OF_ABSENCE = "LEAVE_OF_ABSENCE"   # 휴학/복학 신청·기간·방법·서류
+    TRANSCRIPT = "TRANSCRIPT"               # 성적표 기반 개인 질문
     GENERAL = "GENERAL"
 
 

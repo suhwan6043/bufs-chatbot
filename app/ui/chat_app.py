@@ -38,6 +38,47 @@ QUICK_FEATURES = [
     {"label": "자주묻는질문", "question": "학사 관련 자주 묻는 질문을 알려줘"},
 ]
 
+# 성적표 업로드 시 기본 개인화 기능
+QUICK_FEATURES_PERSONAL_BASE = [
+    {"label": "🎯 부족학점",   "question": "내 성적 기준으로 뭐가 부족한지 알려줘"},
+    {"label": "🔁 재수강 추천", "question": "재수강할만한 과목 추천해줘"},
+    {"label": "📚 이번 학기",   "question": "이번 학기 내가 듣는 과목 알려줘"},
+    {"label": "🎓 졸업 상태",   "question": "졸업까지 얼마나 남았는지 정리해줘"},
+]
+
+
+def _build_personal_quick_features(transcript) -> list:
+    """
+    성적표 기반 동적 Quick Features 생성.
+
+    원칙 1 (유연한 스키마): 학생의 실제 데이터(복수전공/부족학점/수강중 과목)에 따라
+    버튼 구성이 자동으로 진화. 복수전공 없는 학생에게는 복수전공 버튼 미표시.
+    """
+    features = list(QUICK_FEATURES_PERSONAL_BASE)
+
+    if transcript is None:
+        return features
+
+    p = transcript.profile
+    c = transcript.credits
+
+    # 복수전공 있는 학생만 복수전공 버튼 추가
+    if p.복수전공:
+        features.append({
+            "label": "🎯 복수전공",
+            "question": "복수전공 학점 얼마나 남았어?",
+        })
+
+    # 부족학점 있는 학생만 수강 가능 학점 버튼 추가
+    if c.총_부족학점 > 0:
+        features.append({
+            "label": "📊 수강 가능",
+            "question": "내 평점으로 몇 학점까지 신청 가능해?",
+        })
+
+    # 최대 6개까지 (2열 × 3행)
+    return features[:6]
+
 PORTAL_LINKS = [
     {"icon": "🖥️", "label": "수강신청 사이트 바로가기", "url": "https://sugang.bufs.ac.kr/Login.aspx"},
     {"icon": "📊", "label": "학생포털시스템",            "url": "https://m.bufs.ac.kr/default.aspx?ReturnUrl=%2f"},
@@ -595,6 +636,191 @@ def render_onboarding() -> None:
                 st.rerun()
 
 
+# ── Transcript upload (보안 중심) ─────────────────────
+def _render_transcript_upload() -> None:
+    """사이드바: 성적 사정표 업로드 (개인정보 동의 기반)."""
+    from app.transcript.security import SecureTranscriptStore, PIIRedactor
+
+    st.markdown(
+        '<p style="font-size:0.7rem;font-weight:700;color:#94a3b8;'
+        'text-transform:uppercase;letter-spacing:0.5px;margin:0.2rem 0 0.4rem;">'
+        '성적 사정표</p>',
+        unsafe_allow_html=True,
+    )
+
+    transcript = SecureTranscriptStore.retrieve(st.session_state)
+
+    if transcript:
+        # 등록된 성적표 상태 표시 (이름은 store() 시점에 삭제됨, _masked_name 사용)
+        masked = getattr(transcript, "_masked_name", "등록됨")
+        c = transcript.credits
+        p = transcript.profile
+
+        # 진행률 계산 (0~100%)
+        progress_pct = 0
+        if c.총_졸업기준 > 0:
+            progress_pct = min(100, int((c.총_취득학점 / c.총_졸업기준) * 100))
+
+        # 부족학점 강조 (있으면 경고색, 없으면 녹색)
+        shortage_block = ""
+        if c.총_부족학점 > 0:
+            shortage_block = (
+                f'<div style="font-size:0.72rem;color:#b45309;margin-top:0.3rem;'
+                f'padding:0.2rem 0.4rem;background:#fef3c7;border-radius:4px;">'
+                f'⚠️ 부족 {c.총_부족학점}학점</div>'
+            )
+        else:
+            shortage_block = (
+                f'<div style="font-size:0.72rem;color:#15803d;margin-top:0.3rem;'
+                f'padding:0.2rem 0.4rem;background:#dcfce7;border-radius:4px;">'
+                f'✓ 졸업요건 충족</div>'
+            )
+
+        # 복수전공 정보 (있을 때만)
+        dual_block = ""
+        if p.복수전공:
+            # 복수전공 부족학점 추출
+            dual_shortage = 0
+            for cat in c.categories:
+                if "복수전공" in cat.name or "다전공" in cat.name:
+                    dual_shortage = cat.부족학점
+                    break
+            dual_status = f"{dual_shortage}학점 남음" if dual_shortage > 0 else "충족"
+            dual_block = (
+                f'<div style="font-size:0.7rem;color:#475569;margin-top:0.2rem;">'
+                f'🎯 복수전공: {dual_status}</div>'
+            )
+
+        st.markdown(
+            f'<div style="padding:0.55rem 0.65rem;border-radius:8px;'
+            f'background:#f0fdf4;border:1px solid #bbf7d0;margin-bottom:0.3rem;">'
+            f'<div style="display:flex;align-items:baseline;justify-content:space-between;">'
+            f'<span style="font-size:0.85rem;font-weight:700;color:#166534;">{masked}</span>'
+            f'<span style="font-size:0.72rem;color:#22c55e;">평점 {c.평점평균}</span>'
+            f'</div>'
+            # 진행률 바
+            f'<div style="margin-top:0.35rem;height:6px;background:#dcfce7;border-radius:3px;overflow:hidden;">'
+            f'<div style="height:100%;width:{progress_pct}%;background:linear-gradient(90deg,#22c55e,#16a34a);"></div>'
+            f'</div>'
+            f'<div style="font-size:0.7rem;color:#15803d;margin-top:0.2rem;">'
+            f'{c.총_취득학점} / {c.총_졸업기준}학점 ({progress_pct}%)</div>'
+            f'{shortage_block}'
+            f'{dual_block}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("🔄 갱신", key="refresh_transcript", use_container_width=True):
+                SecureTranscriptStore.destroy(st.session_state)
+                st.rerun()
+        with c2:
+            if st.button("🗑️ 삭제", key="delete_transcript", use_container_width=True):
+                SecureTranscriptStore.destroy(st.session_state)
+                st.rerun()
+
+        remaining = SecureTranscriptStore.remaining_seconds(st.session_state)
+        st.caption(f"⏱️ {remaining // 60}분 후 자동 삭제")
+        return
+
+    # ── 업로드 전 개인정보 동의 ──
+    st.markdown(
+        '<div style="font-size:0.72rem;color:#64748b;line-height:1.5;'
+        'padding:0.45rem;background:#fef3c7;border-radius:6px;border:1px solid #fbbf24;">'
+        '⚠️ <b>개인정보 처리 안내</b><br>'
+        '• 세션에서만 사용, 서버에 저장하지 않습니다<br>'
+        '• 30분 후 자동 삭제됩니다<br>'
+        '• AI 답변에 이름/학번이 노출되지 않습니다<br>'
+        '• 언제든 삭제 버튼으로 즉시 삭제할 수 있습니다</div>',
+        unsafe_allow_html=True,
+    )
+
+    consent = st.checkbox(
+        "위 내용을 확인하였으며, 성적표 활용에 동의합니다",
+        key="transcript_consent_cb",
+    )
+
+    if consent:
+        # 동의 상태를 SecureTranscriptStore에 기록
+        if not SecureTranscriptStore.has_consent(st.session_state):
+            session_id = st.session_state.get("session_id", "")
+            SecureTranscriptStore.grant_consent(st.session_state, session_id)
+
+        uploaded = st.file_uploader(
+            "학업성적사정표 업로드",
+            type=["xls"],
+            key="transcript_upload",
+            label_visibility="collapsed",
+            help="학생포털에서 다운로드한 .xls 파일",
+        )
+        if uploaded:
+            _handle_transcript_upload(uploaded)
+    else:
+        # 동의 해제 시 데이터 즉시 파기
+        if SecureTranscriptStore.has_consent(st.session_state):
+            SecureTranscriptStore.revoke_consent(st.session_state)
+            st.rerun()
+
+
+def _handle_transcript_upload(uploaded_file) -> None:
+    """성적표 보안 업로드 핸들러."""
+    from app.transcript import TranscriptParser, TranscriptVersionManager
+    from app.transcript.security import (
+        SecureTranscriptStore,
+        UploadValidator,
+        PIIRedactor,
+        audit_log,
+    )
+
+    file_bytes = uploaded_file.read()
+    session_id = st.session_state.get("session_id", "")
+
+    # 1) 파일 보안 검증 (원본 파일명으로 경로 순회 차단)
+    ok, err = UploadValidator.validate(file_bytes, uploaded_file.name)
+    safe_filename = UploadValidator.sanitize_filename(uploaded_file.name)
+    if not ok:
+        audit_log("UPLOAD_REJECTED", session_id, err)
+        st.error(f"파일 검증 실패: {err}")
+        return
+
+    # 2) 파싱 (성명은 여기서만 사용 후 store()에서 삭제됨)
+    try:
+        parser = TranscriptParser()
+        profile = parser.parse(file_bytes, safe_filename)
+    except Exception as e:
+        audit_log("PARSE_FAILED", session_id, type(e).__name__)
+        st.error("성적표 파싱 실패. 올바른 파일인지 확인해주세요.")
+        logger.error("성적표 파싱 실패: %s", e)
+        return
+    finally:
+        del file_bytes  # 원본 바이트 즉시 폐기
+
+    # 3) 마스킹된 이름 먼저 추출 (store()에서 원본 삭제되기 전에)
+    masked = PIIRedactor.mask_name(profile.profile.성명)
+
+    # 4) 버전 비교
+    old = SecureTranscriptStore.retrieve(st.session_state)
+    if old:
+        diff = TranscriptVersionManager.detect_diff(old, profile)
+        if diff:
+            st.info(f"변경사항 {len(diff)}건 감지")
+
+    # 5) 보안 저장 (⚠️ store()에서 성명/학번 원본 즉시 삭제됨)
+    SecureTranscriptStore.store(st.session_state, profile, session_id)
+    TranscriptVersionManager.store_snapshot(profile, st.session_state)
+
+    # 6) user_profile 자동 갱신 (입학연도만 사용, 학번 미포함)
+    st.session_state.user_profile = {
+        "student_id": profile.profile.입학연도,
+        "department": profile.profile.전공 or profile.profile.학부과,
+        "student_type": profile.profile.student_type or "내국인",
+    }
+
+    st.success(f"✅ {masked}님의 성적표 등록 완료 (30분 후 자동 삭제)")
+    st.rerun()
+
+
 # ── Profile sidebar card ────────────────────────────
 def _render_profile_sidebar() -> None:
     """사이드바 내 현재 사용자 프로필 표시 + 수정 버튼."""
@@ -669,14 +895,24 @@ def render_sidebar() -> bool:
 
         st.divider()
 
-        # ── 빠른 기능 ──────────────────────────────
+        # ── 성적 사정표 ──────────────────────────────
+        _render_transcript_upload()
+
+        st.divider()
+
+        # ── 빠른 기능 (성적표 있으면 개인화 버튼으로 전환) ──
+        from app.transcript.security import SecureTranscriptStore
+        _tx = SecureTranscriptStore.retrieve(st.session_state)
+        _features = _build_personal_quick_features(_tx) if _tx else QUICK_FEATURES
+        _label = "맞춤 기능" if _tx else "빠른 기능"
+
         st.markdown(
-            '<p style="font-size:0.7rem;font-weight:700;color:#94a3b8;'
-            'text-transform:uppercase;letter-spacing:0.5px;margin:0.2rem 0 0.5rem;">빠른 기능</p>',
+            f'<p style="font-size:0.7rem;font-weight:700;color:#94a3b8;'
+            f'text-transform:uppercase;letter-spacing:0.5px;margin:0.2rem 0 0.5rem;">{_label}</p>',
             unsafe_allow_html=True,
         )
         c1, c2 = st.columns(2)
-        for i, feat in enumerate(QUICK_FEATURES):
+        for i, feat in enumerate(_features):
             with (c1 if i % 2 == 0 else c2):
                 if st.button(feat["label"], key=f"qf_{i}", use_container_width=True):
                     st.session_state.pending_question = feat["question"]
@@ -728,13 +964,29 @@ def render_sidebar() -> bool:
 
 # ── Chat header ────────────────────────────────────
 def render_chat_header():
+    """Chat 헤더. 성적표 업로드 상태에 따라 배지가 전환됨."""
+    from app.transcript.security import SecureTranscriptStore
+    transcript = SecureTranscriptStore.retrieve(st.session_state)
+
+    if transcript:
+        badge_html = (
+            '<div class="chat-hdr-badge" style="background:#ecfdf5;color:#047857;'
+            'border:1px solid #a7f3d0;">'
+            '📋 성적표 연동 중 — 개인 맞춤 답변 활성화</div>'
+        )
+    else:
+        badge_html = (
+            '<div class="chat-hdr-badge">'
+            '📢 학사 정보는 학교 포털에서도 확인하세요</div>'
+        )
+
     st.markdown(
         '<div class="chat-hdr">'
         '  <div>'
         '    <h2>캠챗 &mdash; 부산외대 학사챗봇</h2>'
         '    <p>수강신청 &middot; 성적 &middot; 학사일정 &middot; 학사행정 지원</p>'
         '  </div>'
-        '  <div class="chat-hdr-badge">📢 학사 정보는 학교 포털에서도 확인하세요</div>'
+        f'  {badge_html}'
         '</div>',
         unsafe_allow_html=True,
     )
@@ -742,17 +994,60 @@ def render_chat_header():
 
 # ── Welcome screen ─────────────────────────────────
 def render_welcome_screen():
-    st.markdown(
-        '<div class="wc-wrap">'
-        '  <div class="wc-icon">🎓</div>'
-        '  <div class="wc-title">캠챗에 오신 것을 환영합니다</div>'
-        '  <div class="wc-sub">부산외국어대학교 학사 안내 AI입니다.<br>'
-        '  졸업요건, 수강신청, 학사일정 등 궁금한 것을 물어보세요.</div>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
+    """Welcome 화면. 성적표 업로드 여부에 따라 개인화 메시지/버튼 표시."""
+    from app.transcript.security import SecureTranscriptStore
+    transcript = SecureTranscriptStore.retrieve(st.session_state)
+
+    if transcript:
+        # 성적표 있음 — 개인화 인사 (PII 없음)
+        c = transcript.credits
+        p = transcript.profile
+
+        # 상태 요약 문구 (PII 없이 학점 수치만)
+        if c.총_부족학점 > 0:
+            status_msg = (
+                f'졸업까지 <b style="color:#b45309;">{c.총_부족학점}학점</b>이 남아 있어요. '
+                f'어떤 정보가 필요하신가요?'
+            )
+        else:
+            status_msg = (
+                f'<b style="color:#15803d;">졸업요건을 충족하셨어요!</b> '
+                f'수강신청·학사일정 등 궁금한 것을 물어보세요.'
+            )
+
+        major_display = p.전공 or p.학부과 or "재학생"
+
+        st.markdown(
+            f'<div class="wc-wrap">'
+            f'  <div class="wc-icon">🎓</div>'
+            f'  <div class="wc-title">성적표 연동 완료</div>'
+            f'  <div class="wc-sub">'
+            f'    {major_display} {p.입학연도}학번 · 평점 {c.평점평균}<br>'
+            f'    {status_msg}'
+            f'  </div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        features = _build_personal_quick_features(transcript)
+        hint_text = "성적표 기반 맞춤 질문을 바로 시작하세요"
+    else:
+        # 성적표 없음 — 기본 인사 + 업로드 유도
+        st.markdown(
+            '<div class="wc-wrap">'
+            '  <div class="wc-icon">🎓</div>'
+            '  <div class="wc-title">캠챗에 오신 것을 환영합니다</div>'
+            '  <div class="wc-sub">부산외국어대학교 학사 안내 AI입니다.<br>'
+            '  졸업요건, 수강신청, 학사일정 등 궁금한 것을 물어보세요.<br>'
+            '  <span style="color:#2563eb;font-weight:600;">💡 왼쪽 사이드바에서 성적표를 업로드하면 맞춤 답변을 받을 수 있어요.</span>'
+            '  </div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        features = QUICK_FEATURES
+        hint_text = "위 버튼을 누르거나 아래 입력창에 직접 질문하세요"
+
     c1, c2 = st.columns(2)
-    for i, feat in enumerate(QUICK_FEATURES):
+    for i, feat in enumerate(features):
         with (c1 if i % 2 == 0 else c2):
             if st.button(
                 f"{feat['label']}\n{feat['question']}",
@@ -762,7 +1057,7 @@ def render_welcome_screen():
                 st.session_state.pending_question = feat["question"]
                 st.rerun()
     st.markdown(
-        '<div class="wc-hint">위 버튼을 누르거나 아래 입력창에 직접 질문하세요</div>',
+        f'<div class="wc-hint">{hint_text}</div>',
         unsafe_allow_html=True,
     )
 
@@ -1110,6 +1405,63 @@ def _render_source_urls(source_urls: list) -> None:
         st.caption("📌 **관련 공지**\n" + "\n".join(lines))
 
 
+def _enrich_analysis(question: str, analysis, router) -> tuple:
+    """프로필 폴백 + 성적표 컨텍스트 생성 (공통 헬퍼).
+
+    Returns:
+        (analysis, transcript_context, student_context)
+    """
+    # ── 사용자 프로필 폴백 주입 ──
+    _profile = st.session_state.get("user_profile") or {}
+    if analysis.student_id is None and _profile.get("student_id"):
+        analysis.student_id = _profile["student_id"]
+        if "student_id" in analysis.missing_info:
+            analysis.missing_info.remove("student_id")
+    if not analysis.entities.get("department") and _profile.get("department"):
+        analysis.entities["department"] = _profile["department"]
+    if _profile.get("student_type") and _profile["student_type"] != "내국인":
+        analysis.student_type = _profile["student_type"]
+
+    # ── 성적표 기반 컨텍스트 (보안: PII 제거, lazy 계산) ──
+    from app.transcript.security import SecureTranscriptStore
+    transcript = SecureTranscriptStore.retrieve(st.session_state)
+    transcript_context = ""
+    student_context = ""
+
+    if transcript:
+        from app.transcript.analyzer import TranscriptAnalyzer
+        from app.models import Intent
+
+        tp = transcript.profile
+        if analysis.student_id is None and tp.입학연도:
+            analysis.student_id = tp.입학연도
+        if not analysis.entities.get("department") and tp.전공:
+            analysis.entities["department"] = tp.전공
+        analysis.entities["has_transcript"] = True
+
+        _TX_INTENTS = {Intent.GRADUATION_REQ, Intent.REGISTRATION, Intent.TRANSCRIPT}
+        _TX_KW = ("부족", "재수강", "평점", "이번 학기", "수강 가능", "몇 학점", "내 성적", "내 학점", "졸업")
+
+        if analysis.intent in _TX_INTENTS or any(kw in question for kw in _TX_KW):
+            tx = TranscriptAnalyzer(transcript, router.academic_graph)
+
+            if "부족" in question or "졸업" in question or analysis.intent == Intent.GRADUATION_REQ:
+                transcript_context = tx.format_gap_context_safe()
+            elif "재수강" in question or "평점 올" in question:
+                transcript_context = tx.format_courses_context_safe(tx.retake_candidates())
+            elif "이번 학기" in question or "현재 수강" in question:
+                transcript_context = tx.format_courses_context_safe(tx.current_semester_courses())
+            elif "수강 가능" in question or "몇 학점" in question:
+                reg = tx.registration_limit()
+                transcript_context = f"[수강신청 학점 한도]\n- 기본 최대: {reg.get('기본_최대학점', '미확인')}\n- 현재 평점: {reg.get('현재_평점', 0)}"
+            else:
+                transcript_context = tx.format_profile_summary_safe()
+
+            student_context = tx.format_profile_summary_safe()
+
+    return analysis, transcript_context, student_context
+
+
 async def generate_response(question: str) -> str:
     analyzer  = st.session_state.analyzer
     router    = st.session_state.router
@@ -1117,7 +1469,9 @@ async def generate_response(question: str) -> str:
     generator = st.session_state.generator
     validator = st.session_state.validator
 
-    analysis       = analyzer.analyze(question)
+    analysis = analyzer.analyze(question)
+    analysis, transcript_context, student_context = _enrich_analysis(question, analysis, router)
+
     search_results = router.route_and_search(question, analysis)
     merged         = merger.merge(
         vector_results=search_results["vector_results"],
@@ -1125,6 +1479,7 @@ async def generate_response(question: str) -> str:
         question=question,
         intent=analysis.intent,
         entities=analysis.entities,
+        transcript_context=transcript_context,
     )
 
     if not merged.formatted_context.strip():
@@ -1145,6 +1500,7 @@ async def generate_response(question: str) -> str:
         question_focus=analysis.entities.get("question_focus"),
         lang=analysis.lang,
         matched_terms=analysis.matched_terms,
+        student_context=student_context,
     )
 
     all_results = search_results["vector_results"] + search_results["graph_results"]
@@ -1189,18 +1545,7 @@ async def generate_response_stream(question: str, placeholder) -> str:
     validator = st.session_state.validator
 
     analysis = analyzer.analyze(question)
-
-    # ── 사용자 프로필 폴백 주입 ─────────────────────────────────────
-    # 질문에 학번·학과·학생유형이 명시되지 않은 경우 프로필 값으로 보완
-    _profile = st.session_state.get("user_profile") or {}
-    if analysis.student_id is None and _profile.get("student_id"):
-        analysis.student_id = _profile["student_id"]
-        if "student_id" in analysis.missing_info:
-            analysis.missing_info.remove("student_id")
-    if not analysis.entities.get("department") and _profile.get("department"):
-        analysis.entities["department"] = _profile["department"]
-    if _profile.get("student_type") and _profile["student_type"] != "내국인":
-        analysis.student_type = _profile["student_type"]
+    analysis, transcript_context, student_context = _enrich_analysis(question, analysis, router)
 
     search_results = router.route_and_search(question, analysis)
     merged         = merger.merge(
@@ -1209,14 +1554,16 @@ async def generate_response_stream(question: str, placeholder) -> str:
         question=question,
         intent=analysis.intent,
         entities=analysis.entities,
+        transcript_context=transcript_context,
     )
 
     def _log(answer: str) -> None:
         """Q&A 쌍을 로그 파일에 기록 (실패해도 메인 기능에 영향 없음)"""
+        from app.transcript.security import PIIRedactor
         try:
             st.session_state.chat_logger.log(
-                question=question,
-                answer=answer,
+                question=PIIRedactor.redact_for_log(question),  # PII 산화
+                answer=PIIRedactor.redact_for_log(answer),  # PII 산화
                 session_id=st.session_state.get("session_id", ""),
                 intent=analysis.intent.name if analysis.intent else "",
                 student_id=analysis.student_id,
@@ -1249,6 +1596,7 @@ async def generate_response_stream(question: str, placeholder) -> str:
         question_focus=analysis.entities.get("question_focus"),
         lang=analysis.lang,
         matched_terms=analysis.matched_terms,
+        student_context=student_context,
     ):
         if token == "\x00CLEAR\x00":
             full_answer = ""

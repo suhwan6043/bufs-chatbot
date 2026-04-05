@@ -181,6 +181,11 @@ class QueryAnalyzer:
             "국가장학금", "외부장학금", "민간장학금",
             "성적우수장학금", "생활비지원", "한국장학재단",
         ],
+        Intent.TRANSCRIPT: [
+            "내 성적", "내 학점", "내 평점", "성적표",
+            "부족학점", "뭐가 부족", "재수강 추천",
+            "수강 가능 학점", "복수전공 현황",
+        ],
         Intent.LEAVE_OF_ABSENCE: [
             "휴학", "복학", "휴학 신청", "복학 신청",
             "일반휴학", "군입대휴학", "군입대 휴학",
@@ -246,6 +251,7 @@ class QueryAnalyzer:
             Intent.ALTERNATIVE, Intent.SCHEDULE,
             Intent.COURSE_INFO, Intent.MAJOR_CHANGE, Intent.REGISTRATION,
             Intent.SCHOLARSHIP, Intent.LEAVE_OF_ABSENCE,
+            Intent.TRANSCRIPT,
         )
         requires_vector = intent not in (Intent.SCHEDULE, Intent.ALTERNATIVE)
 
@@ -511,7 +517,7 @@ class QueryAnalyzer:
             Intent.ALTERNATIVE, Intent.EARLY_GRADUATION, Intent.GRADUATION_REQ,
             Intent.REGISTRATION, Intent.SCHEDULE,
             Intent.MAJOR_CHANGE, Intent.COURSE_INFO, Intent.SCHOLARSHIP,
-            Intent.LEAVE_OF_ABSENCE,
+            Intent.LEAVE_OF_ABSENCE, Intent.TRANSCRIPT,
         ]
         max_score = max(scores.values())
         top = [i for i, s in scores.items() if s == max_score]
