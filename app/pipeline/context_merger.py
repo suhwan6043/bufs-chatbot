@@ -138,21 +138,39 @@ class ContextMerger:
         # 원칙 2: 엔티티 기반 필터 — 단일 토픽 쿼리에서 무관 청크 차단
         all_results = self._filter_by_entity(all_results, entities)
 
-        # 원칙 1: FAQ 청크 최우선 배치
-        # FAQ Q/A는 질문-답변 매칭이 명확해 LLM이 더 정확히 활용 가능.
-        # 학사일정/공지 청크가 앞에 오면 LLM이 날짜·목록에 현혹되어 FAQ 답을 무시하는 회귀 발생.
-        # → FAQ 청크를 맨 앞으로, 나머지는 RRF 순서 유지
-        faq_chunks = [
-            r for r in all_results
-            if r.metadata.get("doc_type") == "faq"
-            or r.metadata.get("node_type") == "FAQ"
-        ]
-        non_faq = [
-            r for r in all_results
-            if r.metadata.get("doc_type") != "faq"
-            and r.metadata.get("node_type") != "FAQ"
-        ]
-        all_results = faq_chunks + non_faq
+        # 원칙 1: FAQ 청크 조건부 최우선 배치
+        # FAQ Q/A는 질문-답변 매칭이 명확해 LLM이 정확히 활용 가능 → 관련성이 확인된 FAQ는 맨 앞.
+        # 그러나 doc_type="faq"만 보고 무조건 끌어올리면 "제2전공+교직" 같은 교차 질문에서
+        # 공통 어휘("전공")만 걸린 무관한 FAQ가 컨텍스트 최상단에 박혀 LLM이 오답을 확신하는 회귀 발생.
+        # → 관련성 신호(direct_answer 또는 질문 핵심 토큰 매칭)가 있는 FAQ만 최상단으로,
+        #    나머지는 RRF 순서를 그대로 따라간다.
+        if all_results:
+            from app.pipeline.ko_tokenizer import stems, expand_tokens, FAQ_STOPWORDS
+            q_key = expand_tokens(stems(question or ""), FAQ_STOPWORDS)
+
+            def _faq_is_relevant(r: SearchResult) -> bool:
+                # direct_answer가 부여된 FAQ는 그래프 단에서 강한 매칭으로 판정된 것 → 신뢰
+                if r.metadata.get("direct_answer"):
+                    return True
+                if not q_key:
+                    return True  # 질문이 전부 범용어면 기존처럼 FAQ 우선
+                hay_key = expand_tokens(stems(r.text or ""), FAQ_STOPWORDS)
+                return bool(q_key & hay_key)
+
+            relevant_faq, stale_faq, non_faq = [], [], []
+            for r in all_results:
+                is_faq = (
+                    r.metadata.get("doc_type") == "faq"
+                    or r.metadata.get("node_type") == "FAQ"
+                )
+                if not is_faq:
+                    non_faq.append(r)
+                elif _faq_is_relevant(r):
+                    relevant_faq.append(r)
+                else:
+                    stale_faq.append(r)
+            # 관련 FAQ를 최상단으로, 무관 FAQ는 non-FAQ 뒤로 밀어 노이즈 억제
+            all_results = relevant_faq + non_faq + stale_faq
 
         # 토큰 제한 내에서 컨텍스트 구성
         context_parts = []
@@ -311,6 +329,16 @@ class ContextMerger:
                 return f"로그인은 {m.group(1).strip()} 오픈됩니다."
 
         return ""
+
+    @staticmethod
+    def _extract_core_tokens(question: str) -> list[str]:
+        """질문에서 조사 제거 + stopword 필터한 어근 토큰. FAQ 관련성 판정용.
+
+        공용 ko_tokenizer를 사용해 academic_graph.search_faq와 동일한 기준으로
+        매칭 여부를 판정한다 → 두 레이어의 결과가 엇갈리지 않는다.
+        """
+        from app.pipeline.ko_tokenizer import core_tokens, FAQ_STOPWORDS
+        return core_tokens(question, FAQ_STOPWORDS)
 
     @staticmethod
     def _filter_by_entity(

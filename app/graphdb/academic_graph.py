@@ -578,16 +578,28 @@ class AcademicGraph:
         원칙 2(동적 커뮤니티 선택): FAQ 노드만 대상으로 O(M) 스캔,
         다른 노드 타입을 건드리지 않음.
 
-        Returns: direct_answer=True 플래그가 부착된 SearchResult 리스트
+        매칭 규칙(오매칭 방지):
+        - ko_tokenizer.stems() 로 조사·어미를 제거한 어근 토큰만 사용.
+        - FAQ_STOPWORDS(전공·신청·가능·방법 등)를 제외한 "핵심 토큰"이 1개 이상
+          실제로 FAQ 텍스트(어근 기준)에 매칭돼야 후보가 된다.
+        - 질문이 전부 stopword(예: "신청 방법 어떻게 되나요?")면 기존처럼 stem 토큰 전체를 사용.
+
+        Returns: direct_answer 플래그가 부착된 SearchResult 리스트
         """
         if not question:
             return []
 
-        # 질문 토큰화 (2글자 이상 한글/영문 단어)
-        import re as _re
-        tokens = [t for t in _re.findall(r"[가-힣A-Za-z]{2,}", question) if len(t) >= 2]
-        if not tokens:
+        from app.pipeline.ko_tokenizer import stems, expand_tokens, FAQ_STOPWORDS
+
+        q_stems = stems(question)
+        if not q_stems:
             return []
+
+        # 질문 토큰을 어근 확장(복합명사 → bigram) + stopword 제거해 매칭 key로
+        q_key = expand_tokens(q_stems, FAQ_STOPWORDS)
+        # 전부 stopword면 stopword 유지하되 확장만 적용
+        if not q_key:
+            q_key = expand_tokens(q_stems, frozenset())
 
         scored: list[tuple[float, str, dict]] = []
         for nid in self._type_index.get("FAQ", []):
@@ -598,28 +610,30 @@ class AcademicGraph:
             if category and data.get("카테고리") != category:
                 continue
             if data.get("is_category_root"):
-                # 카테고리 루트 노드는 검색 대상에서 제외
                 continue
             q_text = data.get("구분", "") or ""
             a_text = data.get("설명", "") or ""
-            haystack = q_text + " " + a_text
-            # 토큰 매칭 개수 + 질문 매칭 가중치
-            match_q = sum(1 for t in tokens if t in q_text)
-            match_a = sum(1 for t in tokens if t in a_text)
+            # FAQ 텍스트도 동일 방식으로 확장 — 양쪽 set 교집합 기반 매칭
+            q_hay_key = expand_tokens(stems(q_text), FAQ_STOPWORDS)
+            a_hay_key = expand_tokens(stems(a_text), FAQ_STOPWORDS)
+
+            match_q = len(q_key & q_hay_key)
+            match_a = len(q_key & a_hay_key)
+
+            if match_q == 0 and match_a == 0:
+                continue
+
             score = match_q * 2.0 + match_a * 1.0
             if score > 0:
                 scored.append((score, nid, data))
 
         scored.sort(key=lambda x: x[0], reverse=True)
 
-        # 의미적 매칭 강도 판정 기준
-        # - 상위 FAQ가 질문 토큰과 충분히 일치할 때만 direct_answer 부여 (오남용 방지)
-        # - 매칭 점수/최대가능 점수 비율이 50% 이상이면 강한 매칭으로 간주
-        # - 단문 질문(토큰 ≤3)은 낮은 절대 점수라도 통과 허용
+        # direct_answer 임계값 — 확장된 매칭 key 크기 기준
         top_score = scored[0][0] if scored else 0.0
-        max_possible = len(tokens) * 2.0 + len(tokens) * 1.0  # q_match*2 + a_match*1 (이상적)
-        if len(tokens) <= 3:
-            strong_match_threshold = 2.0  # 단문: 질문 토큰 1개+답변 1개 매칭이면 OK
+        max_possible = max(len(q_key), 1) * 2.0 + max(len(q_key), 1) * 1.0
+        if len(q_key) <= 2:
+            strong_match_threshold = 2.0
         else:
             strong_match_threshold = max(3.0, max_possible * 0.4)
 
@@ -800,11 +814,12 @@ class AcademicGraph:
         results = []
 
         # 원칙 2: config 기반 커뮤니티 선택 (fallback: 빈 리스트 → 하드 분기만 동작)
+        # question을 함께 넘겨서 keyword_boosts가 교차 토픽(예: MAJOR_CHANGE + "교직")을 보정하도록 한다.
         try:
             from app.pipeline.community_selector import get_default_selector
             selector = get_default_selector()
             allowed_node_types = set(selector.get_node_types(
-                _intent_from_string(intent), entities,
+                _intent_from_string(intent), entities, question=question,
             )) if selector.is_loaded else None
         except Exception as e:
             logger.debug("CommunitySelector 사용 실패, 하드 분기로 동작: %s", e)

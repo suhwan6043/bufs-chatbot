@@ -1,5 +1,5 @@
 {
-  "_comment": "BUFS 그래프 커뮤니티 — 원칙 2: 동적 커뮤니티 선택으로 비용·지연 최적화. Intent별 필요한 노드 타입 군집만 선별 검색.",
+  "_comment": "BUFS 그래프 커뮤니티 — 원칙 2: 동적 커뮤니티 선택으로 비용·지연 최적화. Intent별 필요한 노드 타입 군집만 선별 검색. keyword_boosts는 쿼리 키워드 기반 런타임 커뮤니티 확장으로, Intent 분류가 잡아내지 못한 교차 토픽을 보정한다.",
   "communities": {
     "graduation": {
       "node_types": ["졸업요건", "학번그룹", "학생유형", "조건", "조기졸업"],
@@ -41,5 +41,24 @@
     "LEAVE_OF_ABSENCE":  ["student_status", "faq", "notices"],
     "SCHOLARSHIP":       ["academic_support", "faq", "notices"],
     "GENERAL":           ["faq", "notices", "academic_support"]
+  },
+  "_keyword_boosts_comment": "질문에 아래 키워드가 포함되면 런타임에 해당 커뮤니티를 추가한다. Intent 분류가 잘못되었거나 한 질문이 여러 토픽에 걸쳐 있을 때의 보정 장치. 키는 정규식이 아닌 단순 부분 문자열로 매칭한다.",
+  "keyword_boosts": {
+    "교직": ["academic_support"],
+    "교원자격": ["academic_support"],
+    "교원자격증": ["academic_support"],
+    "교직과정": ["academic_support"],
+    "교직이수": ["academic_support"],
+    "장학": ["academic_support"],
+    "학비지원": ["academic_support"],
+    "등록금": ["academic_support"],
+    "환불": ["academic_support"],
+    "반환": ["academic_support"],
+    "자유학기": ["student_status"],
+    "7+1": ["student_status"],
+    "전자출결": ["academic_support"],
+    "출결": ["academic_support"],
+    "성적처리": ["academic_support"],
+    "학사경고": ["academic_support"]
   }
 }

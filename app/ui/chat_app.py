@@ -25,6 +25,24 @@ from app.contacts import get_dept_searcher
 
 logger = logging.getLogger(__name__)
 
+# ── Persistent event loop ─────────────────────────
+# asyncio.run()을 매 호출마다 쓰면 Python 3.12에서 Runner.close() →
+# shutdown_default_executor()가 새 스레드를 spawn하는데, Streamlit의
+# StopException 전파 중에는 스레드 생성이 실패(RuntimeError: can't create
+# new thread at interpreter shutdown)한다. 루프 1개를 캐시·비폐쇄 유지해
+# 해당 경로를 회피한다.
+_event_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _run_async(coro):
+    """Streamlit 스크립트 스레드에서 영속 이벤트 루프로 coroutine 실행."""
+    global _event_loop
+    if _event_loop is None or _event_loop.is_closed():
+        _event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_event_loop)
+    return _event_loop.run_until_complete(coro)
+
+
 # ── Brand ──────────────────────────────────────────
 APP_NAME    = "캠챗"
 APP_SUBTITLE = "부산외대 학사 도우미"
@@ -942,7 +960,7 @@ def render_sidebar() -> bool:
         async def _chk():
             return await st.session_state.generator.health_check()
 
-        if not asyncio.run(_chk()):
+        if not _run_async(_chk()):
             st.markdown(
                 '<div style="margin-top:0.6rem;padding:0.5rem 0.6rem;border-radius:7px;'
                 'background:#fef3c7;border:1px solid #fcd34d;font-size:0.78rem;color:#92400e;">'
@@ -1684,7 +1702,7 @@ def main():
                 st.markdown(prompt)
             with st.chat_message("assistant", avatar="🎓"):
                 placeholder = st.empty()
-                answer, source_urls, results = asyncio.run(
+                answer, source_urls, results = _run_async(
                     generate_response_stream(prompt, placeholder)
                 )
                 if source_urls:

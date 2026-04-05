@@ -37,6 +37,7 @@ class CommunitySelector:
         self.config_path = Path(config_path or _DEFAULT_CONFIG_PATH)
         self._communities: dict[str, dict] = {}
         self._intent_routing: dict[str, list[str]] = {}
+        self._keyword_boosts: dict[str, list[str]] = {}
         self._loaded = False
         self.load()
 
@@ -52,10 +53,11 @@ class CommunitySelector:
         with self._lock:
             self._communities = data.get("communities", {})
             self._intent_routing = data.get("intent_routing", {})
+            self._keyword_boosts = data.get("keyword_boosts", {})
             self._loaded = True
         logger.info(
-            "커뮤니티 설정 로드: %d 커뮤니티 / %d Intent 매핑",
-            len(self._communities), len(self._intent_routing),
+            "커뮤니티 설정 로드: %d 커뮤니티 / %d Intent 매핑 / %d 키워드 부스트",
+            len(self._communities), len(self._intent_routing), len(self._keyword_boosts),
         )
         return True
 
@@ -74,13 +76,18 @@ class CommunitySelector:
         key = intent.value if hasattr(intent, "value") else str(intent)
         return list(self._intent_routing.get(key, []))
 
-    def get_node_types(self, intent: Intent, entities: Optional[dict] = None) -> list[str]:
+    def get_node_types(
+        self,
+        intent: Intent,
+        entities: Optional[dict] = None,
+        question: Optional[str] = None,
+    ) -> list[str]:
         """
-        Intent + entities를 기반으로 검색할 노드 타입 리스트를 반환.
+        Intent + entities + question 키워드를 기반으로 검색할 노드 타입 리스트를 반환.
 
-        원칙 2: 엔티티 보정으로 실제로 필요한 커뮤니티만 선별
-        - department 엔티티 → curriculum 강제 포함
-        - student_id가 있으면 graduation 포함
+        원칙 1: keyword_boosts가 config에서 관리돼 코드 변경 없이 확장 가능.
+        원칙 2: Intent 분류가 잡아내지 못한 교차 토픽(예: MAJOR_CHANGE에 '교직' 섞인 질문)을
+                런타임 커뮤니티 병합으로 보정 — 무차별 확장이 아닌 키워드 히트 시에만 동작.
         """
         if not self._loaded:
             return []
@@ -94,6 +101,15 @@ class CommunitySelector:
             if entities.get("scholarship_type") and "academic_support" not in communities:
                 communities.append("academic_support")
 
+        # 원칙 2: 질문 키워드 기반 런타임 커뮤니티 부스트
+        if question and self._keyword_boosts:
+            q = question.lower()
+            for keyword, boost_comms in self._keyword_boosts.items():
+                if keyword.lower() in q:
+                    for comm_name in boost_comms:
+                        if comm_name not in communities:
+                            communities.append(comm_name)
+
         # 커뮤니티 → 노드 타입 flatten (중복 제거, 순서 보존)
         seen: set[str] = set()
         node_types: list[str] = []
@@ -104,6 +120,13 @@ class CommunitySelector:
                     seen.add(nt)
                     node_types.append(nt)
         return node_types
+
+    def all_registered_node_types(self) -> set[str]:
+        """정합성 테스트·디버그용 — communities에 등록된 모든 노드 타입 집합."""
+        types: set[str] = set()
+        for comm in self._communities.values():
+            types.update(comm.get("node_types", []))
+        return types
 
 
 # 싱글톤 인스턴스 (지연 초기화)
