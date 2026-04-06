@@ -35,11 +35,24 @@ _event_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _run_async(coro):
-    """Streamlit 스크립트 스레드에서 영속 이벤트 루프로 coroutine 실행."""
+    """Streamlit 스크립트 스레드에서 coroutine 실행.
+
+    기본 경로: 캐시된 영속 루프에 run_until_complete (30-33번 줄 주석 참고).
+    재진입 방어: 루프가 이미 running이면 (Streamlit 내부 async 혹은 이전 호출이
+    클린업 전에 Streamlit StopException으로 중단된 상태) 전용 워커 스레드에서
+    새 루프로 실행해 "This event loop is already running" 충돌을 피한다.
+    """
     global _event_loop
     if _event_loop is None or _event_loop.is_closed():
         _event_loop = asyncio.new_event_loop()
         asyncio.set_event_loop(_event_loop)
+
+    if _event_loop.is_running():
+        # Fallback: 별도 스레드 + 독립 루프. 캐시 루프는 건드리지 않는다.
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+            return ex.submit(asyncio.run, coro).result()
+
     return _event_loop.run_until_complete(coro)
 
 
@@ -806,10 +819,25 @@ def _handle_transcript_upload(uploaded_file) -> None:
     try:
         parser = TranscriptParser()
         profile = parser.parse(file_bytes, safe_filename)
+    except ModuleNotFoundError as e:
+        # 서버 설정 문제: 의존성 누락 (예: xlrd). 사용자 파일 문제 아님.
+        audit_log("PARSE_MODULE_MISSING", session_id, e.name or "")
+        st.error(
+            f"서버 설정 문제: 필수 라이브러리가 설치되지 않았습니다 "
+            f"({e.name}). 관리자에게 문의해 주세요."
+        )
+        logger.error("성적표 파싱 의존성 누락: %s", e)
+        return
+    except ValueError as e:
+        # 파일 포맷/구조 문제 (예: HTML에 <table> 없음, 데이터 부족)
+        audit_log("PARSE_INVALID", session_id, type(e).__name__)
+        st.error(f"성적표 형식이 올바르지 않습니다: {e}")
+        logger.warning("성적표 포맷 오류: %s", e)
+        return
     except Exception as e:
         audit_log("PARSE_FAILED", session_id, type(e).__name__)
         st.error("성적표 파싱 실패. 올바른 파일인지 확인해주세요.")
-        logger.error("성적표 파싱 실패: %s", e)
+        logger.exception("성적표 파싱 실패")
         return
     finally:
         del file_bytes  # 원본 바이트 즉시 폐기
@@ -1203,9 +1231,13 @@ def init_components():
             academic_graph = AcademicGraph()
 
             st.session_state.analyzer  = QueryAnalyzer()
+            from app.shared_resources import get_bm25_index
+            bm25_index = get_bm25_index()
+
             st.session_state.router    = QueryRouter(
                 chroma_store=chroma_store,
                 academic_graph=academic_graph,
+                bm25_index=bm25_index,
             )
             st.session_state.merger    = ContextMerger()
             st.session_state.generator = AnswerGenerator()

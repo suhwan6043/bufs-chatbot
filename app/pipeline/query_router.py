@@ -26,10 +26,12 @@ class QueryRouter:
         chroma_store: ChromaStore = None,
         academic_graph: AcademicGraph = None,
         reranker=None,
+        bm25_index=None,
     ):
         self.chroma_store = chroma_store
         self.academic_graph = academic_graph
         self._reranker = reranker
+        self.bm25_index = bm25_index  # 원칙 2: BM25 sparse 후보 확장용
 
     @property
     def reranker(self):
@@ -173,6 +175,25 @@ class QueryRouter:
                         seen_texts.add(c.text[:100])
                         if sum(1 for x in candidates if x.metadata.get("doc_type") == "faq") >= 2:
                             break
+
+        # Phase 3: BM25 sparse 후보 확장 (원칙 2: 키워드 매칭 보강)
+        # Dense 검색이 놓치는 exact keyword match를 BM25로 보완해
+        # Reranker(Cross-Encoder)가 더 넓은 후보 풀에서 정확도를 높이도록 한다.
+        if self.bm25_index and self.bm25_index.is_built:
+            bm25_results = self.bm25_index.search(
+                query=query,
+                n_results=20,
+                doc_type=preferred_types,
+            )
+            seen_texts = {c.text[:100] for c in candidates}
+            bm25_added = 0
+            for c in bm25_results:
+                if c.text and c.text[:100] not in seen_texts:
+                    candidates.append(c)
+                    seen_texts.add(c.text[:100])
+                    bm25_added += 1
+            if bm25_added:
+                logger.debug("Phase 3 BM25: %d개 후보 추가 (총 %d개)", bm25_added, len(candidates))
 
         reranker = self.reranker
         if reranker and candidates:

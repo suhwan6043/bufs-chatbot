@@ -103,14 +103,20 @@ class FaqNodeBuilder:
             node_id = f"faq_{node_key}"
             is_new = node_id not in graph.G.nodes
 
+            # 원칙 1(유연한 스키마): JSON에 선언된 answer_type 같은 선택 필드는
+            # 그래프 노드 메타에 그대로 전파해 검색 단계에서 활용(예: 리다이렉트 FAQ).
+            node_metadata = {
+                "출처파일": item.get("source_file", ""),
+            }
+            if item.get("answer_type"):
+                node_metadata["answer_type"] = item["answer_type"]
+
             graph.add_faq_node(
                 faq_id=faq_id,
                 question=question,
                 answer=answer,
                 category=category,
-                metadata={
-                    "출처파일": item.get("source_file", ""),
-                },
+                metadata=node_metadata,
             )
 
             if is_new:

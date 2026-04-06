@@ -19,6 +19,7 @@ def _make_event(
     change_type: ChangeType,
     content: str = "테스트 내용입니다. " * 10,
     title: str = "테스트 제목",
+    is_pinned: bool = True,  # 기본값 True → 기존 테스트가 고정공지(벡터 경로)를 탐
 ) -> ChangeEvent:
     return ChangeEvent(
         source_id=source_id,
@@ -28,7 +29,11 @@ def _make_event(
         title=title,
         content=content,
         attachments=[],
-        metadata={"content_type": "notice", "source_name": "학사공지"},
+        metadata={
+            "content_type": "notice",
+            "source_name": "학사공지",
+            "is_pinned": is_pinned,
+        },
     )
 
 
@@ -175,3 +180,38 @@ class TestIncrementalUpdaterChunking:
 
         chunks = mock_chroma.add_chunks.call_args[0][0]
         assert any(c.cohort_from == 2024 for c in chunks)
+
+
+# ══════════════════════════════════════════════════════
+# 비고정 공지 → 그래프만 업데이트, 벡터 스킵 (공지 경량화)
+# ══════════════════════════════════════════════════════
+
+class TestNonPinnedNoticeGraphOnly:
+    """비고정 공지는 ChromaDB에 임베딩하지 않고 그래프만 업데이트한다.
+
+    원칙 2(비용·지연): 벡터 검색 대상 축소로 노이즈 제거 + 인덱스 경량화.
+    """
+
+    def test_non_pinned_new_skips_chroma(self, updater, mock_chroma):
+        event = _make_event("http://example.com/regular", ChangeType.NEW, is_pinned=False)
+        report = updater.process_events([event])
+
+        mock_chroma.add_chunks.assert_not_called()
+        assert report.added == 0
+
+    def test_non_pinned_modified_cleans_legacy_chunks(self, updater, mock_chroma):
+        """이전에 벡터에 들어간 레거시 청크가 있으면 삭제만 한다."""
+        event = _make_event("http://example.com/regular", ChangeType.MODIFIED, is_pinned=False)
+        report = updater.process_events([event])
+
+        mock_chroma.delete_by_source.assert_called()
+        mock_chroma.add_chunks.assert_not_called()
+        assert report.updated == 0
+
+    def test_pinned_notice_still_ingested(self, updater, mock_chroma):
+        """고정공지는 기존대로 벡터 DB에 인제스트된다."""
+        event = _make_event("http://example.com/pinned", ChangeType.NEW, is_pinned=True)
+        report = updater.process_events([event])
+
+        mock_chroma.add_chunks.assert_called_once()
+        assert report.added > 0

@@ -253,7 +253,10 @@ class UploadValidator:
     """
 
     MAX_SIZE_MB = 5
-    ALLOWED_MAGIC = b"\xd0\xcf\x11\xe0"
+    # OLE2 Compound Document 매직 (레거시 BIFF .xls)
+    ALLOWED_MAGIC_OLE2 = b"\xd0\xcf\x11\xe0"
+    # 하위 호환용 별칭
+    ALLOWED_MAGIC = ALLOWED_MAGIC_OLE2
 
     @classmethod
     def validate(cls, file_bytes: bytes, filename: str) -> tuple[bool, str]:
@@ -284,10 +287,24 @@ class UploadValidator:
             return False, "파일명에 허용되지 않는 문자가 포함되어 있습니다."
 
         # 매직 바이트 검사
-        if len(file_bytes) < 4 or file_bytes[:4] != cls.ALLOWED_MAGIC:
+        # 원칙 1(스키마 진화): 포맷 판단이 확장자가 아닌 파일 바이트에서 자동 유도.
+        # 한국 대학 포털이 IE6 호환성 때문에 HTML 테이블을 .xls 확장자로 내보내는
+        # 경우가 많아 OLE2(BIFF) 외에 HTML 시작(`<`)도 허용한다.
+        if not cls._has_valid_magic(file_bytes):
             return False, "유효한 XLS 파일이 아닙니다."
 
         return True, ""
+
+    @classmethod
+    def _has_valid_magic(cls, file_bytes: bytes) -> bool:
+        """레거시 BIFF(OLE2) 또는 HTML-in-XLS 매직 바이트 검증."""
+        if len(file_bytes) < 4:
+            return False
+        if file_bytes[:4] == cls.ALLOWED_MAGIC_OLE2:
+            return True
+        # HTML-in-XLS: 선행 공백·BOM 후 `<`로 시작하면 HTML 테이블로 간주
+        head = file_bytes[:64].lstrip(b"\xef\xbb\xbf \t\r\n").lower()
+        return head.startswith(b"<")
 
     @classmethod
     def sanitize_filename(cls, filename: str) -> str:

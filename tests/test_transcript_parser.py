@@ -58,6 +58,24 @@ class TestUploadValidator:
         assert ok
         assert err == ""
 
+    def test_accepts_html_in_xls_magic(self):
+        """한국 대학 포털이 .xls로 export하는 HTML 테이블도 허용."""
+        html = b"<html><body><table><tr><td>a</td></tr></table></body></html>"
+        ok, err = UploadValidator.validate(html + b" " * 100, "transcript.xls")
+        assert ok, f"HTML-in-XLS가 거부됨: {err}"
+
+    def test_accepts_html_in_xls_with_bom(self):
+        """UTF-8 BOM이 앞에 있는 HTML도 허용."""
+        html = b"\xef\xbb\xbf<html><table><tr><td>1</td></tr></table></html>"
+        ok, err = UploadValidator.validate(html + b" " * 50, "transcript.xls")
+        assert ok, f"BOM+HTML-in-XLS가 거부됨: {err}"
+
+    def test_rejects_non_html_non_ole2(self):
+        """OLE2도 HTML도 아니면 여전히 거부 (회귀 방지)."""
+        ok, err = UploadValidator.validate(b"PK\x03\x04" + b"\x00" * 100, "test.xls")
+        assert not ok
+        assert "유효한 XLS" in err
+
 
 # ══════════════════════════════════════════════════════
 # PIIRedactor 테스트
@@ -214,8 +232,78 @@ class TestVersionManager:
 
 
 # ══════════════════════════════════════════════════════
-# 실제 XLS 파싱 통합 테스트
+# HTML-in-XLS 파싱 (한국 대학 포털 export 포맷)
 # ══════════════════════════════════════════════════════
+
+
+class TestHtmlInXls:
+    """.xls 확장자로 저장된 HTML 테이블을 파서가 자동 감지·처리해야 한다.
+
+    한국 대학 포털이 IE6 호환성 때문에 <table>을 .xls로 export하는 관행 대응.
+    원칙 1(스키마 진화): 포맷 판단이 확장자가 아닌 파일 바이트에서 자동 유도.
+    """
+
+    def _make_html_grid_bytes(self) -> bytes:
+        return (
+            b"<html><body><table>"
+            b"<tr><td>cell_0_0</td><td>cell_0_1</td></tr>"
+            b"<tr><td>cell_1_0</td><td>cell_1_1</td></tr>"
+            b"<tr><td>cell_2_0</td><td>cell_2_1</td></tr>"
+            b"</table></body></html>"
+        )
+
+    def test_read_xls_auto_detects_html(self):
+        from app.transcript.parser import TranscriptParser
+        parser = TranscriptParser()
+        grid = parser._read_xls(self._make_html_grid_bytes())
+        assert len(grid) == 3
+        assert grid[0] == ["cell_0_0", "cell_0_1"]
+        assert grid[2][1] == "cell_2_1"
+
+    def test_read_xls_picks_largest_table(self):
+        """여러 <table>이 있으면 셀 수가 가장 많은 것을 선택."""
+        from app.transcript.parser import TranscriptParser
+        html = (
+            b"<html><body>"
+            b"<table><tr><td>tiny</td></tr></table>"  # 1 cell
+            b"<table>"
+            b"<tr><td>big_0_0</td><td>big_0_1</td><td>big_0_2</td></tr>"
+            b"<tr><td>big_1_0</td><td>big_1_1</td><td>big_1_2</td></tr>"
+            b"</table>"
+            b"</body></html>"
+        )
+        parser = TranscriptParser()
+        grid = parser._read_xls(html)
+        assert len(grid) == 2
+        assert grid[0][2] == "big_0_2"
+
+    def test_read_xls_html_colspan_expanded(self):
+        """colspan은 단순 복제돼 행 길이가 균일해야 한다."""
+        from app.transcript.parser import TranscriptParser
+        html = (
+            b"<html><table>"
+            b"<tr><td colspan='2'>header</td><td>x</td></tr>"
+            b"<tr><td>a</td><td>b</td><td>c</td></tr>"
+            b"</table></html>"
+        )
+        grid = TranscriptParser()._read_xls(html)
+        # colspan=2 → "header"가 2칸에 복제되어 3열이 됨
+        assert len(grid[0]) == 3
+        assert grid[0][0] == "header"
+        assert grid[0][1] == "header"
+        assert grid[0][2] == "x"
+
+    def test_read_html_table_raises_on_no_table(self):
+        from app.transcript.parser import TranscriptParser
+        html = b"<html><body><p>No table here</p></body></html>"
+        with pytest.raises(ValueError, match="table"):
+            TranscriptParser()._read_xls(html)
+
+
+# ══════════════════════════════════════════════════════
+# 실제 XLS 파싱 통합 테스트 (로컬 파일 있을 때만)
+# ══════════════════════════════════════════════════════
+
 
 @pytest.mark.skipif(not _XLS_PATH.exists(), reason="XLS 파일 없음")
 class TestTranscriptParserReal:

@@ -169,7 +169,23 @@ class TranscriptParser:
     # ── XLS 읽기 ──────────────────────────────────────
 
     def _read_xls(self, file_bytes: bytes) -> list[list]:
-        """xlrd로 .xls 읽기. 임시 파일 즉시 삭제."""
+        """XLS(BIFF) 또는 HTML-in-XLS → 2D 그리드 통합 진입점.
+
+        원칙 1(스키마 진화): 포맷 판단이 확장자·MIME이 아닌 **파일 바이트**에서
+        자동 유도된다. 한국 대학 포털이 .xls로 내보내는 HTML 테이블도 같은 경로로 처리.
+        """
+        head = file_bytes[:2048].lstrip(b"\xef\xbb\xbf \t\r\n").lower()
+        is_html = (
+            head.startswith(b"<")
+            or b"<html" in head
+            or b"<table" in head
+        )
+        if is_html:
+            return self._read_html_table(file_bytes)
+        return self._read_biff_xls(file_bytes)
+
+    def _read_biff_xls(self, file_bytes: bytes) -> list[list]:
+        """레거시 BIFF .xls 경로 (xlrd). 임시 파일 즉시 삭제."""
         import xlrd
 
         fd, path = tempfile.mkstemp(suffix=".xls")
@@ -194,6 +210,36 @@ class TranscriptParser:
                     logger.warning("임시 파일 삭제 실패: %s", path)
             except OSError as e:
                 logger.warning("임시 파일 삭제 오류: %s (%s)", path, e)
+
+    def _read_html_table(self, file_bytes: bytes) -> list[list]:
+        """HTML-in-XLS를 2D 그리드로 변환.
+
+        전략: 가장 큰 <table>을 성적표 본체로 간주하고 <th>/<td> 텍스트를 행×열
+        그리드로 평탄화. rowspan/colspan은 단순 복제해 BIFF 셀 좌표와 동일 시맨틱을
+        유지(후속 _extract_* 메서드가 동일 그리드 구조만 기대하므로 수정 불필요).
+        """
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(file_bytes, "lxml")
+        tables = soup.find_all("table")
+        if not tables:
+            raise ValueError("HTML 성적표에 <table>이 없습니다.")
+
+        main = max(tables, key=lambda t: len(t.find_all(["td", "th"])))
+        grid: list[list] = []
+        for tr in main.find_all("tr"):
+            row: list = []
+            for cell in tr.find_all(["td", "th"]):
+                text = cell.get_text(" ", strip=True)
+                try:
+                    colspan = int(cell.get("colspan", 1))
+                except (TypeError, ValueError):
+                    colspan = 1
+                for _ in range(max(1, colspan)):
+                    row.append(text)
+            if row:
+                grid.append(row)
+        return grid
 
     # ── 마커 탐색 유틸 ────────────────────────────────
 

@@ -144,6 +144,20 @@ class ContextMerger:
         # 공통 어휘("전공")만 걸린 무관한 FAQ가 컨텍스트 최상단에 박혀 LLM이 오답을 확신하는 회귀 발생.
         # → 관련성 신호(direct_answer 또는 질문 핵심 토큰 매칭)가 있는 FAQ만 최상단으로,
         #    나머지는 RRF 순서를 그대로 따라간다.
+        # 리다이렉트 FAQ 판정 헬퍼 (메타 플래그 + 텍스트 휴리스틱)
+        # 벡터 DB에서 온 FAQ 청크는 answer_type 메타가 없을 수 있어 텍스트로도 판정.
+        from app.graphdb.academic_graph import _is_redirect_answer as _is_redirect_answer_heur
+
+        def _faq_answer_text(r: SearchResult) -> str:
+            txt = r.text or ""
+            idx = txt.find("A:")
+            return txt[idx + 2:].strip() if idx >= 0 else txt
+
+        def _is_redirect_faq(r: SearchResult) -> bool:
+            if r.metadata.get("answer_type") == "redirect":
+                return True
+            return _is_redirect_answer_heur(_faq_answer_text(r), r.metadata)
+
         if all_results:
             from app.pipeline.ko_tokenizer import stems, expand_tokens, FAQ_STOPWORDS
             q_key = expand_tokens(stems(question or ""), FAQ_STOPWORDS)
@@ -157,7 +171,7 @@ class ContextMerger:
                 hay_key = expand_tokens(stems(r.text or ""), FAQ_STOPWORDS)
                 return bool(q_key & hay_key)
 
-            relevant_faq, stale_faq, non_faq = [], [], []
+            relevant_faq, redirect_faq, stale_faq, non_faq = [], [], [], []
             for r in all_results:
                 is_faq = (
                     r.metadata.get("doc_type") == "faq"
@@ -165,12 +179,18 @@ class ContextMerger:
                 )
                 if not is_faq:
                     non_faq.append(r)
+                    continue
+                # 리다이렉트 FAQ("어디서 확인/문의")는 관련성이 있어도 본문 재료로
+                # 쓸 수 없다 → non-FAQ 뒤로 밀어서 PDF 데이터가 최상단에 노출되게 한다.
+                # 메타 플래그 + 텍스트 휴리스틱 양쪽 경로 모두 대응.
+                if _is_redirect_faq(r):
+                    redirect_faq.append(r)
                 elif _faq_is_relevant(r):
                     relevant_faq.append(r)
                 else:
                     stale_faq.append(r)
-            # 관련 FAQ를 최상단으로, 무관 FAQ는 non-FAQ 뒤로 밀어 노이즈 억제
-            all_results = relevant_faq + non_faq + stale_faq
+            # 순서: (관련 data FAQ) → (non-FAQ: PDF/노드) → (리다이렉트 FAQ 안내용) → (무관 FAQ)
+            all_results = relevant_faq + non_faq + redirect_faq + stale_faq
 
         # 토큰 제한 내에서 컨텍스트 구성
         context_parts = []
@@ -181,17 +201,33 @@ class ContextMerger:
         selected_graph = []
         direct_answer = ""
 
-        # 원칙 1: FAQ direct_answer 우선 선택
-        # FAQ에 정답이 있는데 학사일정 등 다른 노드의 direct_answer가 먼저 선택되어
-        # 틀린 날짜/숫자가 답변되는 회귀 방지. FAQ는 큐레이션된 정답이므로 최우선.
-        for result in all_results:
-            is_faq = (
-                result.metadata.get("doc_type") == "faq"
-                or result.metadata.get("node_type") == "FAQ"
-            )
-            if is_faq and result.metadata.get("direct_answer"):
-                direct_answer = result.metadata["direct_answer"]
+        # 그래프에서 이미 direct_answer가 나왔으면 먼저 채택
+        # (일정, 수강규칙 등 focused handler의 정확한 답변이 FAQ "정의"에 밀리지 않도록)
+        graph_direct = ""
+        for r in graph_results:
+            if r.metadata.get("direct_answer"):
+                graph_direct = r.metadata["direct_answer"]
                 break
+        if graph_direct:
+            direct_answer = graph_direct
+
+        # 원칙 1: FAQ direct_answer 우선 선택 (그래프 direct가 없을 때만)
+        # 그래프 focused handler가 이미 정확한 답("장바구니 기간: 1/28~2/1")을 제공했으면
+        # FAQ의 "장바구니란 무엇인가" 같은 정의형 답은 덮어쓰지 않는다.
+        # 그래프 direct가 없을 때만 FAQ direct_answer를 채택
+        if not direct_answer:
+            for result in all_results:
+                is_faq = (
+                    result.metadata.get("doc_type") == "faq"
+                    or result.metadata.get("node_type") == "FAQ"
+                )
+                if not is_faq:
+                    continue
+                if _is_redirect_faq(result):
+                    continue
+                if result.metadata.get("direct_answer"):
+                    direct_answer = result.metadata["direct_answer"]
+                    break
 
         for result in all_results:
             if not result.text:

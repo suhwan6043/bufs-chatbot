@@ -28,6 +28,68 @@ def _intent_from_string(intent_str: str) -> Intent:
         return Intent.GENERAL
 
 
+# ── 리다이렉트 FAQ 판정 ─────────────────────────────────────
+# "어디서 확인/문의" 같은 meta 안내 FAQ는 구체 데이터(학점·날짜)가 있는
+# PDF/노드를 가리지 않도록 direct_answer에서 제외한다.
+
+_REDIRECT_MARKERS: tuple[str, ...] = (
+    "참고하시기 바랍니다",
+    "참고하시기바랍니다",
+    "참고 바랍니다",
+    "문의하시기 바랍니다",
+    "문의 바랍니다",
+    "통합정보시스템 >",
+    "홈페이지 >",
+    "아래로 문의",
+    "자세한 내용은",
+    "자세한 사항은",
+    "각 학부(과) 사무실",
+    "해당 부서",
+)
+
+_CONCRETE_DATA_RE = re.compile(
+    r"\d{2,}\s*학점|"
+    r"\d{4}\s*학?년|"                        # 2026년, 2026학년도
+    r"\d{4}[\.\-]\d{1,2}[\.\-]\d{1,2}|"      # 2026.08.21, 2026-08-21
+    r"\d{1,2}\s*월\s*\d{1,2}\s*일|"          # 8월 21일
+    r"\d+\s*%|\d+\s*등급|\d+\s*점|\d+\s*시간"
+)
+
+# 답변의 '초반부'로 간주할 문자 수 — 주 답변 문장이 이 범위 안에 들어온다는 가정
+_ANSWER_HEAD_CHARS = 120
+
+
+def _is_redirect_answer(answer: str, metadata: dict | None) -> bool:
+    """FAQ 답이 '어디서 확인/문의'만 안내하는 리다이렉트형인지 판정.
+
+    원칙 1(스키마 진화): 데이터(텍스트)에서 자동 유도 + 선택적 선언 필드 override.
+    원칙 2(비용·지연): 문자열 탐색 + 정규식 1회 → ms 단위.
+
+    판정 규칙:
+    1. `answer_type` 메타가 명시돼 있으면 그것을 우선(redirect/data).
+    2. 그렇지 않으면 **초반 120자**에 리다이렉트 마커가 있고 같은 초반부에 구체
+       수치 데이터가 없을 때만 리다이렉트로 간주. 본문이 구체 답(예: "불가능합니다")
+       이고 꼬리에만 "자세한 건 문의하세요"가 붙은 FAQ는 data로 취급한다.
+    """
+    # 1) 선언적 override — FAQ JSON에 answer_type: "redirect"
+    if metadata:
+        at = metadata.get("answer_type")
+        if at == "redirect":
+            return True
+        if at == "data":
+            return False  # 명시적 data 선언 → 휴리스틱 skip
+    if not answer:
+        return False
+    # 2) 위치 기반 휴리스틱: 답변 초반부에 마커가 있고 같은 구간에 구체 수치가
+    #    없을 때만 리다이렉트. 꼬리 안내문("자세한 건 문의하세요")은 data FAQ의
+    #    흔한 꼬리표이므로 트리거하지 않는다.
+    head = answer[:_ANSWER_HEAD_CHARS]
+    if not any(m in head for m in _REDIRECT_MARKERS):
+        return False
+    has_head_data = bool(_CONCRETE_DATA_RE.search(head))
+    return not has_head_data
+
+
 # ── 학번 그룹 매핑 ──────────────────────────────────────────
 # 졸업요건/수강규칙은 입학년도 그룹별로 상이
 # 그룹: 2016_before / 2017_2020 / 2021 / 2022 / 2023 / 2024_2025
@@ -150,6 +212,7 @@ class AcademicGraph:
         "졸업기준적용",   # 조기졸업(기준) → 졸업요건
         "공지_참조",     # 공지사항 → 도메인 노드 (수강신청규칙, 장학금, 졸업요건 등)
         "FAQ_참조",      # FAQ → 관련 도메인 노드 (수강신청규칙, 졸업요건 등)
+        "면제_적용",     # 졸업요건/수강신청규칙 → 조건 (면제·예외 조건)
     ]
 
     _save_lock = threading.Lock()
@@ -651,10 +714,18 @@ class AcademicGraph:
                 "카테고리": category_tag,
                 "faq_id": data.get("faq_id", ""),
             }
+            # FAQ 노드 자체 answer_type 속성(선언형 플래그)을 메타로 전파
+            declared_type = data.get("answer_type")
+            if declared_type:
+                metadata["answer_type"] = declared_type
             # 상위 1개 FAQ가 의미적으로 강하게 매칭된 경우에만 direct_answer 부여
-            # context_merger가 이를 우선 사용하고 LLM이 FAQ 답을 뼈대로 사용
+            # context_merger가 이를 우선 사용하고 LLM이 FAQ 답을 뼈대로 사용.
+            # 단, "어디서 확인/문의" 같은 리다이렉트 FAQ는 제외 — 구체 데이터를 가리면 안 됨.
             if rank == 0 and score >= strong_match_threshold and answer_text:
-                metadata["direct_answer"] = answer_text
+                if _is_redirect_answer(answer_text, metadata):
+                    metadata.setdefault("answer_type", "redirect")
+                else:
+                    metadata["direct_answer"] = answer_text
             results.append(SearchResult(
                 text=text,
                 source=f"FAQ:{data.get('faq_id', nid)}",
@@ -1223,7 +1294,86 @@ class AcademicGraph:
         for m in self.get_major_methods(student_id):
             text = self._fmt_major_method(m)
             results.append(self._make_graph_result(text=text, node_data=m, score=0.95))
+
+        # ── 면제·예외 조건 탐색 (원칙 2: 엣지 탐색 O(degree)) ────
+        # "면제", "예외", "취업커뮤니티" 등 키워드가 질문�� 있으면
+        # 졸업요건 노드 → 면제_적용 엣지 → 조건 노드를 탐색해 결과에 추가.
+        _EXEMPT_KW = ("면제", "예외", "안 들", "안들", "안해도", "취업커뮤니티", "커뮤니티")
+        if any(kw in question for kw in _EXEMPT_KW):
+            exempt_results = self._collect_exemption_conditions(
+                student_id, student_type, question,
+            )
+            if exempt_results:
+                results = exempt_results + results
         return results
+
+    def _collect_exemption_conditions(
+        self,
+        student_id: str,
+        student_type: str,
+        question: str,
+    ) -> List[SearchResult]:
+        """졸업요건/수강규칙 노드에서 면제_적용·제약한다 엣지를 탐색해 조건 노드 반환.
+
+        원칙 2(비용·지연): 엣지 탐색 O(degree), 벡터 검색 불필요.
+        """
+        results: List[SearchResult] = []
+        group = get_student_group(student_id)
+        q_lower = question.lower()
+
+        # 관련 졸업요건·수강규칙 노드에서 면제/제약 엣지 탐색
+        target_nids = []
+        for nid in self._type_index.get("졸업요건", []):
+            data = self.G.nodes.get(nid, {})
+            if data.get("적용학번그룹") == group:
+                target_nids.append(nid)
+        reg_grp = "2023이후" if group in ("2023", "2024_2025") else "2022이전"
+        reg_nid = f"reg_{reg_grp}"
+        if reg_nid in self.G.nodes:
+            target_nids.append(reg_nid)
+
+        seen_conds: set = set()
+        for nid in target_nids:
+            for _, cond_nid, edge_data in self.G.out_edges(nid, data=True):
+                rel = edge_data.get("relation", "")
+                if rel not in ("면제_적용", "제약한다"):
+                    continue
+                if cond_nid in seen_conds:
+                    continue
+                seen_conds.add(cond_nid)
+
+                cond_data = self.G.nodes.get(cond_nid, {})
+                cond_type = cond_data.get("조건유형", "")
+                cond_name = cond_data.get("조건명", "")
+                cond_val = cond_data.get("값", "")
+                cond_desc = cond_data.get("설명", "")
+                target = cond_data.get("대상", "")
+
+                # 질문 키워드와 관련 있는 조건만 포함
+                cond_text_lower = f"{cond_name} {cond_val} {cond_desc} {target} {cond_type}".lower()
+                _REL_KW = ("면제", "취업커뮤니티", "커뮤니티", "재수강", "이월", "ocu", "예외", "초과")
+                # 조건 텍스트와 질문이 하나 이상의 핵심 키워드를 공유해야 포함
+                matched_kw = [kw for kw in _REL_KW if kw in q_lower and kw in cond_text_lower]
+                if not matched_kw:
+                    continue
+
+                text_parts = [f"[조건] {cond_name}"]
+                if cond_val:
+                    text_parts.append(f"- 내용: {cond_val}")
+                if cond_desc:
+                    text_parts.append(f"- 설명: {cond_desc}")
+                if target:
+                    text_parts.append(f"- 대상: {target}")
+                text = "\n".join(text_parts)
+
+                results.append(self._make_graph_result(
+                    text=text,
+                    node_data=cond_data,
+                    score=1.15,
+                    extra_meta={"조건유형": cond_type},
+                ))
+
+        return results[:5]  # 최대 5개
 
     def _query_dept_grad_exam(self, question: str, dept_hint: str = "") -> List[SearchResult]:
         """
@@ -1379,7 +1529,7 @@ class AcademicGraph:
 
         # 장바구니 기간 질문 → 학사일정 탐색
         if "장바구니" in question and any(kw in question for kw in ("기간", "언제", "신청")):
-            sched_matches = self._find_schedule_matches("장바구니")
+            sched_matches = self._find_schedule_matches(question)
             if sched_matches:
                 sm = sched_matches[0]
                 start = sm.get("시작일", "")
@@ -2054,6 +2204,7 @@ class AcademicGraph:
         for nid, data in all_notices:
             tags = data.get("태그", [])
             title_norm = self._normalize_text(data.get("제목", ""))
+            summary_norm = self._normalize_text(data.get("내용요약", ""))
             score = 0.8  # base score
 
             # 태그 매칭 (인텐트 기반)
@@ -2067,8 +2218,20 @@ class AcademicGraph:
             ):
                 score = max(score, 1.1)
 
+            # 내용요약 키워드 매칭 (벡터 DB 제거 후 recall 보강)
+            # 원칙 2: 그래프 키워드 매칭은 벡터 유사도보다 저비용이므로 요약도 스캔.
+            if q_norm and summary_norm and score < 1.1:
+                matched = sum(
+                    1 for kw in q_norm.split()
+                    if len(kw) >= 2 and kw in summary_norm
+                )
+                if matched >= 1:
+                    score = max(score, 1.0 + min(matched, 3) * 0.05)
+
             # 관련 없는 공지는 스킵
-            if score <= 0.8 and target_tags:
+            # 제목·내용요약 키워드 또는 태그 매칭이 1건도 없으면(base 0.8 그대로면) 제외.
+            # target_tags가 비어 있어도 base score만인 공지는 노이즈이므로 걸러야 한다.
+            if score <= 0.8:
                 continue
 
             # 내용 포맷
@@ -2093,13 +2256,22 @@ class AcademicGraph:
             title = data.get("제목", "")
             summary = data.get("내용요약", "")
             date_str = data.get("발행일", "")
+            url = data.get("URL", "")
             text = f"[공지사항] {title}"
             if date_str:
                 text += f" (게시일: {date_str})"
             if summary:
                 text += f"\n{summary}"
+            # 근거 문서 UI에서 공지 URL을 표시하기 위한 메타데이터
+            notice_meta = {
+                "doc_type": "notice",
+                "source_url": url,
+                "title": title,
+                "post_date": date_str,
+            }
             results.append(self._make_graph_result(
                 text=text, node_data=data, score=score,
+                extra_meta=notice_meta,
             ))
         return results
 

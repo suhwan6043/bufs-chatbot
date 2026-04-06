@@ -22,6 +22,9 @@ networkx>=3.0
 
 # EN 키워드 매핑 (FlashText Aho-Corasick)
 flashtext>=2.7
+
+# BM25 sparse 검색 (하이브리드 검색: Dense + BM25 → Reranker)
+rank-bm25>=0.2.2
 pyyaml>=6.0
 
 # 환경 설정
@@ -36,9 +39,10 @@ beautifulsoup4>=4.12.0
 lxml>=5.0.0
 
 # 첨부파일 파싱 (Office 문서)
-python-docx>=1.0.0   # DOCX (Word)
-openpyxl>=3.1.0      # XLSX (Excel)
-olefile>=0.47        # HWP5 OLE2 파싱
+python-docx>=1.0.0      # DOCX (Word)
+openpyxl>=3.1.0         # XLSX (Excel)
+olefile>=0.47           # HWP5 OLE2 파싱
+xlrd>=1.2.0,<2.0.0      # XLS 레거시 BIFF (2.0+는 XLSX 불가 → 1.x 고정)
 
 # 백그라운드 스케줄러
 apscheduler>=3.10.0

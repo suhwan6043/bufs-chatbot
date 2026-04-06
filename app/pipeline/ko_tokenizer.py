@@ -122,6 +122,53 @@ def core_tokens(text: str, stopwords: Iterable[str]) -> list[str]:
     return out
 
 
+# ── BM25 전용 토큰화 ──────────────────────────────────────
+# BM25는 exact keyword match가 핵심이므로:
+# 1) 조사 제거 (은/는/이/가/을/를 등) — strip_suffix 적용
+# 2) 불용어 제거 — 검색에 무의미한 기능어 필터
+# 3) 2글자 미만 토큰 제거
+
+_BM25_STOPWORDS: frozenset[str] = frozenset({
+    # 한국어 기능어/접속사/부사
+    "그리고", "또한", "그래서", "하지만", "그러나", "따라서", "때문",
+    "대해", "대한", "위해", "위한", "통해", "통한",
+    "경우", "이상", "이하", "이내", "이후", "이전",
+    "해당", "관련", "관한", "대하여", "있는", "없는", "하는", "되는",
+    "것이", "수가", "바와", "점에", "중에",
+    # 의문사/지시사 (질문에선 유의미하지만 문서 매칭에선 노이즈)
+    "무엇", "어떤", "어떻게", "얼마", "언제", "어디",
+    # 영어 불용어
+    "the", "is", "at", "which", "and", "or", "of", "to", "in", "for",
+    "on", "with", "as", "by", "an", "be", "this", "that", "it",
+})
+
+
+def tokenize_for_bm25(text: str) -> list[str]:
+    """BM25 검색용 토큰화 — 조사 제거 + 불용어 필터 (명사 중심).
+
+    파이프라인:
+      1) tokenize() — 2글자+ 한글/영문 토큰 추출
+      2) strip_suffix() — 한국어 조사·어미 제거 ("졸업에" → "졸업")
+      3) 불용어 필터 — _BM25_STOPWORDS 제거 (기능어/접속사/의문사)
+      4) 2글자 미만 제거
+
+    복합명사 분해는 하지 않음 — BM25는 전체 토큰 exact match가 핵심이므로
+    "신청기간"은 문서에서 "신청기간"이 있을 때 매칭되는 것이 더 정확.
+    """
+    if not text:
+        return []
+    tokens = tokenize(text)
+    result: list[str] = []
+    for t in tokens:
+        s = strip_suffix(t)
+        if len(s) < 2:
+            continue
+        if s in _BM25_STOPWORDS:
+            continue
+        result.append(s)
+    return result
+
+
 # 공용 stopword — 그래프/컨텍스트 머저 양쪽에서 import해 일관성 유지
 FAQ_STOPWORDS: frozenset[str] = frozenset({
     "전공", "신청", "가능", "방법", "학기", "이수", "학점", "기준",

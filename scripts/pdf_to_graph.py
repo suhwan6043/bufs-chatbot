@@ -1813,10 +1813,462 @@ def _build_structural_nodes(graph: AcademicGraph) -> None:
             graph.add_relation(nid, cond_id, "요구한다")
             break
 
+    # ── 7) 면제·예외 조건 엣지 빌더 (원칙 1: 데이터에서 조건 자동 유도) ──
+    _build_exemption_edges(graph)
+
+    # ── 8) 구조 보강: 고아 노드 연결 + 졸업인증·등록금·과목요건 노드 ──
+    _build_structural_edges(graph)
+
     cond_count = len(graph._type_index.get("조건", []))
     group_count = len(graph._type_index.get("학번그룹", []))
     edge_count = G.number_of_edges()
     logger.info(f"  학번그룹 {group_count}개, 조건 {cond_count}개, 엣지 {edge_count}개")
+
+
+def _build_exemption_edges(graph: AcademicGraph) -> None:
+    """면제·예외 조건을 노드 속성에서 독립 조건 노드로 분리, 엣지 연결.
+
+    원칙 1(스키마 진화): 텍스트 속성에서 정규식으로 조건을 자동 추출.
+                         새 조건이 PDF에 추가되면 자동으로 노드가 생성됨.
+    원칙 2(비용·지연): 조건 노드를 통한 엣지 탐색으로 O(1) 조회 가능.
+    원칙 3(증분 업데이트): 기존 add_condition + upsert 패턴 재사용.
+    """
+    import re
+    G = graph.G
+    count = 0
+
+    # ── A) 수강신청규칙: 예외조건 파싱 (최대신청학점 예외) ──
+    # "학군사관후보생: 21학점 / 직전학기 평점 4.0 이상: 22학점 / ..."
+    for nid, data in graph._nodes_by_type("수강신청규칙"):
+        if nid.startswith("reg_guide_"):
+            continue
+        grp = data.get("적용학번그룹", nid.replace("reg_", ""))
+        exc_text = data.get("예외조건", "")
+        if exc_text:
+            for part in exc_text.split(" / "):
+                m = re.match(r"(.+?):\s*(\d+)\s*학점", part.strip())
+                if m:
+                    label, val = m.group(1).strip(), m.group(2)
+                    cond_name = f"예외_최대학점_{label}_{grp}"
+                    cond_id = graph.add_condition(cond_name, {
+                        "값": f"{val}학점",
+                        "원본키": "예외조건",
+                        "대상": label,
+                        "조건유형": "최대학점_예외",
+                    })
+                    graph.add_relation(nid, cond_id, "면제_적용")
+                    count += 1
+
+        # ── B) 재수강 제한 분해 ──
+        retake = data.get("재수강제한", "")
+        if retake:
+            # "한 학기 최대 6학점, 졸업 전 최대 24학점"
+            m_sem = re.search(r"학기\s*최대\s*(\d+)\s*학점", retake)
+            m_tot = re.search(r"졸업\s*전?\s*최대\s*(\d+)\s*학점", retake)
+            m_year = re.search(r"(\d{4})학번", retake)
+            if m_sem:
+                cond_id = graph.add_condition(f"재수강_학기한도_{grp}", {
+                    "값": f"{m_sem.group(1)}학점",
+                    "원본키": "재수강제한",
+                    "조건유형": "재수강_학기한도",
+                })
+                graph.add_relation(nid, cond_id, "제약한다")
+                count += 1
+            if m_tot:
+                cond_id = graph.add_condition(f"재수강_졸업한도_{grp}", {
+                    "값": f"{m_tot.group(1)}학점",
+                    "원본키": "재수강제한",
+                    "조건유형": "재수강_졸업한도",
+                })
+                graph.add_relation(nid, cond_id, "제약한다")
+                count += 1
+
+        # 재수강 기준 성적
+        grade = data.get("재수강기준성적", "")
+        if grade:
+            cond_id = graph.add_condition(f"재수강_기준성적_{grp}", {
+                "값": grade,
+                "원본키": "재수강기준성적",
+                "조건유형": "재수강_기준성적",
+                "설명": f"{grade} 이하 과목만 재수강 가능",
+            })
+            graph.add_relation(nid, cond_id, "제약한다")
+            count += 1
+
+        max_grade = data.get("재수강최고성적", "")
+        if max_grade:
+            cond_id = graph.add_condition(f"재수강_최고성적_{grp}", {
+                "값": max_grade,
+                "원본키": "재수강최고성적",
+                "조건유형": "재수강_최고성적",
+                "설명": f"재수강 후 최고 인정 성적: {max_grade}",
+            })
+            graph.add_relation(nid, cond_id, "제약한다")
+            count += 1
+
+        # ── C) 학점이월 조건 분해 ──
+        carry = data.get("학점이월여부", "")
+        if carry:
+            is_abolished = "폐지" in carry or "불가" in carry
+            cond_id = graph.add_condition(f"학점이월_{grp}", {
+                "값": "폐지" if is_abolished else "조건부 허용",
+                "원본키": "학점이월여부",
+                "조건유형": "학점이월",
+                "상세": data.get("학점이월조건", ""),
+                "최대학점": data.get("학점이월최대학점", ""),
+            })
+            graph.add_relation(nid, cond_id, "제약한다")
+            count += 1
+
+        # ── D) OCU 초과학점 조건 ──
+        ocu_exc = data.get("OCU초과학점", "")
+        if ocu_exc:
+            cond_id = graph.add_condition(f"OCU초과학점_{grp}", {
+                "값": ocu_exc,
+                "원본키": "OCU초과학점",
+                "조건유형": "OCU_초과",
+            })
+            graph.add_relation(nid, cond_id, "제약한다")
+            count += 1
+
+        # ── E) 초과가능교과목 분해 ──
+        override = data.get("초과가능교과목", "")
+        if override:
+            for part in override.split(" / "):
+                part = part.strip()
+                if not part:
+                    continue
+                cond_id = graph.add_condition(f"초과가능_{grp}_{part[:10]}", {
+                    "값": part,
+                    "원본키": "초과가능교과목",
+                    "조건유형": "학점초과_예외",
+                })
+                graph.add_relation(nid, cond_id, "면제_적용")
+                count += 1
+
+    # ── F) 졸업요건: 취업커뮤니티 면제 조건 ──
+    # PDF에 명시된 면제 시나리오를 하드코딩이 아닌 선언적 데이터로 추가.
+    # 원칙 1: PDF 버전이 바뀌면 이 리스트만 업데이트.
+    _JOB_COM_EXEMPTIONS = [
+        {
+            "대상": "4학년_2학기_일괄면제",
+            "설명": "취업커뮤니티 I+II 이수 후 학점 부족 시 4학년 2학기 중 자동 일괄 면제. 신청 불필요.",
+            "적용학번": "전체",
+        },
+        {
+            "대상": "조기졸업자",
+            "설명": "6학기 이수 후 졸업: 취업커뮤니티 1과목만 필수, 나머지 면제.",
+            "적용학번": "전체",
+        },
+        {
+            "대상": "교환학생_인턴십",
+            "설명": "교환/산업체 실습 학기 중 해당 취업커뮤니티 과목 면제.",
+            "적용학번": "전체",
+        },
+        {
+            "대상": "2016이전_학번",
+            "설명": "2016 이전 학번은 취업커뮤니티 전면 면제 (2024학년도부터 적용).",
+            "적용학번": "2016_before",
+        },
+        {
+            "대상": "외국인_유학생",
+            "설명": "외국인 유학생은 취업커뮤니티 전면 면제.",
+            "적용학번": "전체",
+            "학생유형": "외국인",
+        },
+        {
+            "대상": "4학년_편입생",
+            "설명": "4학년 편입생은 취업커뮤니티 0.5학점으로 축소. 외국인 편입생은 완전 면제.",
+            "적용학번": "전체",
+        },
+    ]
+
+    for nid, data in graph._nodes_by_type("졸업요건"):
+        if nid.startswith("grad_guide_"):
+            continue
+        job_com = data.get("취업커뮤니티요건", "")
+        if not job_com:
+            continue
+        grp = data.get("적용학번그룹", "")
+        student_type = data.get("학생유형", "")
+        for ex in _JOB_COM_EXEMPTIONS:
+            # 학번/학생유형 필터
+            target_grp = ex.get("적용학번", "전체")
+            target_type = ex.get("학생유형", "")
+            if target_grp != "전체" and target_grp != grp:
+                continue
+            if target_type and target_type != student_type:
+                continue
+            cond_name = f"취업커뮤니티면제_{ex['대상']}_{grp}_{student_type}"
+            cond_id = graph.add_condition(cond_name, {
+                "값": ex["설명"],
+                "원본키": "취업커뮤니티요건",
+                "조건유형": "취업커뮤니티_면제",
+                "대상": ex["대상"],
+            })
+            graph.add_relation(nid, cond_id, "면제_적용")
+            count += 1
+
+    # ── G) OCU 노드: 출석요건 분해 ──
+    for nid, data in graph._nodes_by_type("OCU"):
+        attendance = data.get("출석요건", "")
+        if attendance:
+            m = re.search(r"(\d+)/(\d+)", attendance)
+            cond_id = graph.add_condition(f"OCU_출석요건_{nid}", {
+                "값": attendance,
+                "원본키": "출석요건",
+                "조건유형": "OCU_출석",
+                "필요일수": m.group(1) if m else "",
+                "총일수": m.group(2) if m else "",
+            })
+            graph.add_relation(nid, cond_id, "제약한다")
+            count += 1
+
+        max_sem = data.get("정규학기_최대학점") or data.get("정규학기_최대과목")
+        if max_sem:
+            cond_id = graph.add_condition(f"OCU_학기한도_{nid}", {
+                "값": str(max_sem),
+                "원본키": "정규학기_최대학점",
+                "조건유형": "OCU_학기한도",
+            })
+            graph.add_relation(nid, cond_id, "제약한다")
+            count += 1
+
+        max_grad = data.get("졸업까지_최대학점") or data.get("졸업까지_최대과목")
+        if max_grad:
+            cond_id = graph.add_condition(f"OCU_졸업한도_{nid}", {
+                "값": str(max_grad),
+                "원본키": "졸업까지_최대학점",
+                "조건유형": "OCU_졸업한도",
+            })
+            graph.add_relation(nid, cond_id, "제약한다")
+            count += 1
+
+    logger.info(f"  면제·예외 조건 엣지 {count}개 생성")
+
+
+def _build_structural_edges(graph: AcademicGraph) -> None:
+    """고아 노드 연결 + 누락 조건 엣지화 + 과목 요건 노드 생성.
+
+    원칙 1(스키마 진화): 기존 노드 속성에서 조건을 자동 추출, 신규 노드 타입 추가 시
+                         코드 변경 없이 스키마 레지스트리가 자동 확장.
+    원칙 2(비용·지연): 엣지 탐색 O(degree) — 벡터 검색 불필요.
+    원칙 3(증분 업데이트): add_condition + upsert 패턴으로 재실행 안전.
+    """
+    import re
+    G = graph.G
+    count = 0
+
+    # ── P0-1: 교양영역 고아 → 졸업요건 "요구한다" 엣지 ──
+    lib_nodes = list(graph._type_index.get("교양영역", []))
+    for grad_nid, grad_data in graph._nodes_by_type("졸업요건"):
+        if grad_nid.startswith("grad_guide_"):
+            continue
+        if not grad_data.get("교양이수학점"):
+            continue
+        for lib_nid in lib_nodes:
+            if not G.has_edge(grad_nid, lib_nid):
+                graph.add_relation(grad_nid, lib_nid, "요구한다")
+                count += 1
+
+    # ── P0-2: 졸업인증 조건 노드 (TOPIK, 기업가정신 등) ──
+    _CERT_ITEMS = {
+        "TOPIK": ("TOPIK 등급 인증", "외국인"),
+        "기업정신": ("기업가정신 이수", "내국인"),
+        "기업가정신": ("기업가정신 이수", "내국인"),
+        "사회봉사": ("사회봉사 이수", "내국인"),
+    }
+    for nid, data in graph._nodes_by_type("졸업요건"):
+        if nid.startswith("grad_guide_"):
+            continue
+        cert = str(data.get("졸업인증", ""))
+        grp = data.get("적용학번그룹", "")
+        stype = data.get("학생유형", "")
+        if not cert or cert == "None":
+            continue
+        # TOPIK 등급 파싱
+        topik_m = re.search(r"TOPIK\s*(\d+)\s*급", cert)
+        if topik_m:
+            cond_id = graph.add_condition(f"졸업인증_TOPIK_{grp}_{stype}", {
+                "값": f"TOPIK {topik_m.group(1)}급 이상",
+                "조건유형": "졸업인증",
+                "대상": "외국인",
+                "원본키": "졸업인증",
+            })
+            graph.add_relation(nid, cond_id, "요구한다")
+            count += 1
+        # 내국인 졸업인증 세부
+        if stype == "내국인":
+            for kw, (desc, _) in _CERT_ITEMS.items():
+                if kw == "TOPIK":
+                    continue
+                cond_id = graph.add_condition(f"졸업인증_{kw}_{grp}_{stype}", {
+                    "값": desc,
+                    "조건유형": "졸업인증",
+                    "대상": "내국인",
+                    "원본키": "졸업인증",
+                })
+                graph.add_relation(nid, cond_id, "요구한다")
+                count += 1
+
+    # ── P0-3: 등록금반환 고아 → 루트 연결 + 기간별 환불비율 조건 ──
+    refund_root = "refund_root"
+    if refund_root in G.nodes:
+        for nid in list(graph._type_index.get("등록금반환", [])):
+            if nid == refund_root:
+                continue
+            if not G.has_edge(refund_root, nid):
+                graph.add_relation(refund_root, nid, "포함한다")
+                count += 1
+            # 기간별 환불 비율 파싱
+            desc = G.nodes[nid].get("설명", "")
+            # "30일까지 등록금의 6분의 5" 패턴
+            for m in re.finditer(
+                r"(\d+)일.*?(?:경과\s*전|까지)\s*등록금의\s*(\d+분의\s*\d+)", desc
+            ):
+                period, ratio = m.group(1), m.group(2)
+                cond_id = graph.add_condition(
+                    f"환불비율_{nid}_{period}일",
+                    {
+                        "값": f"{period}일까지: {ratio} 해당액",
+                        "조건유형": "등록금반환_비율",
+                        "원본키": "등록금반환",
+                        "기간": f"{period}일",
+                        "비율": ratio,
+                    },
+                )
+                graph.add_relation(nid, cond_id, "제약한다")
+                count += 1
+
+    # ── P0-4: 졸업유예 조건 노드 ──
+    # 졸업유예 정보는 FAQ-0031과 학사일정에만 있음.
+    # 졸업요건과 연결되는 조건 노드를 명시적으로 생성.
+    grad_deferment_items = [
+        {
+            "대상": "졸업유예_신청자격",
+            "설명": "졸업학점 충족 + 졸업시험 합격자가 취업 준비 등의 사유로 "
+                    "졸업을 유예할 수 있음. 최대 2학기까지.",
+        },
+        {
+            "대상": "졸업유예_등록금",
+            "설명": "졸업유예 시 수강신청을 하면 해당 학기 등록금을 납부해야 함. "
+                    "수강신청을 하지 않으면 등록금 면제.",
+        },
+    ]
+    for grad_nid, grad_data in graph._nodes_by_type("졸업요건"):
+        if grad_nid.startswith("grad_guide_"):
+            continue
+        stype = grad_data.get("학생유형", "")
+        if stype != "내국인":
+            continue
+        grp = grad_data.get("적용학번그룹", "")
+        for item in grad_deferment_items:
+            cond_id = graph.add_condition(
+                f"{item['대상']}_{grp}",
+                {
+                    "값": item["설명"],
+                    "조건유형": "졸업유예",
+                    "대상": item["대상"],
+                    "원본키": "졸업유예",
+                },
+            )
+            graph.add_relation(grad_nid, cond_id, "면제_적용")
+            count += 1
+
+    # ── P1-5: 채플/진로탐색/사회봉사/서비스러닝 과목 요건 노드 ──
+    # PDF에 있지만 그래프 노드가 없는 과목 요건. 벡터 청크에만 의존하면
+    # "채플 몇 학점?" 같은 질문에 그래프 답변 불가.
+    _COURSE_REQS = [
+        {
+            "id": "course_req_채플",
+            "구분": "채플",
+            "설명": "전 학년(1~4학년) 매학기 이수. P/NP 평가. 4학기 이상 이수 필수.",
+            "학점": "0학점 (P/NP)",
+        },
+        {
+            "id": "course_req_진로탐색",
+            "구분": "진로탐색",
+            "설명": "1학년 1학기 이수. 0.5학점. 진로설정은 1학년 2학기 이수. 0.5학점.",
+            "학점": "0.5학점",
+        },
+        {
+            "id": "course_req_사회봉사",
+            "구분": "사회봉사",
+            "설명": "30시간 이상 봉사활동. 졸업인증 요건. 학점 인정 과목으로 수강 가능.",
+            "학점": "1학점",
+        },
+        {
+            "id": "course_req_서비스러닝",
+            "구분": "글로컬서비스러닝",
+            "설명": "지역사회 문제해결 참여형 교과목. 교양 선택 과목으로 이수 가능.",
+            "학점": "3학점",
+        },
+    ]
+    for req in _COURSE_REQS:
+        nid = req["id"]
+        if nid not in G.nodes:
+            attrs = graph._merge(
+                {"type": "교과목요건", "구분": req["구분"], "설명": req["설명"], "학점": req["학점"]},
+                {},
+            )
+            G.add_node(nid, **attrs)
+            graph._index_add(nid, "교과목요건")
+            count += 1
+        # 졸업요건과 연결
+        for grad_nid in graph._type_index.get("졸업요건", []):
+            if grad_nid.startswith("grad_guide_"):
+                continue
+            grad_stype = G.nodes[grad_nid].get("학생유형", "")
+            if grad_stype == "내국인" and not G.has_edge(grad_nid, nid):
+                graph.add_relation(grad_nid, nid, "요구한다")
+                count += 1
+
+    # ── P1-7: 마이크로전공 7개 고아 → 전공이수방법 연결 ──
+    # micro_교양과정, micro_복수전공 등은 실제로 전공이수가이드 페이지 노드.
+    # 전공이수방법 노드에 포함한다 엣지로 연결.
+    method_nodes = list(graph._type_index.get("전공이수방법", []))
+    for micro_nid in list(graph._type_index.get("마이크로전공", [])):
+        if G.degree(micro_nid) > 0:
+            continue  # 이미 연결된 노드는 스킵
+        # 가장 가까운 전공이수방법 노드에 연결
+        for method_nid in method_nodes:
+            if not G.has_edge(method_nid, micro_nid):
+                graph.add_relation(method_nid, micro_nid, "포함한다")
+                count += 1
+                break  # 하나만 연결
+
+    # ── P1-8: 학사경고/제적 조건 노드 ──
+    _ACADEMIC_WARNING = [
+        {
+            "조건명": "학사경고_기준",
+            "값": "학기 평점평균 1.50 미만 시 학사경고",
+            "조건유형": "학사경고",
+        },
+        {
+            "조건명": "학사경고_연속제적",
+            "값": "학사경고 3회 연속 시 제적 처리",
+            "조건유형": "학사경고",
+        },
+        {
+            "조건명": "학사경고_장학제한",
+            "값": "학사경고 받은 학기 다음 학기 교내장학금 수혜 불가",
+            "조건유형": "학사경고",
+        },
+    ]
+    for item in _ACADEMIC_WARNING:
+        cond_id = graph.add_condition(item["조건명"], {
+            "값": item["값"],
+            "조건유형": item["조건유형"],
+            "원본키": "성적처리",
+        })
+        # 성적처리 노드와 연결
+        for grade_nid in graph._type_index.get("성적처리", []):
+            if not G.has_edge(grade_nid, cond_id):
+                graph.add_relation(grade_nid, cond_id, "제약한다")
+                count += 1
+                break  # 첫 번째 성적처리 노드에만
+
+    logger.info(f"  구조 보강 엣지 {count}개 생성")
 
 
 def _build_core_edges(graph: AcademicGraph) -> None:

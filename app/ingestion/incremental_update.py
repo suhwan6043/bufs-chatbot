@@ -86,34 +86,79 @@ class IncrementalUpdater:
 
     # ── 이벤트 핸들러 ─────────────────────────────────────────────
 
+    @staticmethod
+    def _is_pinned_notice(event: ChangeEvent) -> bool:
+        """고정공지 여부 판정 — 벡터 DB에 본문을 임베딩할지 결정.
+
+        원칙 2(비용·지연): 비고정 공지는 그래프 메타(제목+요약+태그+URL)로만 저장해
+        벡터 검색 대상을 축소, 노이즈 제거.
+        """
+        return bool(event.metadata.get("is_pinned"))
+
+    def _is_graph_only_notice(self, event: ChangeEvent) -> bool:
+        """비고정 공지 = 그래프만 업데이트, ChromaDB 임베딩 스킵.
+
+        원칙 1(스키마 진화): content_type이 "notice"이고 is_pinned가 아닌 것을 자동 분류.
+        """
+        return (
+            event.metadata.get("content_type") == "notice"
+            and not self._is_pinned_notice(event)
+        )
+
     def _handle_new(self, event: ChangeEvent) -> int:
-        """신규: 공지 텍스트 인제스트 → 첨부파일 다운로드 + PDF 인제스트 → 그래프 업데이트"""
+        """신규: 공지 텍스트 인제스트 → 첨부파일 다운로드 + PDF 인제스트 → 그래프 업데이트
+
+        비고정 공지(일반 번호 게시글)는 벡터 DB 스킵, 그래프만 업데이트.
+        고정공지는 기존 경로대로 벡터 DB + 그래프 모두 업데이트.
+        """
+        # 그래프는 항상 업데이트 (제목+요약+태그+URL 노드)
+        self._update_graph(event)
+
+        if self._is_graph_only_notice(event):
+            logger.info(
+                "비고정 공지 → 그래프만 업데이트 (벡터 스킵): %s",
+                event.title or event.source_id,
+            )
+            return 0
+
         chunks = self._event_to_chunks(event)
         if chunks:
             self.chroma.add_chunks(chunks)
         logger.info("신규 인제스트: %s (%d청크)", event.title or event.source_id, len(chunks))
 
         attach_count = self._ingest_attachments(event)
-        self._update_graph(event)
         return len(chunks) + attach_count
 
     def _handle_modified(self, event: ChangeEvent) -> int:
-        """수정: 기존 공지/첨부 청크 삭제 → 재인제스트 → 그래프 업데이트"""
-        # 공지 텍스트 청크 삭제
+        """수정: 기존 공지/첨부 청크 삭제 → 재인제스트 → 그래프 업데이트
+
+        비고정 공지: 기존 벡터 청크가 있으면 삭제만 하고 재인제스트는 않음.
+        """
+        # 그래프는 항상 업데이트
+        self._update_graph(event)
+
+        if self._is_graph_only_notice(event):
+            # 혹시 이전에 벡터 DB에 들어간 레거시 청크가 있으면 정리
+            deleted = self.chroma.delete_by_source(event.source_id)
+            self._delete_attachment_chunks(event.source_id)
+            if deleted:
+                logger.info(
+                    "비고정 공지 레거시 벡터 청크 정리: %s (%d청크 제거)",
+                    event.title or event.source_id, deleted,
+                )
+            return 0
+
+        # 기존 경로: 고정공지 또는 notice 아닌 콘텐츠
         deleted = self.chroma.delete_by_source(event.source_id)
         logger.debug("수정 전 기존 청크 삭제: %d개", deleted)
-
-        # 이전 첨부 PDF 청크 삭제
         self._delete_attachment_chunks(event.source_id)
 
-        # 재인제스트
         chunks = self._event_to_chunks(event)
         if chunks:
             self.chroma.add_chunks(chunks)
         logger.info("수정 재인제스트: %s (%d청크)", event.title or event.source_id, len(chunks))
 
         attach_count = self._ingest_attachments(event)
-        self._update_graph(event)
         return len(chunks) + attach_count
 
     def _handle_deleted(self, event: ChangeEvent) -> None:

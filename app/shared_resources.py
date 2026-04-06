@@ -29,9 +29,11 @@ logger = logging.getLogger(__name__)
 _embedder_lock = threading.Lock()
 _chroma_lock = threading.Lock()
 _translator_lock = threading.Lock()
+_bm25_lock = threading.Lock()
 _embedder = None
 _chroma_store = None
 _translator = None
+_bm25_index = None
 
 
 def get_embedder() -> "Embedder":
@@ -70,6 +72,25 @@ def get_translator() -> "ContextTranslator":
                 t.start()
                 logger.info("[shared] ContextTranslator 초기화 완료 (warmup 백그라운드 실행 중)")
     return _translator
+
+
+def get_bm25_index():
+    """프로세스 전역 BM25Index 싱글톤을 반환합니다.
+
+    원칙 2(비용·지연): ChromaDB 전량 로드 후 인메모리 BM25 인덱스 빌드.
+    ~1,200 청크 기준 <1초. Streamlit 시작 시 1회 실행.
+    """
+    global _bm25_index
+    if _bm25_index is None:
+        with _bm25_lock:
+            if _bm25_index is None:
+                logger.info("[shared] BM25Index 초기화 중...")
+                chroma = get_chroma_store()
+                from app.vectordb.bm25_index import BM25Index
+                _bm25_index = BM25Index(chroma)
+                _bm25_index.build()
+                logger.info("[shared] BM25Index 초기화 완료 (%d 문서)", _bm25_index.doc_count)
+    return _bm25_index
 
 
 def get_chroma_store() -> "ChromaStore":

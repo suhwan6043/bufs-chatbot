@@ -432,6 +432,11 @@ class QueryAnalyzer:
         if "조기졸업" in text:
             return Intent.EARLY_GRADUATION
 
+        # "장바구니 기간/언제" → SCHEDULE로 보내야 함 (REGISTRATION에 잡히면 안 됨)
+        _PERIOD_KW = ("기간", "언제", "날짜", "일정", "일자", "시작", "마감")
+        if "장바구니" in text and any(kw in text for kw in _PERIOD_KW):
+            return Intent.SCHEDULE
+
         if (
             any(kw in text for kw in ("직전학기", "평점 4.0", "학점이월", "재수강", "장바구니"))
             or ("ocu" in text and any(kw in text for kw in ("납부", "사용료", "출석", "id")))
