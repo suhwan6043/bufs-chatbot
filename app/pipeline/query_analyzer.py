@@ -131,6 +131,26 @@ class QueryAnalyzer:
         "편입생": re.compile(r"편입생?|편입학"),
     }
 
+    # EN 학생유형 패턴 (Gap 3)
+    EN_STUDENT_TYPE_PATTERNS = {
+        "외국인": re.compile(
+            r"international student|foreign student|exchange student", re.IGNORECASE
+        ),
+        "편입생": re.compile(
+            r"transfer student|transfer admission", re.IGNORECASE
+        ),
+    }
+
+    # EN 기간/한도 키워드 (Gap 2)
+    _EN_PERIOD_KW = (
+        "when", "schedule", "deadline", "period", "date",
+        "start", "end", "until", "from", "by when",
+    )
+    _EN_LIMIT_KW = (
+        "maximum", "max", "how many credits", "limit",
+        "how much", "up to", "at most",
+    )
+
     COURSE_NUMBER_PATTERN = re.compile(r"[A-Z]{2,4}\d{3,4}")
 
     # 과목명 추출 패턴: "미적분학 대체과목", "영어회화 과목 정보" 등
@@ -368,6 +388,28 @@ class QueryAnalyzer:
         if m:
             student_id = m.group(1) or m.group(2)  # 두 패턴 중 매칭된 그룹
 
+        # Gap 3: EN 학생유형 추출
+        student_type = None
+        for stype, pat in self.EN_STUDENT_TYPE_PATTERNS.items():
+            if pat.search(question):
+                student_type = stype
+                break
+
+        # Gap 2: EN question_focus 추출 (period / limit)
+        q_lower = question.lower()
+        entities: dict = {}
+        if any(kw in q_lower for kw in self._EN_PERIOD_KW):
+            entities["question_focus"] = "period"
+        elif any(kw in q_lower for kw in self._EN_LIMIT_KW):
+            entities["question_focus"] = "limit"
+
+        # Gap 3: 학과/부서 엔티티 추출 (matched_terms 기반)
+        dept_terms = [t["ko"] for t in matched_terms if any(
+            kw in t["ko"] for kw in self.DEPARTMENT_KEYWORDS
+        )]
+        if dept_terms:
+            entities["department"] = dept_terms[0]
+
         requires_graph = intent in (
             Intent.GRADUATION_REQ, Intent.EARLY_GRADUATION,
             Intent.ALTERNATIVE, Intent.SCHEDULE,
@@ -390,8 +432,8 @@ class QueryAnalyzer:
         return QueryAnalysis(
             intent=intent,
             student_id=student_id,
-            student_type=None,
-            entities={},
+            student_type=student_type,
+            entities=entities,
             requires_graph=requires_graph,
             requires_vector=requires_vector,
             missing_info=[],
