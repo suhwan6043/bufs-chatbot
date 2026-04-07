@@ -1,0 +1,903 @@
+# ============================================================
+# BUFS Academic Chatbot — 영한 용어 어휘집 (EN Glossary)
+# ============================================================
+# 목적: 영어 쿼리 → 한국어 용어 매핑 (FlashText O(N) 추출)
+#       LLM 출력 시 일관된 영문 용어명 강제
+#
+# 구조:
+#   ko          : 한국어 기준 용어 (ChromaDB 원문 표기와 일치)
+#   en          : 영어 고정 번역값 (LLM 출력에 사용)
+#   aliases_ko  : 동의어/약칭 (QueryAnalyzer 키워드 매핑용)
+#   aliases_en  : 영어 별칭 (영어 쿼리 인식용, FlashText 입력)
+#
+# 마지막 업데이트: 2026학년도 1학기
+# ============================================================
+
+terms:
+
+  # ════════════════════════════════════════════════════════════
+  # 전공 종류
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 제1전공
+    en: Primary Major
+    aliases_ko: [주전공, 1전공]
+    aliases_en: [primary major, first major, main major]
+
+  - ko: 제2전공
+    en: Secondary Major
+    aliases_ko: [2전공, 다전공]
+    aliases_en: [secondary major, second major, additional major]
+
+  - ko: 복수전공
+    en: Double Major
+    aliases_ko: [복전]
+    aliases_en: [double major, dual major]
+
+  - ko: 부전공
+    en: Minor
+    aliases_ko: [부전]
+    aliases_en: [minor, sub-major]
+
+  - ko: 마이크로전공
+    en: Micro Major
+    aliases_ko: [마이크로]
+    aliases_en: [micro major, micromajor]
+
+  - ko: 융합전공
+    en: Convergence Major
+    aliases_ko: [융합 전공, 연계전공]
+    aliases_en: [convergence major, interdisciplinary major, combined major]
+
+  - ko: 학생설계융합전공
+    en: Student-Designed Convergence Major
+    aliases_ko: [학생설계 융합전공]
+    aliases_en: [student-designed major, self-designed convergence major]
+
+  - ko: 단일전공
+    en: Single Major
+    aliases_ko: []
+    aliases_en: [single major, undivided major]
+
+  - ko: 전공 변경
+    en: Change of Major
+    aliases_ko: [전과]
+    aliases_en: [change major, switch major, transfer major]
+
+  - ko: 전공탐색과정
+    en: Major Exploration Program
+    aliases_ko: [전공탐색]
+    aliases_en: [major exploration, major discovery program]
+
+  - ko: 글로벌자유전공학부
+    en: Global Liberal Major School
+    aliases_ko: [글자전, 자유전공학부]
+    aliases_en: [global liberal major, undeclared major school]
+
+  # ════════════════════════════════════════════════════════════
+  # 이수 구분
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 교양필수
+    en: Required Liberal Arts
+    aliases_ko: [교필]
+    aliases_en: [required liberal arts, mandatory liberal arts]
+
+  - ko: 교양선택
+    en: Elective Liberal Arts
+    aliases_ko: [교선]
+    aliases_en: [elective liberal arts, optional liberal arts]
+
+  - ko: 인성체험교양
+    en: Character Development Liberal Arts
+    aliases_ko: [인성교양]
+    aliases_en: [character development, character experience liberal arts]
+
+  - ko: 기초교양
+    en: Basic Liberal Arts
+    aliases_ko: [기교]
+    aliases_en: [basic liberal arts, foundational liberal arts]
+
+  - ko: 균형교양
+    en: Balanced Liberal Arts
+    aliases_ko: [균형 교양]
+    aliases_en: [balanced liberal arts, general education electives]
+
+  - ko: 전공필수
+    en: Required Major Courses
+    aliases_ko: [전필]
+    aliases_en: [required major, mandatory major courses]
+
+  - ko: 전공선택
+    en: Elective Major Courses
+    aliases_ko: [전선]
+    aliases_en: [elective major, optional major courses]
+
+  - ko: 자유선택
+    en: Free Elective
+    aliases_ko: [자선, 타과전공]
+    aliases_en: [free elective, open elective, unrestricted elective]
+
+  - ko: 이수구분
+    en: Credit Classification
+    aliases_ko: []
+    aliases_en: [credit type, course category, credit classification]
+
+  - ko: 이수구분 변경
+    en: Credit Classification Change
+    aliases_ko: [이수구분변경]
+    aliases_en: [credit classification change, course category change]
+
+  # ════════════════════════════════════════════════════════════
+  # 학점 / 졸업
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 학점
+    en: credits
+    aliases_ko: [이수학점, 취득학점]
+    aliases_en: [credit, credits, credit hours, units]
+
+  - ko: 졸업요건
+    en: Graduation Requirements
+    aliases_ko: [졸업 조건, 졸업기준]
+    aliases_en: [graduation requirements, degree requirements, graduation criteria, graduate, graduation, degree completion]
+
+  - ko: 졸업이수학점
+    en: Required Credits for Graduation
+    aliases_ko: [졸업학점]
+    aliases_en: [graduation credits, credits required to graduate, credits to graduate]
+
+  - ko: 졸업인증제
+    en: Graduation Certification System
+    aliases_ko: [졸업인증]
+    aliases_en: [graduation certification, extracurricular certification system]
+
+  - ko: 비교과지수
+    en: Extracurricular Activity Index
+    aliases_ko: [비교과 점수, 비교과지수]
+    aliases_en: [extracurricular index, non-academic activity points]
+
+  - ko: 조기졸업
+    en: Early Graduation
+    aliases_ko: [7학기 졸업, 6학기 졸업]
+    aliases_en: [early graduation, accelerated graduation]
+
+  - ko: 학사학위취득유예
+    en: Graduation Deferral
+    aliases_ko: [졸업유예]
+    aliases_en: [graduation deferral, degree deferral]
+
+  - ko: 전공졸업시험
+    en: Major Graduation Examination
+    aliases_ko: [졸업시험, 전공 졸업 시험]
+    aliases_en: [graduation exam, major exit exam, capstone exam]
+
+  - ko: 학업성적사정표
+    en: Academic Progress Report
+    aliases_ko: [성적사정표]
+    aliases_en: [academic progress report, graduation audit, degree audit]
+
+  # ════════════════════════════════════════════════════════════
+  # 수강신청
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 수강신청
+    en: Course Registration
+    aliases_ko: [수강 신청, 강의 신청]
+    aliases_en: [course registration, class registration, enrollment, add-drop]
+
+  - ko: 장바구니 신청
+    en: Pre-Registration Wishlist
+    aliases_ko: [장바구니]
+    aliases_en: [wishlist registration, pre-registration, cart registration]
+
+  - ko: 수강신청 확인기간
+    en: Course Registration Adjustment Period
+    aliases_ko: [수강정정기간, 수강정정, 수강 확인기간]
+    aliases_en: [registration adjustment period, course correction period, add-drop adjustment period]
+
+  - ko: 취소-신청 지연제
+    en: Delayed Registration System
+    aliases_ko: [지연제]
+    aliases_en: [delayed registration, deferred enrollment system]
+
+  - ko: 재수강
+    en: Course Retake
+    aliases_ko: [재이수]
+    aliases_en: [retake, course retake, repeat course]
+
+  - ko: 수강 취소
+    en: Course Withdrawal
+    aliases_ko: [수강취소]
+    aliases_en: [course withdrawal, drop course, cancel registration]
+
+  - ko: 최대 수강 학점
+    en: Maximum Credit Load
+    aliases_ko: [최대학점, 최대 이수학점]
+    aliases_en: [maximum credits, credit limit, max credit load]
+
+  - ko: 학점이월제
+    en: Credit Carryover System
+    aliases_ko: [학점이월]
+    aliases_en: [credit carryover, credit rollover]
+
+  - ko: OCU
+    en: OCU (Online Consortium of Universities)
+    aliases_ko: [온라인 강의, 사이버강의]
+    aliases_en: [OCU, online consortium course, cyber university course]
+
+  # ════════════════════════════════════════════════════════════
+  # 성적
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 성적평가 선택제도
+    en: Pass/Fail Conversion System
+    aliases_ko: [성적선택제, P/NP 선택]
+    aliases_en: [pass/fail option, grade conversion system, P/NP selection]
+
+  - ko: 부분적 성적포기 제도
+    en: Partial Grade Waiver System
+    aliases_ko: [성적포기, 부분적 성적 포기]
+    aliases_en: [grade waiver, partial grade removal, grade forgiveness]
+
+  - ko: 학사경고
+    en: Academic Probation
+    aliases_ko: [학사 경고]
+    aliases_en: [academic probation, academic warning]
+
+  # ════════════════════════════════════════════════════════════
+  # 글로벌소통역량과정
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 글로벌소통역량과정
+    en: Global Communication Competency Program
+    aliases_ko: [글로벌소통역량, GCE, College English]
+    aliases_en: [global communication program, college english, GCE]
+
+  - ko: 영어 레벨테스트
+    en: English Placement Test
+    aliases_ko: [영어진단평가, 레벨테스트]
+    aliases_en: [english level test, english placement test, level test, placement exam]
+
+  # ════════════════════════════════════════════════════════════
+  # 휴복학 / 학적
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 휴학
+    en: Leave of Absence
+    aliases_ko: [휴학 신청]
+    aliases_en: [leave of absence, academic leave, LOA]
+
+  - ko: 복학
+    en: Return from Leave
+    aliases_ko: [복학 신청]
+    aliases_en: [return from leave, re-enrollment, reinstatement]
+
+  - ko: 자퇴
+    en: Voluntary Withdrawal
+    aliases_ko: [자퇴 신청]
+    aliases_en: [withdrawal, voluntary withdrawal, drop out]
+
+  - ko: 재입학
+    en: Readmission
+    aliases_ko: [재입학 신청]
+    aliases_en: [readmission, re-entry]
+
+  - ko: 편입생
+    en: Transfer Student
+    aliases_ko: [편입]
+    aliases_en: [transfer student, transfer]
+
+  - ko: 내국인
+    en: Domestic Student
+    aliases_ko: []
+    aliases_en: [domestic student, Korean student, local student]
+
+  - ko: 외국인 (유학생)
+    en: International Student
+    aliases_ko: [유학생, 외국인학생]
+    aliases_en: [international student, foreign student]
+
+  # ════════════════════════════════════════════════════════════
+  # 학사 일정
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 학사일정
+    en: Academic Calendar
+    aliases_ko: [학사 일정]
+    aliases_en: [academic calendar, school schedule, semester schedule]
+
+  - ko: 수강신청 기간
+    en: Course Registration Period
+    aliases_ko: [수강 신청 기간]
+    aliases_en: [registration period, enrollment period, add-drop period]
+
+  - ko: 학기
+    en: Semester
+    aliases_ko: [1학기, 2학기]
+    aliases_en: [semester, term, academic term]
+
+  - ko: 개강
+    en: Start of Semester
+    aliases_ko: [개강일, 수업시작일]
+    aliases_en: [start of semester, first day of class, semester start]
+
+  - ko: 중간고사
+    en: Midterm Exam
+    aliases_ko: [중간시험]
+    aliases_en: [midterm, midterm exam, midterm examination]
+
+  - ko: 기말고사
+    en: Final Exam
+    aliases_ko: [기말시험]
+    aliases_en: [final exam, final examination, finals]
+
+  - ko: 계절학기
+    en: Seasonal Session
+    aliases_ko: [하계계절학기, 동계계절학기]
+    aliases_en: [seasonal session, summer session, winter session, intersession]
+
+  - ko: 수업일수 1/4선
+    en: One-Quarter Point of the Semester
+    aliases_ko: [1/4선]
+    aliases_en: [quarter point, one-quarter of semester]
+
+  - ko: 수업일수 3/4선
+    en: Three-Quarter Point of the Semester
+    aliases_ko: [3/4선]
+    aliases_en: [three-quarter point, 3/4 of semester]
+
+  # ════════════════════════════════════════════════════════════
+  # 장학금
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 장학금
+    en: Scholarship
+    aliases_ko: [장학]
+    aliases_en: [scholarship, financial aid, grant, tuition waiver]
+
+  - ko: 성적 장학금
+    en: Merit-based Scholarship
+    aliases_ko: [성적우수 장학금]
+    aliases_en: [merit scholarship, academic scholarship, GPA-based scholarship]
+
+  - ko: 국가장학금
+    en: Government Scholarship
+    aliases_ko: [국장]
+    aliases_en: [government scholarship, national scholarship]
+
+  # ════════════════════════════════════════════════════════════
+  # 대체 / 동일 과목
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 대체과목
+    en: Substitute Course
+    aliases_ko: [대체 과목]
+    aliases_en: [substitute course, equivalent course, replacement course]
+
+  - ko: 동일과목
+    en: Identical Course
+    aliases_ko: [동일 과목]
+    aliases_en: [identical course, same course]
+
+  - ko: 폐지과목
+    en: Discontinued Course
+    aliases_ko: [폐지 과목]
+    aliases_en: [discontinued course, abolished course]
+
+  # ════════════════════════════════════════════════════════════
+  # 진로 / 취업 관련 교과목
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 취업커뮤니티
+    en: Career Development Community
+    aliases_ko: [취업커뮤니티Ⅰ, 취업커뮤니티Ⅱ]
+    aliases_en: [career development community, employment community]
+
+  - ko: 진로탐색
+    en: Career Exploration
+    aliases_ko: [커리어트리, 진로 탐색]
+    aliases_en: [career exploration, career discovery]
+
+  - ko: 진로설정
+    en: Career Planning
+    aliases_ko: [진로 설정]
+    aliases_en: [career planning, career setting]
+
+  - ko: 현장실습
+    en: Field Internship
+    aliases_ko: [산업체 현장실습, 현장 실습]
+    aliases_en: [field internship, workplace practice, industrial internship]
+
+  - ko: 자유학기제
+    en: Flexible Semester System
+    aliases_ko: [자유 학기제, 커리어팜, Career Farm]
+    aliases_en: [flexible semester, free semester system, career farm]
+
+  - ko: 사회봉사
+    en: Community Service
+    aliases_ko: [봉사활동, 자원봉사]
+    aliases_en: [community service, volunteer service, social service]
+
+  # ════════════════════════════════════════════════════════════
+  # 특수 교과목
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 채플
+    en: Chapel
+    aliases_ko: [채플Ⅰ, 채플Ⅱ]
+    aliases_en: [chapel, chapel course]
+
+  - ko: 신입생PSC세미나
+    en: Freshman PSC Seminar
+    aliases_ko: [PSC세미나, PSC 세미나, 대학생활과 미래설계]
+    aliases_en: [freshman seminar, PSC seminar, new student seminar]
+
+  - ko: 교직과정
+    en: Teacher Training Program
+    aliases_ko: [교직]
+    aliases_en: [teacher training, teaching certification program, pedagogy program]
+
+  - ko: 학·석사 연계과정
+    en: Combined Bachelor-Master Program
+    aliases_ko: [학석사 연계]
+    aliases_en: [combined bachelor master, BS-MS program, accelerated graduate program]
+
+  # ════════════════════════════════════════════════════════════
+  # 졸업 인증 (외국인)
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 졸업인증요건
+    en: Graduation Certification Requirement
+    aliases_ko: [졸업 인증]
+    aliases_en: [graduation certification requirement, language proficiency requirement]
+
+  # ════════════════════════════════════════════════════════════
+  # 시스템 / 포털
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 학생포털시스템
+    en: Student Portal System
+    aliases_ko: [학생포털, 포털]
+    aliases_en: [student portal, academic portal]
+
+  - ko: BUFS인재시스템
+    en: BUFS e-Portfolio System
+    aliases_ko: [인재시스템, eport]
+    aliases_en: [BUFS talent system, e-portfolio, extracurricular management system]
+
+  - ko: e-class
+    en: e-Class (LMS)
+    aliases_ko: [이클래스, 학습관리시스템]
+    aliases_en: [e-class, learning management system, LMS, online class platform]
+
+  # ════════════════════════════════════════════════════════════
+  # 출결 / 등록금
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 전자출결
+    en: Electronic Attendance
+    aliases_ko: [전자 출결, 출결 앱]
+    aliases_en: [electronic attendance, digital attendance, LMS attendance, attendance check]
+
+  - ko: 등록금반환
+    en: Tuition Refund
+    aliases_ko: [등록금 환불, 수업료 반환]
+    aliases_en: [tuition refund, tuition return, fee refund]
+
+  - ko: 등록금납부
+    en: Tuition Payment
+    aliases_ko: [등록금 납부, 수업료 납부]
+    aliases_en: [tuition payment, tuition fee payment, semester fee]
+
+  # ════════════════════════════════════════════════════════════
+  # 장학금 세부 유형 (scholarships.json 기반)
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 교내장학금
+    en: University Scholarship
+    aliases_ko: [학내 장학금]
+    aliases_en: [university scholarship, internal scholarship, institutional scholarship]
+
+  - ko: 성적우수장학금
+    en: Academic Excellence Scholarship
+    aliases_ko: [성적우수 장학, 성적장학금]
+    aliases_en: [academic excellence scholarship, merit-based scholarship, GPA scholarship, honor scholarship]
+
+  - ko: 근로장학금
+    en: Work-Study Scholarship
+    aliases_ko: [근로장학, 교내근로]
+    aliases_en: [work-study scholarship, student work scholarship, work-study program]
+
+  - ko: 외부장학금
+    en: External Scholarship
+    aliases_ko: [민간장학금, 재단 장학금]
+    aliases_en: [external scholarship, private scholarship, foundation scholarship, corporate scholarship]
+
+  - ko: 긴급장학금
+    en: Emergency Scholarship
+    aliases_ko: [긴급 장학금, 생활비지원 장학금]
+    aliases_en: [emergency scholarship, emergency financial aid, hardship scholarship]
+
+  - ko: 신입생장학금
+    en: Freshman Scholarship
+    aliases_ko: [입학장학금, 신입생 장학]
+    aliases_en: [freshman scholarship, admission scholarship, new student scholarship, entrance scholarship]
+
+  - ko: 외국인장학금
+    en: International Student Scholarship
+    aliases_ko: [유학생 장학금, 외국인 장학]
+    aliases_en: [international student scholarship, foreign student scholarship, GKS, global korea scholarship]
+
+  # ════════════════════════════════════════════════════════════
+  # 행정 부서 (contacts/departments.json 기반)
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 학사지원팀
+    en: Academic Affairs Team
+    aliases_ko: [학사팀, 학사지원]
+    aliases_en: [academic affairs, academic support team, academic affairs office, registrar]
+
+  - ko: 교무처
+    en: Office of Academic Affairs
+    aliases_ko: [교무팀, 교무]
+    aliases_en: [office of academic affairs, academic office, academic administration]
+
+  - ko: 국제교류처
+    en: International Exchange Office
+    aliases_ko: [국제처, 국제교류]
+    aliases_en: [international exchange office, international office, study abroad office]
+
+  - ko: 학생복지팀
+    en: Student Welfare Team
+    aliases_ko: [복지팀, 학생복지]
+    aliases_en: [student welfare, student services, student welfare team, financial aid office]
+
+  - ko: 입학홍보처
+    en: Admissions Office
+    aliases_ko: [입학처, 입학관리팀]
+    aliases_en: [admissions office, admissions, enrollment office]
+
+  - ko: 중앙도서관
+    en: Central Library
+    aliases_ko: [도서관, 학술정보]
+    aliases_en: [library, central library, academic library]
+
+  - ko: 학생상담센터
+    en: Student Counseling Center
+    aliases_ko: [상담센터, 심리상담]
+    aliases_en: [student counseling center, counseling center, mental health center]
+
+  - ko: 진로개발센터
+    en: Career Development Center
+    aliases_ko: [진로센터, 취업지원]
+    aliases_en: [career center, career development center, job placement office]
+
+  - ko: 생활관
+    en: Student Dormitory
+    aliases_ko: [기숙사, 외성생활관]
+    aliases_en: [dormitory, student residence, student housing, residence hall]
+
+  - ko: 국제학생지원팀
+    en: International Student Support Team
+    aliases_ko: [외국인학생, 국제학생]
+    aliases_en: [international student support, international student office, foreign student support]
+
+  # ════════════════════════════════════════════════════════════
+  # 학과 / 전공 — 유럽미주대학
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 영어학부
+    en: Department of English
+    aliases_ko: [영어과, 영어]
+    aliases_en: [english department, department of english, english studies, school of english]
+
+  - ko: 영어전공
+    en: English Major
+    aliases_ko: []
+    aliases_en: [english major, english language major]
+
+  - ko: 영어통번역전공
+    en: English Interpretation and Translation Major
+    aliases_ko: [영어통번역, 영어 통역, 영어 번역]
+    aliases_en: [english interpretation major, english translation major, english interpreting and translation]
+
+  - ko: 유럽학부
+    en: Department of European Studies
+    aliases_ko: []
+    aliases_en: [european studies, european studies department]
+
+  - ko: 프랑스어전공
+    en: French Language Major
+    aliases_ko: [프랑스어과, 프랑스어, 프랑스]
+    aliases_en: [french major, french language major, french studies, french department]
+
+  - ko: 독일어전공
+    en: German Language Major
+    aliases_ko: [독일어과, 독일어, 독일]
+    aliases_en: [german major, german language major, german studies, german department]
+
+  - ko: 스페인어전공
+    en: Spanish Language Major
+    aliases_ko: [스페인어과, 스페인어, 스페인]
+    aliases_en: [spanish major, spanish language major, spanish studies, spanish department]
+
+  - ko: 포르투갈(브라질)어전공
+    en: Portuguese Language Major
+    aliases_ko: [포르투갈어전공, 포르투갈어, 포르투갈, 브라질어]
+    aliases_en: [portuguese major, portuguese language major, brazilian portuguese major]
+
+  - ko: 이탈리아어전공
+    en: Italian Language Major
+    aliases_ko: [이탈리아어과, 이탈리아어, 이탈리아]
+    aliases_en: [italian major, italian language major, italian studies]
+
+  - ko: 러시아어전공
+    en: Russian Language Major
+    aliases_ko: [러시아어과, 러시아어, 러시아]
+    aliases_en: [russian major, russian language major, russian studies]
+
+  - ko: 유럽지역통상전공
+    en: European Regional Trade Major
+    aliases_ko: [유럽통상]
+    aliases_en: [european trade major, european regional trade, europe business major]
+
+  # ════════════════════════════════════════════════════════════
+  # 학과 / 전공 — 아시아대학
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 일본어융합학부
+    en: Department of Japanese Studies
+    aliases_ko: [일본어학부, 일본어과, 일본어, 일본]
+    aliases_en: [japanese department, japanese studies, department of japanese, japanese language department]
+
+  - ko: 한일문화콘텐츠전공
+    en: Korean-Japanese Cultural Content Major
+    aliases_ko: [한일문화콘텐츠, 한일콘텐츠]
+    aliases_en: [korean japanese cultural content, korean japanese content major]
+
+  - ko: 비즈니스일본어전공
+    en: Business Japanese Major
+    aliases_ko: [비즈니스일본어, 비즈일본어]
+    aliases_en: [business japanese major, japanese business major]
+
+  - ko: 일본어IT전공
+    en: Japanese IT Major
+    aliases_ko: [일본어IT, 일본어 IT]
+    aliases_en: [japanese IT major, japanese information technology major]
+
+  - ko: 중국학부
+    en: Department of Chinese Studies
+    aliases_ko: [중국어과, 중국어, 중국]
+    aliases_en: [chinese department, chinese studies, department of chinese, chinese language department]
+
+  - ko: 중국어전공
+    en: Chinese Language Major
+    aliases_ko: []
+    aliases_en: [chinese major, chinese language major]
+
+  - ko: 중국지역통상전공
+    en: Chinese Regional Trade Major
+    aliases_ko: [중국통상]
+    aliases_en: [chinese trade major, china regional trade, china business major]
+
+  - ko: 태국어전공
+    en: Thai Language Major
+    aliases_ko: [태국어과, 태국어, 태국]
+    aliases_en: [thai major, thai language major, thai studies, thai department]
+
+  - ko: 인도네시아·말레이시아전공
+    en: Indonesian and Malay Language Major
+    aliases_ko: [인도네시아전공, 말레이시아전공, 인도네시아, 말레이시아, 인니어]
+    aliases_en: [indonesian major, malay major, indonesian malay major, indonesian language major]
+
+  - ko: 베트남어전공
+    en: Vietnamese Language Major
+    aliases_ko: [베트남어과, 베트남어, 베트남]
+    aliases_en: [vietnamese major, vietnamese language major, vietnamese studies]
+
+  - ko: 미얀마어전공
+    en: Burmese Language Major
+    aliases_ko: [미얀마어, 미얀마]
+    aliases_en: [burmese major, myanmar language major, burmese language major]
+
+  - ko: 인도어전공
+    en: Hindi Language Major
+    aliases_ko: [힌디어, 인도어, 인도]
+    aliases_en: [hindi major, hindi language major, indian language major, hindi studies]
+
+  - ko: 아랍어전공
+    en: Arabic Language Major
+    aliases_ko: [아랍전공, 아랍어, 아랍]
+    aliases_en: [arabic major, arabic language major, arabic studies, arabic department]
+
+  - ko: 튀르키예어전공
+    en: Turkish Language Major
+    aliases_ko: [터키어전공, 터키어, 튀르키예어, 터키]
+    aliases_en: [turkish major, turkish language major, turkish studies]
+
+  # ════════════════════════════════════════════════════════════
+  # 학과 / 전공 — 사회과학대학
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 사회복지전공
+    en: Social Welfare Major
+    aliases_ko: [사회복지학과, 사회복지, 복지]
+    aliases_en: [social welfare major, social work major, social welfare department]
+
+  - ko: 상담심리전공
+    en: Counseling Psychology Major
+    aliases_ko: [심리상담전공, 상담심리, 심리학]
+    aliases_en: [counseling psychology major, psychology major, counseling major]
+
+  - ko: 경찰행정전공
+    en: Police Administration Major
+    aliases_ko: [경찰행정, 경찰]
+    aliases_en: [police administration major, police studies, law enforcement major]
+
+  - ko: 사이버경찰전공
+    en: Cyber Police Major
+    aliases_ko: [사이버경찰]
+    aliases_en: [cyber police major, cybersecurity police major]
+
+  - ko: 한국어교육전공
+    en: Korean Language Education Major
+    aliases_ko: [한국어교육, 국어교육]
+    aliases_en: [korean language education major, korean language teaching major, KSL major]
+
+  - ko: 외교전공
+    en: Diplomacy Major
+    aliases_ko: [외교학, 외교]
+    aliases_en: [diplomacy major, international relations major, diplomatic studies]
+
+  - ko: 국제개발협력전공
+    en: International Development Cooperation Major
+    aliases_ko: [국제개발협력, 개발협력, ODA]
+    aliases_en: [international development major, ODA major, development cooperation major]
+
+  - ko: 글로벌인재융합전공
+    en: Global Talent Convergence Major
+    aliases_ko: [글로벌인재융합, 인재융합]
+    aliases_en: [global talent convergence major, global human resources major]
+
+  - ko: 글로벌미래융합학부
+    en: Global Future Convergence School
+    aliases_ko: [글로벌미래융합, 미래융합학부, 미래융합]
+    aliases_en: [global future convergence, future convergence school, GFC]
+
+  # ════════════════════════════════════════════════════════════
+  # 학과 / 전공 — 상경대학
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 경영전공
+    en: Business Administration Major
+    aliases_ko: [경영학과, 경영]
+    aliases_en: [business major, business administration major, management major, MBA major]
+
+  - ko: 회계전공
+    en: Accounting Major
+    aliases_ko: [회계학과, 회계]
+    aliases_en: [accounting major, accounting department]
+
+  - ko: 경제금융전공
+    en: Economics and Finance Major
+    aliases_ko: [경제전공, 금융전공, 경제, 금융]
+    aliases_en: [economics major, finance major, economics and finance major]
+
+  - ko: 국제사무전공
+    en: International Affairs and Secretary Major
+    aliases_ko: [국제비서사무, 비서사무, 비서]
+    aliases_en: [international secretary major, international affairs major, secretary major]
+
+  - ko: 국제마케팅전공
+    en: International Marketing Major
+    aliases_ko: [마케팅전공, 마케팅]
+    aliases_en: [international marketing major, marketing major, global marketing major]
+
+  - ko: 국제무역전공
+    en: International Trade Major
+    aliases_ko: [무역전공, 무역]
+    aliases_en: [international trade major, trade major, global trade major]
+
+  - ko: 국제문화관광전공
+    en: International Cultural Tourism Major
+    aliases_ko: [관광전공, 관광]
+    aliases_en: [tourism major, international tourism major, cultural tourism major]
+
+  - ko: 호텔·컨벤션전공
+    en: Hotel and Convention Major
+    aliases_ko: [호텔전공, 호텔, 컨벤션]
+    aliases_en: [hotel major, convention major, hotel and convention major, hospitality major]
+
+  - ko: 항공서비스전공
+    en: Airline Service Major
+    aliases_ko: [항공서비스, 항공, 스튜어디스]
+    aliases_en: [airline service major, aviation service major, cabin crew major, flight attendant major]
+
+  - ko: 글로벌창업융합전공
+    en: Global Startup Convergence Major
+    aliases_ko: [글로벌창업융합, 창업융합]
+    aliases_en: [global startup major, entrepreneurship major, startup convergence major]
+
+  # ════════════════════════════════════════════════════════════
+  # 학과 / 전공 — 디지털미디어·IT대학
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 컴퓨터공학전공
+    en: Computer Engineering Major
+    aliases_ko: [컴퓨터공학, 컴공]
+    aliases_en: [computer engineering major, computer science major, CS major, CE major]
+
+  - ko: 소프트웨어전공
+    en: Software Engineering Major
+    aliases_ko: [소프트웨어, SW]
+    aliases_en: [software major, software engineering major, SW major]
+
+  - ko: 스마트융합보안전공
+    en: Smart Convergence Security Major
+    aliases_ko: [스마트융합보안, 보안전공, 정보보안]
+    aliases_en: [cybersecurity major, smart security major, information security major]
+
+  - ko: 전자·인공지능융합전공
+    en: Electronics and AI Convergence Major
+    aliases_ko: [전자인공지능융합, AI융합전공, 전자전공]
+    aliases_en: [electronics AI major, artificial intelligence major, AI convergence major]
+
+  - ko: 빅데이터전공
+    en: Big Data Major
+    aliases_ko: [빅데이터]
+    aliases_en: [big data major, data science major, data analytics major]
+
+  - ko: 글로벌웹툰콘텐츠전공
+    en: Global Webtoon Content Major
+    aliases_ko: [웹툰콘텐츠전공, 웹툰전공, 웹툰]
+    aliases_en: [webtoon major, webtoon content major, digital comics major]
+
+  - ko: 영상콘텐츠융합전공
+    en: Video Content Convergence Major
+    aliases_ko: [영상콘텐츠, 영상콘텐츠융합]
+    aliases_en: [video content major, media content major, film content major]
+
+  - ko: 스마트에너지·환경전공
+    en: Smart Energy and Environment Major
+    aliases_ko: [스마트에너지환경, 에너지환경, 환경전공]
+    aliases_en: [smart energy major, energy environment major, environmental engineering major]
+
+  # ════════════════════════════════════════════════════════════
+  # 단과대학 / 특수 학부
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 유럽미주대학
+    en: College of European and American Studies
+    aliases_ko: [유럽미주대, 유럽대학]
+    aliases_en: [european american college, college of european studies, european and american studies]
+
+  - ko: 아시아대학
+    en: College of Asian Studies
+    aliases_ko: [아시아대]
+    aliases_en: [asian studies college, college of asian languages, asian college]
+
+  - ko: 사회과학대학
+    en: College of Social Sciences
+    aliases_ko: [사회과학대, 사회대]
+    aliases_en: [social sciences college, college of social sciences]
+
+  - ko: 상경대학
+    en: College of Business and Economics
+    aliases_ko: [상경대, 경상대학]
+    aliases_en: [business college, college of business, economics college, business and economics]
+
+  - ko: 디지털미디어·IT대학
+    en: College of Digital Media and IT
+    aliases_ko: [디지털미디어대학, IT대학, 디지털대학]
+    aliases_en: [IT college, digital media college, college of IT, digital and IT college]
+
+  - ko: 만오교양대학
+    en: Liberal Arts College
+    aliases_ko: [교양대학, 만오교양, 교양학부]
+    aliases_en: [liberal arts college, general education college, college of liberal arts]
+
+  - ko: International College
+    en: International College
+    aliases_ko: [인터내셔널칼리지, IC, 국제대학]
+    aliases_en: [international college, IC, global studies college, english-medium college]
