@@ -20,7 +20,7 @@ from app.graphdb.academic_graph import get_student_group
 
 logger = logging.getLogger(__name__)
 
-_TERMS_YAML = Path(__file__).parent.parent.parent / "config" / "academic_terms.yaml"
+_TERMS_YAML = Path(__file__).parent.parent.parent / "config" / "en_glossary.yaml"
 
 
 class EnTermMapper:
@@ -94,6 +94,13 @@ class QueryAnalyzer:
     STUDENT_ID_SHORT_PATTERN = re.compile(r"\b([12]\d)학번")   # 22학번, 23학번 등 2자리 입력
     STUDENT_ID_RANGE_PATTERN = re.compile(r"(20[12]\d)\s*[~\-]\s*(20[12]\d)학번")
     STUDENT_ID_BOUND_PATTERN = re.compile(r"(20[12]\d)학번\s*(이후|이전)")
+    # EN 학번 추출: suffix 필수로 오탐 방지 ("the 2020 calendar" 같은 연도 참조 제외)
+    # 패턴 1: "class of 2020"  패턴 2: "2020 student/cohort/enrollment/year"
+    EN_COHORT_PATTERN = re.compile(
+        r"\bclass\s+of\s+(20[12]\d)\b"
+        r"|\b(20[12]\d)\s+(?:student|cohort|enrollment|year)\b",
+        re.IGNORECASE,
+    )
 
     STUDENT_TYPE_PATTERNS = {
         "외국인": re.compile(r"외국인|유학생|외국인학생"),
@@ -306,7 +313,8 @@ class QueryAnalyzer:
         영어 쿼리 분석:
           1. FlashText로 aliases_en → ko 용어 추출
           2. KO 용어로 Intent 분류 (기존 규칙 재사용)
-          3. 키워드 미검출 시 → GENERAL + BGE-M3 시맨틱 fallback
+          3. EN 학번 패턴으로 cohort 추출 ("class of 2020", "2020 student")
+          4. 키워드 미검출 시 → GENERAL + BGE-M3 시맨틱 fallback
         """
         matched_terms = self._en_mapper.extract(question)
         ko_terms = [t["ko"] for t in matched_terms]
@@ -314,6 +322,12 @@ class QueryAnalyzer:
         # KO 용어 문자열로 기존 Intent 분류기 재사용
         ko_text = " ".join(ko_terms) if ko_terms else ""
         intent = self._classify_intent(ko_text) if ko_text else Intent.GENERAL
+
+        # EN 학번 추출 ("class of 2020" / "2020 student" 등)
+        student_id = None
+        m = self.EN_COHORT_PATTERN.search(question)
+        if m:
+            student_id = m.group(1) or m.group(2)  # 두 패턴 중 매칭된 그룹
 
         requires_graph = intent in (
             Intent.GRADUATION_REQ, Intent.EARLY_GRADUATION,
@@ -325,13 +339,13 @@ class QueryAnalyzer:
         requires_vector = True
 
         logger.debug(
-            "EN query analyzed: intent=%s, matched=%s",
-            intent.value, [t["ko"] for t in matched_terms],
+            "EN query analyzed: intent=%s, student_id=%s, matched=%s",
+            intent.value, student_id, [t["ko"] for t in matched_terms],
         )
 
         return QueryAnalysis(
             intent=intent,
-            student_id=None,
+            student_id=student_id,
             student_type=None,
             entities={},
             requires_graph=requires_graph,

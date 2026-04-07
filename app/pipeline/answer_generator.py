@@ -158,6 +158,8 @@ class AnswerGenerator:
         parts = []
 
         if lang == "en":
+            if student_context:
+                parts.append(f"[Student Info]\n{student_context}\n")
             parts.append(f"[Context]\n{context}\n")
             parts.append(f"[Question] {question}")
         else:

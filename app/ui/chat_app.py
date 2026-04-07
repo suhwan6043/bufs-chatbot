@@ -1533,6 +1533,11 @@ async def generate_response(question: str) -> str:
     )
 
     if not merged.formatted_context.strip():
+        if analysis.lang == "en":
+            return (
+                "I'm sorry, but I couldn't find any relevant information in the academic regulations.\n\n"
+                "Please contact the Academic Affairs Office at +82-51-509-5182."
+            )
         return (
             "죄송합니다. 해당 질문에 대한 관련 정보를 찾을 수 없습니다.\n\n"
             "다음을 확인해 주세요:\n"
@@ -1540,7 +1545,7 @@ async def generate_response(question: str) -> str:
             "- 질문에 학번을 포함했는지 (예: 2023학번)"
         )
 
-    if merged.direct_answer:
+    if merged.direct_answer and analysis.lang != "en":
         return merged.direct_answer
 
     answer = await generator.generate_full(
@@ -1623,17 +1628,23 @@ async def generate_response_stream(question: str, placeholder) -> str:
             pass
 
     if not merged.formatted_context.strip():
-        msg = (
-            "죄송합니다. 해당 질문에 대한 관련 정보를 찾을 수 없습니다.\n\n"
-            "다음을 확인해 주세요:\n"
-            "- PDF 학사 안내 자료가 등록되어 있는지\n"
-            "- 질문에 학번을 포함했는지 (예: 2023학번)"
-        )
+        if analysis.lang == "en":
+            msg = (
+                "I'm sorry, but I couldn't find any relevant information in the academic regulations.\n\n"
+                "Please contact the Academic Affairs Office at +82-51-509-5182."
+            )
+        else:
+            msg = (
+                "죄송합니다. 해당 질문에 대한 관련 정보를 찾을 수 없습니다.\n\n"
+                "다음을 확인해 주세요:\n"
+                "- PDF 학사 안내 자료가 등록되어 있는지\n"
+                "- 질문에 학번을 포함했는지 (예: 2023학번)"
+            )
         placeholder.markdown(msg)
         _log(msg)
         return msg, [], []
 
-    if merged.direct_answer:
+    if merged.direct_answer and analysis.lang != "en":
         placeholder.markdown(merged.direct_answer)
         _log(merged.direct_answer)
         return merged.direct_answer, merged.source_urls, merged.vector_results + merged.graph_results

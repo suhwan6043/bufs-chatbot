@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 DATA_FILE = Path(__file__).parent.parent.parent / "data" / "contacts" / "departments.json"
 
-# 연락처 쿼리 트리거 키워드
+# 연락처 쿼리 트리거 키워드 (한국어)
 CONTACT_KEYWORDS = {
     "전화", "전화번호", "연락처", "연락", "번호",
     "전화기", "내선", "사무실", "직통",
@@ -31,6 +31,15 @@ CONTACT_KEYWORDS = {
 CONTACT_COMPOUND_PATTERNS = {
     "사무실 어디", "위치가 어디", "위치 어디", "어디에 있",
     "어디로 연락", "어디로 전화",
+}
+# 연락처 쿼리 트리거 키워드 (영어)
+CONTACT_KEYWORDS_EN = {
+    "phone", "number", "contact", "call", "reach",
+    "office", "extension", "hotline", "telephone",
+}
+CONTACT_COMPOUND_PATTERNS_EN = {
+    "phone number", "contact number", "how to contact",
+    "how do i reach", "where is the office", "office location",
 }
 
 
@@ -102,16 +111,37 @@ class DeptSearcher:
         알려진 학과/부서명이 함께 있을 때 True 반환합니다.
         """
         q = query.strip()
+        q_lower = q.lower()
         has_keyword = (
             any(kw in q for kw in CONTACT_KEYWORDS)
             or any(pat in q for pat in CONTACT_COMPOUND_PATTERNS)
+            or any(kw in q_lower for kw in CONTACT_KEYWORDS_EN)
+            or any(pat in q_lower for pat in CONTACT_COMPOUND_PATTERNS_EN)
         )
         if not has_keyword:
             return False
-        # 알려진 학과/부서가 쿼리에 있는지 확인
-        return bool(self.search(q, top_k=1))
+        # EN 쿼리: FlashText로 EN→KO 변환 후 KO 용어로 검색
+        search_q = self._en_to_ko_query(q)
+        return bool(self.search(search_q, top_k=1))
 
     # ── 내부 ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def _en_to_ko_query(query: str) -> str:
+        """EN 쿼리에 포함된 학술 용어를 KO로 치환하여 반환합니다.
+
+        'can you tell me english department number'
+        → 'english department number 영어학부'  (KO 용어 병합)
+        """
+        try:
+            from app.pipeline.query_analyzer import EnTermMapper
+            terms = EnTermMapper.get().extract(query)
+            if terms:
+                ko_terms = " ".join(t["ko"] for t in terms)
+                return f"{query} {ko_terms}"
+        except Exception:
+            pass
+        return query
 
     def _load(self) -> dict:
         try:
@@ -175,16 +205,17 @@ class DeptSearcher:
         """
         best_score = 0
         best_type = "none"
+        query_lower = query.lower()
 
         for alias in aliases:
             alias_l = alias.strip()
-            # 1. 정확 일치
-            if alias_l == query or alias_l in query:
-                if alias_l == query:
+            alias_lower = alias_l.lower()
+            # 1. 정확 일치 (대소문자 무시)
+            if alias_lower == query_lower or alias_lower in query_lower:
+                if alias_lower == query_lower:
                     score = 100 + len(alias_l)
                     mtype = "exact"
                 else:
-                    # alias가 query 안에 포함됨
                     score = 80 + len(alias_l)
                     mtype = "contains"
                 if score > best_score:
@@ -192,8 +223,8 @@ class DeptSearcher:
                     best_type = mtype
                 continue
 
-            # 2. 쿼리가 alias로 시작 또는 alias가 쿼리로 시작
-            if query.startswith(alias_l) or alias_l.startswith(query):
+            # 2. 쿼리가 alias로 시작 또는 alias가 쿼리로 시작 (대소문자 무시)
+            if query_lower.startswith(alias_lower) or alias_lower.startswith(query_lower):
                 score = 60 + len(alias_l)
                 if score > best_score:
                     best_score = score
