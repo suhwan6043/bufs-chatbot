@@ -89,10 +89,18 @@ class ChromaStore:
         doc_type: Optional[Union[str, List[str]]] = None,
         semester: Optional[str] = None,
         department: Optional[str] = None,
+        query_embedding: list = None,
     ) -> List[SearchResult]:
-        """쿼리에 대해 유사 문서를 검색합니다."""
+        """쿼리에 대해 유사 문서를 검색합니다.
+
+        원칙 2: query_embedding을 외부에서 전달하면 embed_query() 호출을 건너뛰어
+        동일 쿼리의 반복 임베딩을 방지합니다 (Phase 1/2/2.5 공유).
+        """
         n_results = n_results or settings.chroma.n_results
-        query_embedding = self.embedder.embed_query(query).tolist()
+        if query_embedding is None:
+            query_embedding = self.embedder.embed_query(query).tolist()
+        elif hasattr(query_embedding, 'tolist'):
+            query_embedding = query_embedding.tolist()
 
         where_filter = self._build_filter(student_id, doc_type, semester, department)
 

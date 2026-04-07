@@ -157,6 +157,16 @@ def main():
     else:
         logger.warning("PDF 없음: %s", timetable_path)
 
+    # ── 1b. 포털 PDF 인제스트 (학생포털시스템 캡처 PDF) ────────
+    portal_dir = ROOT / "data" / "pdfs" / "portal"
+    if portal_dir.exists():
+        portal_pdfs = sorted(portal_dir.glob("*.pdf"))
+        if portal_pdfs:
+            logger.info("=== 포털 PDF 인제스트: %d개 ===", len(portal_pdfs))
+            for pdf_file in portal_pdfs:
+                logger.info("  → %s", pdf_file.name)
+                ingest_pdf(pdf_path=str(pdf_file), student_id="2024", doc_type="domestic")
+
     # ── 2. 정적 페이지 전체 크롤링 ──────────────────────────
     with CONFIG_PATH.open(encoding="utf-8") as f:
         config = json.load(f)

@@ -234,56 +234,263 @@ graph = _get_graph()
 
 
 # ════════════════════════════════════════════════════
-# 헤더
+# 글로벌 CSS — Willow Dashboard 스타일
+# ════════════════════════════════════════════════════
+st.markdown("""
+<style>
+/* ── 사이드바 스타일 ── */
+section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+    border-right: 1px solid #e2e8f0;
+}
+section[data-testid="stSidebar"] .stRadio > label {
+    padding: 8px 12px !important;
+    border-radius: 8px !important;
+    margin-bottom: 2px !important;
+    font-size: 15px !important;
+    transition: background 0.15s;
+}
+section[data-testid="stSidebar"] .stRadio > label:hover {
+    background: #e8f0fe !important;
+}
+section[data-testid="stSidebar"] .stRadio > label[data-checked="true"] {
+    background: #1a73e8 !important;
+    color: white !important;
+}
+
+/* ── KPI 카드 ── */
+.kpi-card {
+    background: white;
+    border-radius: 14px;
+    padding: 20px 24px;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.06);
+    border: 1px solid #f0f0f0;
+    text-align: left;
+    transition: box-shadow 0.2s;
+}
+.kpi-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.10); }
+.kpi-card.blue   { border-left: 4px solid #1a73e8; }
+.kpi-card.green  { border-left: 4px solid #34a853; }
+.kpi-card.orange { border-left: 4px solid #ea8600; }
+.kpi-card.purple { border-left: 4px solid #9334e6; }
+.kpi-icon  { font-size: 28px; margin-bottom: 4px; }
+.kpi-value { font-size: 30px; font-weight: 700; color: #202124; margin: 2px 0; }
+.kpi-label { font-size: 13px; color: #5f6368; letter-spacing: 0.3px; }
+
+/* ── 페이지 헤더 ── */
+.page-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 6px;
+}
+.page-header h2 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 600;
+    color: #202124;
+}
+.header-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    margin-bottom: 8px;
+}
+
+/* ── 섹션 카드 ── */
+.section-card {
+    background: white;
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+    border: 1px solid #f0f0f0;
+    margin-bottom: 16px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+# ════════════════════════════════════════════════════
+# 사이드바 네비게이션 (원칙 4: dict 기반, 하드코딩 없음)
 # ════════════════════════════════════════════════════
 
+# 메뉴 정의 — 새 항목 추가 시 여기에만 추가하면 됨
+_ADMIN_PAGES = {
+    "📊 대시보드":       "dashboard",
+    "📋 졸업요건 관리":   "graduation",
+    "🎓 조기졸업 관리":   "early_grad",
+    "📅 학사일정 관리":   "schedule",
+    "📈 그래프 현황":     "graph_status",
+    "🕷️ 크롤러 관리":    "crawler",
+    "📞 연락처 관리":     "contact",
+    "📄 대화 로그":       "logs",
+}
+
+with st.sidebar:
+    # 로고 + 브랜딩
+    st.markdown("""
+    <div style="text-align:center; padding: 16px 0 8px;">
+        <div style="font-size:28px; font-weight:700; color:#1a73e8;">🎓 캠챗</div>
+        <div style="font-size:12px; color:#5f6368; margin-top:2px;">관리자 콘솔</div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.divider()
+
+    # 메뉴 선택
+    selected_label = st.radio(
+        "메뉴",
+        list(_ADMIN_PAGES.keys()),
+        label_visibility="collapsed",
+    )
+    _current_page = _ADMIN_PAGES[selected_label]
+
+    st.divider()
+
+    # 하단 정보 + 로그아웃
+    login_dt = datetime.fromtimestamp(
+        st.session_state.get("admin_login_time", time.time())
+    ).strftime("%H:%M")
+    st.caption(f"🕐 로그인: {login_dt}")
+    st.caption(f"📦 노드: {graph.G.number_of_nodes()} | 엣지: {graph.G.number_of_edges()}")
+
+    if st.button("🔄 그래프 새로고침", use_container_width=True):
+        st.session_state.pop("admin_graph", None)
+        st.rerun()
+    if st.button("🚪 로그아웃", use_container_width=True, type="primary"):
+        _audit("LOGOUT")
+        for key in ("is_admin", "admin_login_time", "admin_last_active", "admin_graph"):
+            st.session_state.pop(key, None)
+        st.rerun()
+
 # ── [수칙 5] 기본 비밀번호 경고 배너 ─────────────────
-# (수칙 6으로 이미 차단되지만, 혹시 코드를 직접 수정하여 우회한 경우 대비)
 if settings.admin.password == _ADMIN_PW_DEFAULT:
     st.warning(
         "**기본 비밀번호 사용 중** — `.env` 파일에서 `ADMIN_PASSWORD`를 변경하세요.",
         icon="⚠️",
     )
 
-col_title, col_actions = st.columns([5, 1])
-with col_title:
-    login_dt  = datetime.fromtimestamp(
-        st.session_state.get("admin_login_time", time.time())
-    ).strftime("%H:%M:%S")
-    timeout_m = settings.admin.session_timeout_minutes
-    st.title("🔧 캠챗 관리자 페이지")
-    st.caption(
-        f"로그인 시각: {login_dt}  |  "
-        f"세션 만료: {timeout_m}분 비활성 시  |  "
-        f"그래프: 노드 {graph.G.number_of_nodes()}개 / 엣지 {graph.G.number_of_edges()}개"
+
+# ════════════════════════════════════════════════════
+# 대시보드 페이지 (신규)
+# ════════════════════════════════════════════════════
+if _current_page == "dashboard":
+    st.markdown('<div class="page-header"><h2>📊 대시보드</h2></div>', unsafe_allow_html=True)
+
+    # ── KPI 데이터 수집 ──
+    from app.logging.chat_logger import ChatLogger
+    from datetime import date as _date_type
+    _logger = ChatLogger()
+    _today_logs = _logger.read(_date_type.today())
+    _all_logs = _logger.read_all()
+    _total_count = len(_all_logs)
+    _today_count = len(_today_logs)
+    _avg_dur = (
+        sum(l.get("duration_ms", 0) for l in _all_logs) / _total_count / 1000
+        if _total_count else 0.0
     )
+    _faq_count = len(graph._type_index.get("FAQ", []))
 
-with col_actions:
-    st.markdown("<div style='margin-top:1.4rem;'></div>", unsafe_allow_html=True)
-    if st.button("🔄 그래프 새로고침", use_container_width=True):
-        st.session_state.pop("admin_graph", None)
-        st.rerun()
-    if st.button("🚪 로그아웃", use_container_width=True):
-        _audit("LOGOUT")
-        for key in ("is_admin", "admin_login_time", "admin_last_active", "admin_graph"):
-            st.session_state.pop(key, None)
-        st.rerun()
+    # ── KPI 카드 4개 ──
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        st.markdown(f'''
+        <div class="kpi-card blue">
+            <div class="kpi-icon">💬</div>
+            <div class="kpi-value">{_total_count:,}</div>
+            <div class="kpi-label">총 대화 수</div>
+        </div>''', unsafe_allow_html=True)
+    with c2:
+        st.markdown(f'''
+        <div class="kpi-card green">
+            <div class="kpi-icon">📊</div>
+            <div class="kpi-value">{_today_count:,}</div>
+            <div class="kpi-label">오늘 대화</div>
+        </div>''', unsafe_allow_html=True)
+    with c3:
+        st.markdown(f'''
+        <div class="kpi-card orange">
+            <div class="kpi-icon">⏱️</div>
+            <div class="kpi-value">{_avg_dur:.1f}s</div>
+            <div class="kpi-label">평균 응답 시간</div>
+        </div>''', unsafe_allow_html=True)
+    with c4:
+        st.markdown(f'''
+        <div class="kpi-card purple">
+            <div class="kpi-icon">📋</div>
+            <div class="kpi-value">{_faq_count}</div>
+            <div class="kpi-label">FAQ 항목</div>
+        </div>''', unsafe_allow_html=True)
 
-st.divider()
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── 차트 영역 (2열) ──
+    chart_left, chart_right = st.columns([3, 2])
+
+    with chart_left:
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.subheader("📈 일별 대화 추이")
+        # 최근 7일 데이터
+        from datetime import timedelta
+        _dates = []
+        _counts = []
+        for i in range(6, -1, -1):
+            _d = (_date_type.today() - timedelta(days=i))
+            _dates.append(_d.strftime("%m-%d"))
+            _counts.append(len(_logger.read(_d)))
+        import pandas as pd
+        import altair as alt
+        _chart_df = pd.DataFrame({"날짜": _dates, "대화 수": _counts})
+        _bar = alt.Chart(_chart_df).mark_bar(color="#1a73e8", cornerRadiusTopLeft=4, cornerRadiusTopRight=4).encode(
+            x=alt.X("날짜:N", sort=None, axis=alt.Axis(labelAngle=0, title="날짜")),
+            y=alt.Y("대화 수:Q", axis=alt.Axis(title="대화 수")),
+            tooltip=["날짜", "대화 수"],
+        ).properties(height=300)
+        st.altair_chart(_bar, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    with chart_right:
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.subheader("🎯 Intent 분포")
+        _intent_counter = Counter(l.get("intent", "GENERAL") for l in _all_logs)
+        if _intent_counter:
+            _intent_df = pd.DataFrame(
+                list(_intent_counter.most_common()),
+                columns=["Intent", "건수"],
+            )
+            st.dataframe(_intent_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("대화 로그가 없습니다.")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── 최근 대화 테이블 ──
+    st.markdown('<div class="section-card">', unsafe_allow_html=True)
+    st.subheader("💬 최근 대화")
+    _recent = sorted(_all_logs, key=lambda x: x.get("timestamp", ""), reverse=True)[:10]
+    if _recent:
+        _rows = []
+        for l in _recent:
+            ts = l.get("timestamp", "")
+            if len(ts) >= 16:
+                ts = ts[5:16].replace("T", " ")
+            _rows.append({
+                "시간": ts,
+                "질문": (l.get("question", ""))[:50],
+                "Intent": l.get("intent", ""),
+                "응답(ms)": l.get("duration_ms", 0),
+                "만족도": "⭐" * l.get("rating", 0) if l.get("rating") else "-",
+            })
+        st.dataframe(pd.DataFrame(_rows), use_container_width=True, hide_index=True)
+    else:
+        st.info("아직 대화 기록이 없습니다.")
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 # ════════════════════════════════════════════════════
-# 탭 구성
+# 페이지 라우팅 — 기존 탭 내용을 조건부로 표시
 # ════════════════════════════════════════════════════
-tab_grad, tab_early, tab_schedule, tab_status, tab_crawler, tab_history, tab_contacts = st.tabs([
-    "📋 졸업요건 관리",
-    "🎓 조기졸업 관리",
-    "📅 학사일정 관리",
-    "📊 그래프 현황",
-    "🕷️ 크롤러 관리",
-    "📋 크롤 히스토리",
-    "📞 연락처 관리",
-])
+
+# (기존 탭 블록은 아래에서 if _current_page == "xxx": 조건부로 렌더링)
 
 
 # ════════════════════════════════════════════════════
@@ -346,7 +553,7 @@ def _cur_int(cur: dict, key: str, default: int) -> int:
         return default
 
 
-with tab_grad:
+if _current_page == "graduation":
     st.subheader("📋 졸업요건 관리")
     st.info(
         "학번 그룹과 학생 유형을 선택해 졸업요건을 입력·수정하세요.  \n"
@@ -655,7 +862,7 @@ with tab_grad:
 # ════════════════════════════════════════════════════
 # Tab 1 : 조기졸업 관리
 # ════════════════════════════════════════════════════
-with tab_early:
+if _current_page == "early_grad":
     st.subheader("조기졸업 데이터 관리")
     st.info(
         "각 섹션을 수정하고 **저장** 버튼을 누르면 그래프 파일에 즉시 반영됩니다.  \n"
@@ -845,7 +1052,7 @@ with tab_early:
 # ════════════════════════════════════════════════════
 # Tab 2 : 학사일정 관리
 # ════════════════════════════════════════════════════
-with tab_schedule:
+if _current_page == "schedule":
     st.subheader("학사일정 관리")
 
     all_schedules = sorted(
@@ -948,7 +1155,7 @@ with tab_schedule:
 # ════════════════════════════════════════════════════
 # Tab 3 : 그래프 현황
 # ════════════════════════════════════════════════════
-with tab_status:
+if _current_page == "graph_status":
     st.subheader("그래프 현황")
 
     type_counts = Counter(
@@ -1017,7 +1224,7 @@ _CRAWL_META = Path(settings.graph.graph_path).parent.parent / "crawl_meta"
 _HASH_FILE  = _CRAWL_META / "content_hashes.json"
 _HIST_FILE  = _CRAWL_META / "crawl_history.jsonl"
 
-with tab_crawler:
+if _current_page == "crawler":
     st.subheader("크롤러 관리")
 
     # ── 실시간 스케줄러 상태 ──────────────────────────
@@ -1199,7 +1406,7 @@ with tab_crawler:
 # ════════════════════════════════════════════════════
 # Tab 5 : 크롤 히스토리
 # ════════════════════════════════════════════════════
-with tab_history:
+if _current_page == "crawler":  # 크롤 히스토리도 크롤러 페이지에 통합
     st.subheader("크롤 히스토리")
 
     if _HIST_FILE.exists():
@@ -1251,7 +1458,7 @@ with tab_history:
         st.info("아직 크롤링을 실행한 적이 없습니다.")
 
 # ════════════════════════════════════════════════════
-with tab_contacts:
+if _current_page == "contact":
     st.subheader("학과/부서 연락처 관리")
 
     _CONTACTS_FILE = Path(__file__).resolve().parent.parent / "data" / "contacts" / "departments.json"
@@ -1332,3 +1539,113 @@ with tab_contacts:
 
     except Exception as e:
         st.error(f"연락처 모듈 로드 실패: {e}")
+
+
+# ════════════════════════════════════════════════════
+# 대화 로그 (기존 pages/logs.py 기능 통합)
+# ════════════════════════════════════════════════════
+if _current_page == "logs":
+    st.markdown('<div class="page-header"><h2>📄 대화 로그</h2></div>', unsafe_allow_html=True)
+
+    from app.logging import ChatLogger
+    from datetime import date as _date_cls, timedelta as _td
+    import io
+
+    _chat_logger = ChatLogger()
+    _log_dates = _chat_logger.list_dates()
+
+    if not _log_dates:
+        st.info("아직 저장된 대화 로그가 없습니다.")
+    else:
+        # 필터
+        fc1, fc2, fc3 = st.columns([2, 2, 2])
+        with fc1:
+            _show_all = st.checkbox("전체 기간 보기", value=False)
+        with fc2:
+            _sel_date = None
+            if not _show_all:
+                _sel_date = st.selectbox(
+                    "날짜 선택", options=_log_dates,
+                    format_func=lambda d: d.strftime("%Y년 %m월 %d일"),
+                )
+        _INTENT_LABELS = {
+            "전체": "전체", "GRADUATION_REQ": "졸업요건", "REGISTRATION": "수강신청",
+            "SCHEDULE": "학사일정", "COURSE_INFO": "교과목", "MAJOR_CHANGE": "전과",
+            "ALTERNATIVE": "대안/선택", "GENERAL": "일반",
+            "LEAVE_OF_ABSENCE": "학적변동", "EARLY_GRADUATION": "조기졸업",
+            "SCHOLARSHIP": "장학금",
+        }
+        with fc3:
+            _filter_intent = st.selectbox(
+                "인텐트 필터",
+                options=list(_INTENT_LABELS.keys()),
+                format_func=lambda k: _INTENT_LABELS[k],
+            )
+
+        _entries = _chat_logger.read_all() if _show_all else _chat_logger.read(_sel_date)
+        if _filter_intent != "전체":
+            _entries = [e for e in _entries if e.get("intent") == _filter_intent]
+
+        # KPI
+        _today_cnt = len(_chat_logger.read(_date_cls.today()))
+        _avg_ms = (sum(e.get("duration_ms", 0) for e in _entries) / len(_entries)) if _entries else 0
+        _intents = [e.get("intent", "") for e in _entries if e.get("intent")]
+        _top_raw = Counter(_intents).most_common(1)
+        _top_intent = _INTENT_LABELS.get(_top_raw[0][0], _top_raw[0][0]) if _top_raw else "-"
+
+        m1, m2, m3, m4 = st.columns(4)
+        with m1:
+            st.markdown(f'<div class="kpi-card blue"><div class="kpi-value">{len(_entries)}</div><div class="kpi-label">조회 대화 수</div></div>', unsafe_allow_html=True)
+        with m2:
+            st.markdown(f'<div class="kpi-card green"><div class="kpi-value">{_today_cnt}</div><div class="kpi-label">오늘 대화</div></div>', unsafe_allow_html=True)
+        with m3:
+            st.markdown(f'<div class="kpi-card orange"><div class="kpi-value">{_avg_ms/1000:.1f}s</div><div class="kpi-label">평균 응답</div></div>', unsafe_allow_html=True)
+        with m4:
+            st.markdown(f'<div class="kpi-card purple"><div class="kpi-value">{_top_intent}</div><div class="kpi-label">최다 인텐트</div></div>', unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        if _entries:
+            import pandas as pd
+            _df = pd.DataFrame(_entries)
+            _df["시간"] = pd.to_datetime(_df["timestamp"]).dt.strftime("%m/%d %H:%M")
+            _df["학번"] = _df["student_id"].fillna("").astype(str)
+            _df["인텐트"] = _df["intent"].map(lambda x: _INTENT_LABELS.get(x, x))
+            _df["질문"] = _df["question"]
+            _df["답변 미리보기"] = _df["answer"].str[:60] + "..."
+            _df["응답(ms)"] = _df["duration_ms"].fillna(0).astype(int)
+            if "rating" not in _df.columns:
+                _df["rating"] = None
+            _df["별점"] = _df["rating"].apply(
+                lambda r: ("★" * int(r) + "☆" * (5 - int(r))) if pd.notna(r) and r else "-"
+            )
+            st.dataframe(
+                _df[["시간", "학번", "인텐트", "질문", "답변 미리보기", "응답(ms)", "별점"]],
+                use_container_width=True, hide_index=True, height=340,
+            )
+
+            # 다운로드
+            st.markdown("---")
+            dl1, dl2 = st.columns(2)
+            with dl1:
+                _buf = io.StringIO()
+                _dl_df = pd.DataFrame(_entries)
+                _avail = ["timestamp", "session_id", "student_id", "intent", "question", "answer", "duration_ms", "rating"]
+                _dl_df = _dl_df[[c for c in _avail if c in _dl_df.columns]]
+                _dl_df.to_csv(_buf, index=False, encoding="utf-8-sig")
+                st.download_button(
+                    "📊 CSV 다운로드",
+                    data=_buf.getvalue().encode("utf-8-sig"),
+                    file_name=f"캠챗_로그_{_date_cls.today().isoformat()}.csv",
+                    mime="text/csv", use_container_width=True,
+                )
+            with dl2:
+                _jsonl = "\n".join(json.dumps(e, ensure_ascii=False) for e in _entries)
+                st.download_button(
+                    "📄 JSONL 다운로드",
+                    data=_jsonl.encode("utf-8"),
+                    file_name=f"캠챗_로그_{_date_cls.today().isoformat()}.jsonl",
+                    mime="application/json", use_container_width=True,
+                )
+        else:
+            st.info("해당 조건의 로그가 없습니다.")

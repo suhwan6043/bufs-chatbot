@@ -473,7 +473,10 @@ async def main(argv: list[str]) -> None:
     chroma_store = ChromaStore(embedder=embedder)
     academic_graph = AcademicGraph()
     analyzer = QueryAnalyzer()
-    router = QueryRouter(chroma_store=chroma_store, academic_graph=academic_graph)
+    from app.vectordb.bm25_index import BM25Index
+    bm25 = BM25Index(chroma_store)
+    bm25.build()
+    router = QueryRouter(chroma_store=chroma_store, academic_graph=academic_graph, bm25_index=bm25)
     merger = ContextMerger()
     generator = AnswerGenerator()
 

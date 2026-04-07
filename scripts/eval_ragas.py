@@ -151,7 +151,13 @@ from app.vectordb import ChromaStore
 store = ChromaStore()
 analyzer = QueryAnalyzer()
 graph = AcademicGraph()
-router = QueryRouter(store, graph)
+
+# BM25 하이브리드 검색 활성화
+from app.vectordb.bm25_index import BM25Index
+bm25 = BM25Index(store)
+bm25.build()
+
+router = QueryRouter(store, graph, bm25_index=bm25)
 merger = ContextMerger()
 generator = AnswerGenerator()
 

@@ -13,7 +13,9 @@ from typing import Optional
 import yaml
 from flashtext import KeywordProcessor
 
-from app.models import Intent, QueryAnalysis
+import numpy as np
+
+from app.models import Intent, QueryAnalysis, QuestionType
 from app.pipeline.glossary import Glossary
 from app.pipeline.language_detector import detect_language
 from app.graphdb.academic_graph import get_student_group
@@ -21,6 +23,28 @@ from app.graphdb.academic_graph import get_student_group
 logger = logging.getLogger(__name__)
 
 _TERMS_YAML = Path(__file__).parent.parent.parent / "config" / "academic_terms.yaml"
+_QT_YAML = Path(__file__).parent.parent.parent / "config" / "question_types.yaml"
+
+# ── QuestionType 분류기 ───────────────────────────────────────
+# 원칙 2: BGE-M3 임베딩 재사용, 추가 모델 없이 cosine similarity
+# 원칙 4: reference phrases를 YAML 데이터로 관리 (하드코딩 금지)
+
+_QT_NAME_TO_ENUM = {
+    "overview": QuestionType.OVERVIEW,
+    "factoid": QuestionType.FACTOID,
+    "procedural": QuestionType.PROCEDURAL,
+    "reasoning": QuestionType.REASONING,
+}
+
+# 질문어 패턴 — overview 판정용 (이 단어가 없으면 overview 후보)
+_QUESTION_WORDS = (
+    "어떻게", "언제", "얼마", "몇", "어디", "뭐", "무엇",
+    "왜", "가능", "되나", "할 수", "하나요", "인가요", "인지",
+    "방법", "절차", "서류", "조건", "자격",
+    "주소", "사이트", "전화", "번호", "이메일",  # 구체 정보 요청
+    "알려", "보여", "설명", "찾아", "확인",  # 암시적 요청 표현
+    "궁금", "문의",  # 정보 요청 표현
+)
 
 
 class EnTermMapper:
@@ -126,20 +150,23 @@ class QueryAnalyzer:
         ],
         Intent.GRADUATION_REQ: [
             "졸업", "졸업요건", "졸업학점", "이수학점",
-            "몇 학점", "교양", "전공학점", "글로벌소통역량",
+            "몇 학점", "전공학점", "글로벌소통역량",
             "취업커뮤니티", "NOMAD", "졸업인증", "졸업시험",
-            "학점인정", "선이수", "인정",
+            "학점인정", "선이수",
             # 성적처리기준
-            "성적처리", "성적기준", "평점산출", "평점계산", "학점계산",
-            "성적이의", "성적정정",
+            "성적처리", "성적 처리", "성적기준", "평점산출", "평점계산", "학점계산",
+            "성적이의", "성적정정", "이의신청",
+            # 평가방식
+            "상대평가", "절대평가", "성적평가",
         ],
         Intent.REGISTRATION: [
-            "수강신청", "수강", "재수강", "학점이월",
+            "수강신청", "수강", "재수강", "학점이월", "학점 이월", "이월", "신청가능학점",
             "최대학점", "신청학점", "취소", "최대신청",
             "한국열린사이버대학교", "OCU", "장바구니", "납부",
             "수강신청 정정", "수강정정", "공인결석계",
             "이수 가능", "신청 가능", "수강 가능",
             "이수구분", "이수구분 변경", "이수구분 신청",
+            # "자주 묻는 질문", "FAQ" → GENERAL 자연 분류 (특정 토픽 아님)
             # 계절학기
             "계절학기", "계절수업", "하계학기", "동계학기",
             # 성적선택제도 (A~F / P/NP 선택 신청)
@@ -153,14 +180,14 @@ class QueryAnalyzer:
             "등록금납부", "수업료 반환",
         ],
         Intent.SCHEDULE: [
-            "언제", "기간", "일정", "마감", "시작일", "종료일",
+            "언제", "기간", "일정", "일자", "스케줄", "마감", "시작일", "종료일",
             "중간고사", "기말고사", "개강", "종강", "방학",
             "수강취소", "수업일수", "학사일정",
-            # 시험
-            "시험", "시험기간", "고사",
+            # 시험 — "시험" 단독은 모호(일정 vs 평가방법)하므로 제외
+            "시험기간", "시험일정", "고사",
         ],
         Intent.COURSE_INFO: [
-            "과목", "교과목", "수업", "강의",
+            "과목", "교과목", "수업", "강의", "강의실",
             "개설", "강좌", "온라인", "대면", "플립",
         ],
         Intent.MAJOR_CHANGE: [
@@ -171,7 +198,7 @@ class QueryAnalyzer:
             "주전공+복수전공", "복수전공 이수학점",
         ],
         Intent.ALTERNATIVE: [
-            "대체", "동일과목", "폐지", "변경", "대신",
+            "대체", "동일과목", "폐지", "대신",
             "대체과목", "대체가능",
         ],
         Intent.SCHOLARSHIP: [
@@ -228,9 +255,13 @@ class QueryAnalyzer:
         "글로벌소통역량": ["글로벌소통", "College English", "AI플러스"],
     }
 
-    def __init__(self):
+    def __init__(self, embedder=None):
         self.glossary = Glossary()
         self._en_mapper = EnTermMapper.get()
+        # QuestionType 분류용 임베딩 캐시 (원칙 2: lazy init)
+        self._embedder = embedder
+        self._qt_config = self._load_qt_config()
+        self._qt_ref_cache: dict | None = None  # {type_name: np.ndarray mean_emb}
 
     def analyze(self, question: str) -> QueryAnalysis:
         lang = detect_language(question)
@@ -246,12 +277,14 @@ class QueryAnalyzer:
         if student_groups:
             entities["student_groups"] = student_groups
 
+        # GENERAL도 그래프 활성화 — FAQ 검색은 그래프 경로 내에서 실행되므로
+        # GENERAL에서도 FAQ direct_answer를 활용하려면 requires_graph 필요
         requires_graph = intent in (
             Intent.GRADUATION_REQ, Intent.EARLY_GRADUATION,
             Intent.ALTERNATIVE, Intent.SCHEDULE,
             Intent.COURSE_INFO, Intent.MAJOR_CHANGE, Intent.REGISTRATION,
             Intent.SCHOLARSHIP, Intent.LEAVE_OF_ABSENCE,
-            Intent.TRANSCRIPT,
+            Intent.TRANSCRIPT, Intent.GENERAL,
         )
         requires_vector = intent not in (Intent.SCHEDULE, Intent.ALTERNATIVE)
 
@@ -290,6 +323,11 @@ class QueryAnalyzer:
         ):
             missing_info.append("student_id")
 
+        # 원칙 2: QuestionType 분류 (Embedding 유사도 + Heuristic)
+        question_type = self._classify_question_type(
+            normalized, entities.get("question_focus"),
+        )
+
         return QueryAnalysis(
             intent=intent,
             student_id=student_id,
@@ -299,6 +337,7 @@ class QueryAnalyzer:
             requires_vector=requires_vector,
             missing_info=missing_info,
             lang="ko",
+            question_type=question_type,
         )
 
     def _analyze_en(self, question: str) -> QueryAnalysis:
@@ -320,13 +359,18 @@ class QueryAnalyzer:
             Intent.ALTERNATIVE, Intent.SCHEDULE,
             Intent.COURSE_INFO, Intent.MAJOR_CHANGE, Intent.REGISTRATION,
             Intent.SCHOLARSHIP, Intent.LEAVE_OF_ABSENCE,
+            Intent.GENERAL,
         )
         # EN은 항상 vector 검색 (BGE-M3 크로스링구얼)
         requires_vector = True
 
+        # EN 쿼리도 QuestionType 분류 (KO 용어 기반)
+        qt_text = ko_text if ko_text else question
+        question_type = self._classify_question_type(qt_text)
+
         logger.debug(
-            "EN query analyzed: intent=%s, matched=%s",
-            intent.value, [t["ko"] for t in matched_terms],
+            "EN query analyzed: intent=%s, qt=%s, matched=%s",
+            intent.value, question_type.value, [t["ko"] for t in matched_terms],
         )
 
         return QueryAnalysis(
@@ -338,6 +382,7 @@ class QueryAnalyzer:
             requires_vector=requires_vector,
             missing_info=[],
             lang="en",
+            question_type=question_type,
             matched_terms=matched_terms,
         )
 
@@ -422,7 +467,7 @@ class QueryAnalyzer:
         return "내국인"
 
     # 기간/일정 관련 키워드 (wrong_slot 방지용)
-    _PERIOD_KW = ("언제", "기간", "일정", "날짜", "시작", "종료", "마감", "부터", "까지", "신청일", "며칠")
+    _PERIOD_KW = ("언제", "기간", "일정", "날짜", "날", "일자", "시작", "종료", "마감", "신청일", "며칠")
     # 한도/수치 관련 키워드
     _LIMIT_KW  = ("최대", "얼마", "몇 학점", "한도", "제한", "이수 가능", "신청 가능", "수강 가능")
 
@@ -433,8 +478,7 @@ class QueryAnalyzer:
             return Intent.EARLY_GRADUATION
 
         # "장바구니 기간/언제" → SCHEDULE로 보내야 함 (REGISTRATION에 잡히면 안 됨)
-        _PERIOD_KW = ("기간", "언제", "날짜", "일정", "일자", "시작", "마감")
-        if "장바구니" in text and any(kw in text for kw in _PERIOD_KW):
+        if "장바구니" in text and any(kw in text for kw in self._PERIOD_KW):
             return Intent.SCHEDULE
 
         if (
@@ -459,8 +503,12 @@ class QueryAnalyzer:
         if "과목명" in text and any(kw in text for kw in ("동일", "같은", "중복", "코드", "다르")):
             return Intent.REGISTRATION
 
-        # 계절학기 질문 → REGISTRATION (SCHEDULE 아님)
-        if "계절학기" in text and not any(kw in text for kw in ("기간", "언제", "일정")):
+        # 계절학기 + 날짜/기간 질문 → SCHEDULE (성적확정 언제, 기간 등)
+        if "계절학기" in text and any(kw in text for kw in ("기간", "언제", "일정", "확정", "성적확정")):
+            return Intent.SCHEDULE
+
+        # 계절학기 질문 (방법/자격/수강 등) → REGISTRATION
+        if "계절학기" in text:
             return Intent.REGISTRATION
 
         # 졸업유보/유예 + 수강/등록금 → REGISTRATION
@@ -486,7 +534,7 @@ class QueryAnalyzer:
                           "취소하고", "취소 후", "재신청", "초과", "복학생", "처리")
         if (
             "수강신청" in text
-            and any(kw in text for kw in ("기간", "언제", "시작", "마감", "까지"))
+            and any(kw in text for kw in ("기간", "언제", "시작", "마감", "까지", "일자", "스케줄", "날"))
             and not any(kw in text for kw in _REG_METHOD_KW)
         ):
             return Intent.SCHEDULE
@@ -495,8 +543,8 @@ class QueryAnalyzer:
         if any(kw in text for kw in ("방법1", "방법2", "방법3", "이수방법1", "이수방법2", "이수방법3")):
             return Intent.MAJOR_CHANGE
 
-        # ���과(학과 변경) 질문 → MAJOR_CHANGE (LEAVE_OF_ABSENCE와 혼동 방지)
-        if any(kw in text for kw in ("전���", "학과 변경", "학과변경")) and not any(
+        # 전과(학과 변경) 질문 → MAJOR_CHANGE (LEAVE_OF_ABSENCE와 혼동 방지)
+        if any(kw in text for kw in ("전과", "전공변경", "학과 변경", "학과변경")) and not any(
             kw in text for kw in ("휴학", "복학", "자퇴", "제적")
         ):
             return Intent.MAJOR_CHANGE
@@ -518,14 +566,33 @@ class QueryAnalyzer:
         ):
             return Intent.LEAVE_OF_ABSENCE
 
+        # 동적 타이브레이커: question_focus(period/limit)로 동점 해소
+        # 원칙 4: 하드코딩 priority 대신 질문 분석 결과로 동적 결정
+        is_period = any(kw in text for kw in self._PERIOD_KW)
+        is_limit = any(kw in text for kw in self._LIMIT_KW)
+
+        max_score = max(scores.values())
+        top = [i for i, s in scores.items() if s == max_score]
+
+        focus_is_method = any(kw in text for kw in ("어떻게", "방법", "절차"))
+        if len(top) > 1:
+            if is_period and Intent.SCHEDULE in top:
+                return Intent.SCHEDULE
+            if is_limit:
+                for candidate in (Intent.REGISTRATION, Intent.GRADUATION_REQ):
+                    if candidate in top:
+                        return candidate
+            # method focus: 휴학/복학/전과 방법 질문 → LEAVE_OF_ABSENCE
+            if focus_is_method and Intent.LEAVE_OF_ABSENCE in top:
+                return Intent.LEAVE_OF_ABSENCE
+
+        # fallback: 최후 수단으로만 사용
         priority = [
             Intent.ALTERNATIVE, Intent.EARLY_GRADUATION, Intent.GRADUATION_REQ,
             Intent.REGISTRATION, Intent.SCHEDULE,
             Intent.MAJOR_CHANGE, Intent.COURSE_INFO, Intent.SCHOLARSHIP,
             Intent.LEAVE_OF_ABSENCE, Intent.TRANSCRIPT,
         ]
-        max_score = max(scores.values())
-        top = [i for i, s in scores.items() if s == max_score]
         for p in priority:
             if p in top:
                 return p
@@ -582,10 +649,140 @@ class QueryAnalyzer:
         if "topik" in text.lower():
             entities["graduation_cert"] = "TOPIK"
 
-        # 질문 슬롯 유형 감지 (답변 생성 힌트용)
+        # 질문 슬롯 유형 감지 (답변 생성 힌트 + intent 라우팅용)
+        # 원칙 4: 하드코딩 priority 대신 question_focus로 동적 라우팅
+        _METHOD_KW_FOCUS  = ("어떻게", "방법", "절차", "서류", "어디서")
+        _LOCATION_KW      = ("어디", "어디서", "장소", "건물")
+        _ELIGIBILITY_KW   = ("가능한가", "가능한지", "되나요", "자격", "조건", "요건")
         if any(kw in text for kw in self._PERIOD_KW):
             entities["question_focus"] = "period"
         elif any(kw in text for kw in self._LIMIT_KW):
             entities["question_focus"] = "limit"
+        elif any(kw in text for kw in _METHOD_KW_FOCUS):
+            entities["question_focus"] = "method"
+        elif any(kw in text for kw in _LOCATION_KW):
+            entities["question_focus"] = "location"
+        elif any(kw in text for kw in _ELIGIBILITY_KW):
+            entities["question_focus"] = "eligibility"
 
         return entities
+
+    # ── QuestionType 분류 ─────────────────────────────────────
+    # 원칙 2: Embedding cosine similarity + heuristic fallback
+    # 원칙 4: reference phrases를 YAML로 관리 (config/question_types.yaml)
+
+    @staticmethod
+    def _load_qt_config() -> dict:
+        """question_types.yaml 로드."""
+        if not _QT_YAML.exists():
+            return {}
+        with _QT_YAML.open(encoding="utf-8") as f:
+            return yaml.safe_load(f) or {}
+
+    def _build_qt_ref_embeddings(self) -> dict:
+        """Reference phrase 임베딩을 생성하고 캐시합니다.
+
+        원칙 2: 앱 시작 후 첫 호출 시 1회만 계산, 이후 재사용.
+        각 type별 reference phrases를 임베딩 → 평균 벡터로 요약.
+        """
+        if self._qt_ref_cache is not None:
+            return self._qt_ref_cache
+
+        qt_defs = self._qt_config.get("question_types", {})
+        if not qt_defs or not self._embedder:
+            self._qt_ref_cache = {}
+            return self._qt_ref_cache
+
+        cache: dict = {}
+        for type_name, type_def in qt_defs.items():
+            refs = type_def.get("references", [])
+            if not refs or type_name not in _QT_NAME_TO_ENUM:
+                continue
+            # Batch embed reference phrases
+            embeddings = self._embedder.embed_passages_batch(refs)
+            # Mean pooling → single representative vector
+            mean_emb = np.mean(embeddings, axis=0)
+            # L2 normalize
+            norm = np.linalg.norm(mean_emb)
+            if norm > 0:
+                mean_emb = mean_emb / norm
+            cache[type_name] = mean_emb
+
+        self._qt_ref_cache = cache
+        logger.info(
+            "QuestionType reference embeddings 생성: %s",
+            list(cache.keys()),
+        )
+        return cache
+
+    def _classify_question_type(
+        self, text: str, question_focus: str | None = None,
+    ) -> QuestionType:
+        """Embedding 유사도 + heuristic으로 질문 유형을 분류합니다.
+
+        분류 순서:
+        1. 짧은 쿼리 + 질문어 없음 → OVERVIEW (최우선, 임베딩보다 앞)
+        2. 조건문 패턴("~하면", "~면") → REASONING
+        3. question_focus → QuestionType 매핑
+        4. Embedding cosine similarity
+        5. Heuristic 기본값
+        """
+        max_tokens = (
+            self._qt_config
+            .get("classification", {})
+            .get("overview_max_tokens", 4)
+        )
+        tokens = [t for t in text.split() if len(t) > 0]
+        is_short = len(tokens) <= max_tokens or len(text) <= 8
+        has_question_word = any(qw in text for qw in _QUESTION_WORDS)
+
+        # ── 1단계: OVERVIEW (짧은 토픽 쿼리 — 최우선) ──────
+        if is_short and not has_question_word:
+            return QuestionType.OVERVIEW
+
+        # ── 2단계: 조건문 패턴 → REASONING ────────────────────
+        _CONDITIONAL_PATTERNS = ("하면", "으면", "면서", "경우", "때", "중에")
+        if any(p in text for p in _CONDITIONAL_PATTERNS) and has_question_word:
+            return QuestionType.REASONING
+
+        # ── 3단계: question_focus 연계 ────────────────────────
+        _FOCUS_MAP = {
+            "period": QuestionType.FACTOID,
+            "limit": QuestionType.FACTOID,
+            "method": QuestionType.PROCEDURAL,
+            "location": QuestionType.FACTOID,
+            "eligibility": QuestionType.REASONING,
+        }
+        if question_focus and question_focus in _FOCUS_MAP:
+            return _FOCUS_MAP[question_focus]
+
+        # ── 4단계: Embedding 유사도 ──────────────────────────
+        ref_cache = self._build_qt_ref_embeddings()
+        if ref_cache and self._embedder:
+            q_emb = self._embedder.embed_query(text)
+            q_norm = np.linalg.norm(q_emb)
+            if q_norm > 0:
+                q_emb = q_emb / q_norm
+
+            best_type = None
+            best_sim = -1.0
+            for type_name, ref_emb in ref_cache.items():
+                sim = float(np.dot(q_emb, ref_emb))
+                if sim > best_sim:
+                    best_sim = sim
+                    best_type = type_name
+
+            threshold = (
+                self._qt_config
+                .get("classification", {})
+                .get("similarity_threshold", 0.35)
+            )
+            if best_type and best_sim >= threshold:
+                logger.debug(
+                    "QuestionType(embed): %s (sim=%.3f) for '%s'",
+                    best_type, best_sim, text[:30],
+                )
+                return _QT_NAME_TO_ENUM.get(best_type, QuestionType.FACTOID)
+
+        # ── 5단계: 기본값 ────────────────────────────────────
+        return QuestionType.FACTOID

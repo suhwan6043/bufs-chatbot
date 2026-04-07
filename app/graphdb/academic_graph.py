@@ -222,6 +222,7 @@ class AcademicGraph:
         self.G = self._load_or_create()
         self._loaded_mtime = self._file_mtime()
         self._build_index()
+        self._faq_idf_cache: dict[str, float] | None = None
 
     def _file_mtime(self) -> float:
         """그래프 파일의 최종 수정 시각을 반환합니다."""
@@ -629,6 +630,26 @@ class AcademicGraph:
         self._index_add(node_id, "FAQ")
         return node_id
 
+    def _get_faq_idf(self) -> dict[str, float]:
+        """FAQ 코퍼스에서 IDF 가중치를 계산합니다 (캐시 사용).
+
+        원칙 1(유연한 스키마): FAQ 노드가 변경되면 재계산.
+        원칙 2(비용·지연 최적화): 첫 호출 시 1회 계산 후 캐시.
+        """
+        if self._faq_idf_cache is not None:
+            return self._faq_idf_cache
+        from app.pipeline.ko_tokenizer import compute_faq_idf
+        faq_texts = []
+        for nid in self._type_index.get("FAQ", []):
+            if nid not in self.G.nodes:
+                continue
+            data = self.G.nodes[nid]
+            q_text = data.get("구분", "") or ""
+            a_text = data.get("설명", "") or ""
+            faq_texts.append(f"{q_text} {a_text}")
+        self._faq_idf_cache = compute_faq_idf(faq_texts) if faq_texts else {}
+        return self._faq_idf_cache
+
     def search_faq(
         self,
         question: str,
@@ -636,16 +657,15 @@ class AcademicGraph:
         top_k: int = 5,
     ) -> List[SearchResult]:
         """
-        FAQ 그래프 검색 — 질문/답변 키워드 매칭 기반.
+        FAQ 그래프 검색 — IDF 가중 + 원본 stem 기반 precision 매칭.
 
         원칙 2(동적 커뮤니티 선택): FAQ 노드만 대상으로 O(M) 스캔,
         다른 노드 타입을 건드리지 않음.
 
-        매칭 규칙(오매칭 방지):
-        - ko_tokenizer.stems() 로 조사·어미를 제거한 어근 토큰만 사용.
-        - FAQ_STOPWORDS(전공·신청·가능·방법 등)를 제외한 "핵심 토큰"이 1개 이상
-          실제로 FAQ 텍스트(어근 기준)에 매칭돼야 후보가 된다.
-        - 질문이 전부 stopword(예: "신청 방법 어떻게 되나요?")면 기존처럼 stem 토큰 전체를 사용.
+        매칭 규칙:
+        - recall: bigram 확장 토큰으로 후보 필터링.
+        - precision: 원본 stem + IDF 가중치로 점수 계산.
+        - 질문이 전부 stopword면 기존처럼 stem 토큰 전체를 사용.
 
         Returns: direct_answer 플래그가 부착된 SearchResult 리스트
         """
@@ -664,6 +684,15 @@ class AcademicGraph:
         if not q_key:
             q_key = expand_tokens(q_stems, frozenset())
 
+        # 원본 stem 기준 precision 토큰 (bigram 부풀리기 방지)
+        # 원칙 2: recall은 bigram(q_key)으로, precision은 원본 stem(q_core)으로 분리
+        q_core = {s for s in q_stems if s not in FAQ_STOPWORDS and len(s) >= 2}
+        if not q_core:
+            q_core = {s for s in q_stems if len(s) >= 2}
+
+        # 원칙 4(하드코딩 금지): IDF 가중치로 토큰 중요도 자동 결정
+        idf = self._get_faq_idf()
+
         scored: list[tuple[float, str, dict]] = []
         for nid in self._type_index.get("FAQ", []):
             # 방어: _type_index는 stale할 수 있음 (G 교체 시)
@@ -676,32 +705,64 @@ class AcademicGraph:
                 continue
             q_text = data.get("구분", "") or ""
             a_text = data.get("설명", "") or ""
-            # FAQ 텍스트도 동일 방식으로 확장 — 양쪽 set 교집합 기반 매칭
+
+            # recall: bigram 확장 토큰으로 후보 필터링 (기존 방식)
             q_hay_key = expand_tokens(stems(q_text), FAQ_STOPWORDS)
             a_hay_key = expand_tokens(stems(a_text), FAQ_STOPWORDS)
-
-            match_q = len(q_key & q_hay_key)
-            match_a = len(q_key & a_hay_key)
-
-            if match_q == 0 and match_a == 0:
+            if not (q_key & q_hay_key) and not (q_key & a_hay_key):
                 continue
 
-            score = match_q * 2.0 + match_a * 1.0
-            if score > 0:
-                scored.append((score, nid, data))
+            # precision: 원본 stem + IDF 가중치로 점수 계산
+            faq_q_core = {s for s in stems(q_text) if len(s) >= 2}
+            faq_a_core = {s for s in stems(a_text) if len(s) >= 2}
+            matched_q = q_core & faq_q_core
+            matched_a = q_core & faq_a_core
+
+            # IDF 가중 점수: 희귀 토큰일수록 높은 점수
+            raw_score = (
+                sum(idf.get(t, 1.0) * 2.0 for t in matched_q)
+                + sum(idf.get(t, 1.0) * 1.0 for t in matched_a)
+            )
+            # 원칙 2: 길이 정규화 — 긴 질문의 편향 제거 (짧은 핵심 질문과 공정 비교)
+            if q_core:
+                raw_score /= (len(q_core) ** 0.5)
+            if raw_score <= 0:
+                continue
+
+            # 원칙 2: FAQ 구체성 페널티 — FAQ Q에 사용자가 안 물은 한정어가 있으면 감점
+            # "수강취소 어떻게?" vs "계절학기 수강취소 어떻게?" → "계절학기"가 초과 토큰
+            # IDF 가중: 흔한 토큰(과목)은 작은 페널티, 희귀 한정어(교양전공상호인정)는 큰 페널티
+            faq_q_filtered = {s for s in stems(q_text) if s not in FAQ_STOPWORDS and len(s) >= 2}
+            faq_extra = faq_q_filtered - q_core
+            if faq_extra:
+                extra_weight = sum(idf.get(t, 1.0) for t in faq_extra)
+                total_weight = sum(idf.get(t, 1.0) for t in faq_q_filtered) or 1.0
+                specificity_ratio = extra_weight / total_weight
+                raw_score *= (1.0 - specificity_ratio * 0.7)
+
+            scored.append((raw_score, nid, data))
 
         scored.sort(key=lambda x: x[0], reverse=True)
 
-        # direct_answer 임계값 — 확장된 매칭 key 크기 기준
-        top_score = scored[0][0] if scored else 0.0
-        max_possible = max(len(q_key), 1) * 2.0 + max(len(q_key), 1) * 1.0
-        if len(q_key) <= 2:
-            strong_match_threshold = 2.0
+        # FAQ score 정규화: 0~1.0 범위 (그래프 handler와 동등 경쟁)
+        # IDF 기반 max_raw: 모든 q_core 토큰이 Q+A 양쪽에서 매칭될 때의 최대 점수
+        max_raw = sum(idf.get(t, 1.0) * 3.0 for t in q_core) or 1.0
+        def _normalize_faq_score(raw: float) -> float:
+            return min(raw / max_raw, 1.0)
+
+        # direct_answer 임계값 — IDF 가중 점수 기준
+        # 원칙 2: 단일 토큰 쿼리는 매우 엄격한 임계값 적용
+        # → "수강신청" 같은 흔한 토큰이 관련 없는 FAQ에 direct_answer를 부여하는 것 방지
+        top_raw = scored[0][0] if scored else 0.0
+        if len(q_core) == 1:
+            strong_match_threshold = max_raw * 0.85
+        elif len(q_core) == 2:
+            strong_match_threshold = max_raw * 0.6
         else:
-            strong_match_threshold = max(3.0, max_possible * 0.4)
+            strong_match_threshold = max_raw * 0.4
 
         results: List[SearchResult] = []
-        for rank, (score, nid, data) in enumerate(scored[:top_k]):
+        for rank, (raw_score, nid, data) in enumerate(scored[:top_k]):
             category_tag = data.get("카테고리", "")
             header = f"[{category_tag}] " if category_tag else ""
             question_text = data.get("구분", "") or ""
@@ -721,15 +782,30 @@ class AcademicGraph:
             # 상위 1개 FAQ가 의미적으로 강하게 매칭된 경우에만 direct_answer 부여
             # context_merger가 이를 우선 사용하고 LLM이 FAQ 답을 뼈대로 사용.
             # 단, "어디서 확인/문의" 같은 리다이렉트 FAQ는 제외 — 구체 데이터를 가리면 안 됨.
-            if rank == 0 and score >= strong_match_threshold and answer_text:
-                if _is_redirect_answer(answer_text, metadata):
+            if rank == 0 and raw_score >= strong_match_threshold and answer_text:
+                # 원본 stem 커버리지 게이트: bigram 부풀리기 방지
+                # expand_tokens의 bigram이 점수를 과대 계산하는 문제를 원본 어근 기준으로 보정
+                q_core = {s for s in q_stems if s not in FAQ_STOPWORDS and len(s) >= 2}
+                faq_q_core = {s for s in stems(question_text) if s not in FAQ_STOPWORDS and len(s) >= 2}
+                faq_a_core = {s for s in stems(answer_text) if s not in FAQ_STOPWORDS and len(s) >= 2}
+                stem_coverage = (
+                    len(q_core & (faq_q_core | faq_a_core)) / len(q_core)
+                    if q_core else 1.0
+                )
+                if stem_coverage < 0.75:
+                    pass  # 커버리지 부족 → direct_answer 미부여
+                elif _is_redirect_answer(answer_text, metadata):
                     metadata.setdefault("answer_type", "redirect")
                 else:
                     metadata["direct_answer"] = answer_text
+            # FAQ도 원본 PDF 출처를 전달 (근거 문서 표시용)
+            faq_source = self.G.graph.get("source_pdf", "")
+            # 정규화된 score 사용: FAQ는 0~1.0 범위 (그래프 handler와 동등)
+            norm_score = _normalize_faq_score(raw_score)
             results.append(SearchResult(
                 text=text,
-                source=f"FAQ:{data.get('faq_id', nid)}",
-                score=float(score),
+                source=faq_source or f"FAQ:{data.get('faq_id', nid)}",
+                score=norm_score,
                 metadata=metadata,
             ))
         return results
@@ -873,6 +949,7 @@ class AcademicGraph:
         entities: dict = None,
         student_type: str = "내국인",
         question: str = "",
+        question_type: str = "",
     ) -> List[SearchResult]:
         """
         의도 + 엔티티에 따라 그래프를 탐색하고 SearchResult 리스트로 반환.
@@ -916,6 +993,11 @@ class AcademicGraph:
             )
 
         elif intent == "MAJOR_CHANGE":
+            # 교직 질문 시 교직 노드 우선 탐색 (전공이수방법은 보조)
+            if "교직" in question:
+                results.extend(
+                    self._query_teacher_training(entities.get("department", ""))
+                )
             if student_id:
                 results.extend(self._query_major_methods(student_id))
 
@@ -940,7 +1022,11 @@ class AcademicGraph:
             # 커뮤니티 화이트리스트에 FAQ가 없는 경우에도 GENERAL 외에는 기본 2개 유지 (호환)
             faq_allowed = allowed_node_types is None or "FAQ" in allowed_node_types
             if faq_allowed:
-                faq_top_k = 3 if intent in ("GENERAL", "REGISTRATION", "MAJOR_CHANGE", "ALTERNATIVE") else 2
+                # B1/B2 threshold 강화로 OVERVIEW 별도 축소 불필요 — intent 기준 유지
+                if intent in ("GENERAL", "REGISTRATION", "MAJOR_CHANGE", "ALTERNATIVE"):
+                    faq_top_k = 3
+                else:
+                    faq_top_k = 2
                 results.extend(self.search_faq(question, top_k=faq_top_k))
 
         # ── 보충 탐색 게이팅: direct_answer가 이미 있으면 보충 스킵 ──
@@ -1016,6 +1102,11 @@ class AcademicGraph:
         year, month, day = match.groups()
         return f"{int(year)}년 {int(month)}월 {int(day)}일"
 
+    @staticmethod
+    def _safe_tilde(text: str) -> str:
+        """Markdown 취소선(~~) 방지: 반각 ~ → 전각 〜"""
+        return text.replace("~", "\u301C") if text else text
+
     def _format_period(self, start: str, end: str) -> str:
         if not start:
             return ""
@@ -1070,7 +1161,7 @@ class AcademicGraph:
     ) -> SearchResult:
         start = schedule.get("시작일", "")
         end = schedule.get("종료일", "")
-        period = start if start == end else f"{start}~{end}"
+        period = start if start == end else f"{start}\u301C{end}"
         event_name = schedule.get("이벤트명", "")
         semester = schedule.get("학기", "")
 
@@ -1078,12 +1169,65 @@ class AcademicGraph:
         header = f"[{semester} 학사일정]" if semester else "[학사일정]"
         line = f"{header}\n- {event_name}: {period}"
         if schedule.get("비고"):
-            line += f" ({schedule['비고']})"
+            line += f" ({self._safe_tilde(schedule['비고'])})"
         metadata = {"direct_answer": answer_text} if answer_text else {}
         return self._make_graph_result(
             text=line, node_data=schedule, score=score,
             extra_meta=metadata,
         )
+
+    # 원칙 4(하드코딩 금지): 스케줄 트리거를 YAML 설정에서 로드
+    _schedule_triggers_cache: list | None = None
+
+    @classmethod
+    def _load_schedule_triggers(cls) -> list:
+        """config/schedule_triggers.yaml에서 트리거 규칙을 로드합니다."""
+        if cls._schedule_triggers_cache is not None:
+            return cls._schedule_triggers_cache
+        import yaml
+        from pathlib import Path
+        config_path = Path(__file__).resolve().parents[2] / "config" / "schedule_triggers.yaml"
+        if not config_path.exists():
+            logger.warning("schedule_triggers.yaml not found: %s", config_path)
+            cls._schedule_triggers_cache = []
+            return []
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+        cls._schedule_triggers_cache = data.get("triggers", [])
+        return cls._schedule_triggers_cache
+
+    @staticmethod
+    def _trigger_score(trigger: dict, question_norm: str) -> float:
+        """YAML 트리거 규칙의 소프트 스코어를 반환합니다.
+
+        원칙 4(하드코딩 금지): 룰 충돌을 코드 순서가 아닌 점수로 해결.
+        원칙 1(유연한 스키마): weight 필드로 트리거 강도 조정.
+
+        Returns: 0.0 이면 매칭 안 됨, 양수면 점수(높을수록 적합).
+        """
+        match_all = trigger.get("match_all", [])
+        match_any = trigger.get("match_any", [])
+        exclude   = trigger.get("exclude", [])
+        require_any = trigger.get("require_any", [])
+        weight    = float(trigger.get("weight", 1.0))
+
+        # Hard constraints: 하나라도 위반 시 즉시 0
+        if exclude and any(kw in question_norm for kw in exclude):
+            return 0.0
+        if match_all and not all(kw in question_norm for kw in match_all):
+            return 0.0
+        if require_any and not any(kw in question_norm for kw in require_any):
+            return 0.0
+
+        # Soft score: match_all + match_any 충족 수
+        any_count = sum(1 for kw in match_any if kw in question_norm) if match_any else 0
+        if match_any and any_count == 0 and not match_all:
+            return 0.0
+
+        score = len(match_all) + any_count
+        if score == 0:
+            return 0.0
+        return weight * score
 
     def _find_schedule_matches(self, question: str) -> List[dict]:
         schedules = self.get_schedules()
@@ -1096,86 +1240,43 @@ class AcademicGraph:
                 s["_normalized_event"] = self._normalize_text(s.get("이벤트명", ""))
 
         question_norm = self._normalize_text(question)
-        trigger_map = [
-            (
-                lambda q: "조기졸업" in q and any(
-                    kw in q for kw in ("기간", "언제", "신청", "일정", "마감")
-                ),
-                ["조기졸업신청"],
-            ),
-            (lambda q: "수강신청취소" in q or "수강취소" in q
-             or ("취소" in q and ("까지" in q or "언제" in q or "기간" in q)),
-             ["수업일수1/4선"]),
-            (lambda q: "수업시작일" in q or "수업시작" in q, ["수업시작일"]),
-            (lambda q: "ocu" in q and "개강" in q, ["ocu개강일"]),
-            (lambda q: "ocu" in q and ("수강신청" in q or "신청기간" in q),
-             ["수강신청"]),  # OCU 수강신청은 본교와 동일
-            (lambda q: "개강" in q and "수업시작" not in q and "ocu" not in q, ["개강"]),
-            (lambda q: "장바구니" in q and ("기간" in q or "언제" in q or "날짜" in q or "일자" in q or "일정" in q), ["장바구니"]),
-            (lambda q: "수강신청확인" in q or "수강정정" in q, ["수강신청확인"]),
-            (lambda q: "중간고사" in q, ["중간고사"]),
-            (lambda q: "기말고사" in q, ["기말고사"]),
-            (lambda q: "시험" in q and ("기간" in q or "언제" in q or "일정" in q)
-             and "중간" not in q and "기말" not in q, ["중간고사", "기말고사"]),
-            (lambda q: "중간" in q and "수업평가" in q, ["중간수업평가실시"]),
-            (lambda q: "기말" in q and "수업평가" in q, ["기말수업평가실시"]),
-            (lambda q: "수업평가" in q and "중간" not in q and "기말" not in q,
-             ["중간수업평가실시", "기말수업평가실시"]),
-            (lambda q: "제1·2전공" in q or "제1,2전공" in q or "변경(전과)" in q or "전과" in q,
-             ["제12전공신청및변경전과"]),
-            (lambda q: "ocu" in q and "납부" in q, ["ocusystem사용료납부기간", "ocu시스템사용료납부기간"]),
-            (lambda q: "야간" in q or any(f"{i}교시" in q for i in range(10, 15)), ["야간수업시간표"]),
-            (lambda q: "학위수여" in q or "졸업식" in q, ["학위수여식"]),
-            (lambda q: "학위" in q and "유예" in q, ["학사학위취득유예"]),
-            (lambda q: "수강신청" in q and ("기간" in q or "언제" in q or "신청일" in q or "며칠" in q or "날짜" in q or "일자" in q or "일정" in q)
-             and "정정" not in q and "확인" not in q and "취소" not in q
-             and "장바구니" not in q,
-             ["수강신청", "수강신청_1학년", "수강신청_2학년", "수강신청_3학년",
-              "수강신청_3,4학년", "수강신청_4학년", "수강신청_전학년"]),
-            # 성적 공시/확인 기간
-            (lambda q: "성적" in q and ("공시" in q or "확인" in q or "언제" in q or "발표" in q or "날짜" in q or "일자" in q or "일정" in q)
-             and "이의" not in q and "정정" not in q and "포기" not in q and "선택" not in q,
-             ["성적확인"]),
-            # 성적포기
-            (lambda q: "성적포기" in q and ("기간" in q or "언제" in q or "신청" in q or "날짜" in q or "일자" in q or "일정" in q),
-             ["부분적성적포기"]),
-            # 전과/전공변경
-            (lambda q: "전과" in q or "전공변경" in q or "전공바꾸" in q,
-             ["제12전공신청및변경전과", "전공신청및변경"]),
-            # 복수전공/부전공/제2전공 신청기간
-            (lambda q: ("복수전공" in q or "부전공" in q or "제2전공" in q or "융합전공" in q
-                        or "마이크로전공" in q)
-             and ("신청" in q or "기간" in q or "언제" in q or "날짜" in q or "일자" in q or "일정" in q),
-             ["제2전공", "제12전공"]),
-            # 졸업시험
-            (lambda q: "졸업시험" in q or "졸업논문" in q,
-             ["전공졸업시험"]),
-        ]
 
-        matched: List[dict] = []
-        for predicate, keywords in trigger_map:
-            if not predicate(question_norm):
+        # 원칙 1(유연한 스키마): YAML 설정 기반 범용 소프트 스코어링 엔진
+        # 원칙 4(하드코딩 금지): 룰 순서 대신 최고 점수 트리거 선택 → 룰 충돌 자동 해결
+        triggers = self._load_schedule_triggers()
+
+        best_score = 0.0
+        best_matched: List[dict] = []
+        for trigger in triggers:
+            score = self._trigger_score(trigger, question_norm)
+            if score <= 0:
                 continue
-            norm_keywords = [self._normalize_text(kw) for kw in keywords]
-            for schedule in schedules:
-                event_norm = schedule["_normalized_event"]
-                if any(kw in event_norm for kw in norm_keywords):
-                    matched.append(schedule)
-            if matched:
-                # "ocu"가 질문에 없으면 OCU 전용 이벤트 제외
-                if "ocu" not in question_norm:
-                    non_ocu = [m for m in matched if "ocu" not in m.get("_normalized_event", "").lower()]
-                    if non_ocu:
-                        matched = non_ocu
-                matched.sort(key=lambda m: len(m.get("이벤트명", "")))
-                return matched
+            event_keywords = trigger.get("event_keywords", [])
+            norm_keywords = [self._normalize_text(kw) for kw in event_keywords]
+            candidate = [
+                s for s in schedules
+                if any(kw in s["_normalized_event"] for kw in norm_keywords)
+            ]
+            if candidate and score > best_score:
+                best_score = score
+                best_matched = candidate
 
+        if best_matched:
+            # "ocu"가 질문에 없으면 OCU 전용 이벤트 제외
+            if "ocu" not in question_norm:
+                non_ocu = [m for m in best_matched if "ocu" not in m.get("_normalized_event", "").lower()]
+                if non_ocu:
+                    best_matched = non_ocu
+            best_matched.sort(key=lambda m: len(m.get("이벤트명", "")))
+            return best_matched
+
+        # fallback: 이벤트명 직접 포함 여부
+        matched: List[dict] = []
         for schedule in schedules:
             event_norm = schedule["_normalized_event"]
             if event_norm and (event_norm in question_norm or question_norm in event_norm):
                 matched.append(schedule)
 
-        # 짧은 이름(더 정확한 매칭)을 우선
         matched.sort(key=lambda m: len(m.get("이벤트명", "")))
         return matched
 
@@ -1425,6 +1526,23 @@ class AcademicGraph:
         if "계절학기" in question or "계절수업" in question:
             seasonal = self._nodes_by_type("계절학기")
             if seasonal:
+                _, first_data = seasonal[0]
+                first_data = dict(first_data)
+
+                # "최대 학점" 질문 → direct_answer로 정확한 답 반환
+                if any(kw in question for kw in ("최대", "학점", "취득", "몇")):
+                    per_sem = first_data.get("학기당최대학점", "")
+                    total = first_data.get("졸업까지최대학점", "")
+                    parts = []
+                    if per_sem:
+                        parts.append(f"계절학기 한 학기에 최대 {per_sem}까지 취득 가능합니다")
+                    if total:
+                        parts.append(f"졸업까지 최대 {total}까지 인정됩니다")
+                    if parts:
+                        answer = ". ".join(parts) + "."
+                        context = self._fmt_static_info(first_data, "계절학기")
+                        return [self._make_direct_result(context, answer, score=1.5, node_data=first_data)]
+
                 results = [self._make_graph_result(
                     text=self._fmt_static_info(dict(data), "계절학기"),
                     node_data=dict(data), score=1.3,
@@ -1468,7 +1586,8 @@ class AcademicGraph:
                     )]
 
         # 학점이월 전용 핸들러 (19학점 혼동 방지)
-        if "학점이월" in question:
+        # "학점이월" 외에도 "학점이 이월", "이월되는 기준" 등 자연어 표현 대응
+        if "학점이월" in question or ("이월" in question and "학점" in question):
             lines = ["[학점이월제]"]
             answer_parts = []
             for reg_grp in ("2022이전", "2023이후"):
@@ -1536,7 +1655,7 @@ class AcademicGraph:
                 end = sm.get("종료일", "")
                 answer = f"수강신청 장바구니 신청 기간은 {self._format_period(start, end)}입니다."
                 if sm.get("비고"):
-                    answer += f" ({sm['비고']})"
+                    answer += f" ({self._safe_tilde(sm['비고'])})"
                 context = f"[학사일정]\n- 장바구니 신청: {start}~{end}"
                 return [self._make_direct_result(context, answer, score=1.3, node_data=sm)]
 
@@ -1703,6 +1822,51 @@ class AcademicGraph:
                 context = f"[수강신청 취소]\n- 수강취소마감일시: {deadline}"
                 return [self._make_direct_result(context, answer, score=1.3, node_data=rule)]
 
+        # "주요 학사일정", "학사일정 전체", "이번 학기 일정" 등 포괄적 질문 → 전체 주요 일정 반환
+        q_norm = self._normalize_text(question or "")
+        if ("학사일정" in q_norm or ("일정" in q_norm and ("주요" in q_norm or "전체" in q_norm or "이번" in q_norm or "알려" in q_norm))):
+            schedules = self.get_schedules()
+            standard = sorted(
+                [s for s in schedules if s.get("시작일")],
+                key=lambda x: x.get("시작일", ""),
+            )
+            if standard:
+                # 주요 이벤트만 선별 (수강신청 학년별 중복 제거)
+                _MAJOR_EVENTS = {"개강", "수업시작일", "수강신청확인", "중간고사", "기말고사",
+                                 "하계방학", "동계방학", "종강", "학위수여식", "장바구니"}
+                major = []
+                for s in standard:
+                    evt = s.get("이벤트명", "")
+                    evt_norm = self._normalize_text(evt)
+                    if any(me in evt_norm for me in _MAJOR_EVENTS):
+                        major.append(s)
+                # 학년별 수강신청은 1개로 대표
+                seen_reg = False
+                filtered = []
+                for s in major:
+                    if "수강신청_" in s.get("이벤트명", "") and "학년" in s.get("이벤트명", ""):
+                        if not seen_reg:
+                            seen_reg = True
+                            filtered.append(s)
+                    else:
+                        filtered.append(s)
+                display = filtered if filtered else standard[:15]
+
+                lines = ["[주요 학사일정]"]
+                for s in display:
+                    start = s.get("시작일", "")
+                    end = s.get("종료일", "")
+                    period = self._format_date(start) if (not end or start == end) else self._format_period(start, end)
+                    line = f"- {s.get('이벤트명', '')}: {period}"
+                    if s.get("비고"):
+                        line += f" ※{self._safe_tilde(s['비고'])}"
+                    lines.append(line)
+                text = "\n".join(lines)
+                return [self._make_direct_result(
+                    context_text=text, answer_text=text,
+                    score=1.3, node_data=standard[0],
+                )]
+
         matches = self._find_schedule_matches(question)
         if matches:
             # 질문에서 학년도/학기 한정어 추출 (답변 미러링용)
@@ -1756,7 +1920,7 @@ class AcademicGraph:
             if "ocu" in question_norm and "개강" in question_norm:
                 answer = f"{_qualifier}OCU 개강일은 {self._format_date(start)}입니다."
                 if first.get("비고"):
-                    answer += f" {first['비고']}."
+                    answer += f" {self._safe_tilde(first['비고'])}."
 
             elif "개강" in question_norm and "수업시작" not in question_norm:
                 answer = f"{_qualifier}개강일은 {self._format_date(start)}입니다."
@@ -1778,17 +1942,21 @@ class AcademicGraph:
                     f"{self._format_period(start, end)}입니다."
                 )
 
-            # 학년별 수강신청 일정이 여러 개인데 학년 미지정이면 통합 답변
-            if (len(matches) > 1 and not grade_m
-                    and "수강신청" in question_norm
-                    and any("학년" in m.get("이벤트명", "") for m in matches)):
-                lines = [f"{_qualifier}수강신청 기간:"]
+            # 복수 매칭 통합 답변 (원칙 4: 이벤트 유형을 하드코딩하지 않고 범용 처리)
+            # 수강신청 학년별, 시험(중간+기말) 등 동일 질문에 여러 일정이 매칭될 때
+            if len(matches) > 1 and not grade_m:
+                lines = []
                 for m in matches:
                     m_start = m.get("시작일", "")
                     m_end = m.get("종료일", "")
                     m_name = m.get("이벤트명", "")
-                    period = self._format_date(m_start) if (not m_end or m_start == m_end) else self._format_period(m_start, m_end)
-                    lines.append(f"- {m_name}: {period}")
+                    period = (self._format_date(m_start)
+                              if (not m_end or m_start == m_end)
+                              else self._format_period(m_start, m_end))
+                    line = f"- {m_name}: {period}"
+                    if m.get("비고"):
+                        line += f" ({self._safe_tilde(m['비고'])})"
+                    lines.append(line)
                 answer = "\n".join(lines)
 
             results.append(self._schedule_to_result(first, answer, score=1.3))
@@ -1808,14 +1976,16 @@ class AcademicGraph:
             for s in sorted(standard, key=lambda x: x.get("시작일", "")):
                 start  = s.get("시작일", "")
                 end    = s.get("종료일", "")
-                period = start if start == end else f"{start}~{end}"
+                period = start if start == end else f"{start}\u301C{end}"
                 line   = f"- {s.get('이벤트명', '')}: {period} ({s.get('학기', '')})"
                 if s.get("시작시간"):           # OCU개강 등 시작시간 필드
                     line += f" {s['시작시간']}부터"
                 if s.get("비고"):
-                    line += f"  ※{s['비고']}"
+                    line += f"  ※{self._safe_tilde(s['비고'])}"
                 lines.append(line)
-            results.append(self._make_graph_result(text="\n".join(lines), node_data=None, score=1.0))
+            # 첫 번째 일정의 PDF 출처 메타를 전달 (근거 문서 표시용)
+            first_sched = standard[0] if standard else {}
+            results.append(self._make_graph_result(text="\n".join(lines), node_data=first_sched, score=1.0))
 
         # ② 시작일 없는 참조 노드(야간수업교시표 등) → 각각 별도 SearchResult
         skip_keys = {"id", "type", "이벤트명", "학기"}
@@ -2074,7 +2244,10 @@ class AcademicGraph:
         question_norm = self._normalize_text(question)
 
         # 휴복학 "기간/언제" 질문 → 학사일정에서 휴/복학 신청 기간 탐색
-        if any(kw in question_norm for kw in ("기간", "언제", "신청")):
+        # "어떻게/방법/절차" 등 방법 질문은 제외 → 날짜가 아닌 절차를 원함
+        _METHOD_KW = ("어떻게", "방법", "절차", "서류", "어디서")
+        if (any(kw in question_norm for kw in ("기간", "언제"))
+                and not any(kw in question_norm for kw in _METHOD_KW)):
             sched_matches = self._find_schedule_matches("휴복학")
             if not sched_matches:
                 sched_matches = self._find_schedule_matches("휴/복학")
@@ -2205,6 +2378,7 @@ class AcademicGraph:
             tags = data.get("태그", [])
             title_norm = self._normalize_text(data.get("제목", ""))
             summary_norm = self._normalize_text(data.get("내용요약", ""))
+            is_pinned = data.get("is_pinned", False)
             score = 0.8  # base score
 
             # 태그 매칭 (인텐트 기반)
@@ -2233,6 +2407,10 @@ class AcademicGraph:
             # target_tags가 비어 있어도 base score만인 공지는 노이즈이므로 걸러야 한다.
             if score <= 0.8:
                 continue
+
+            # 고정공지(📌) 부스트: 그래프/FAQ(Tier 2)와 동등 경쟁
+            if is_pinned and score < 1.2:
+                score += 0.2
 
             # 내용 포맷
             title = data.get("제목", "")
@@ -2594,7 +2772,7 @@ class AcademicGraph:
         if data.get("기준학점"):
             lines.append(f"- 기준학점: {data['기준학점']}학점 이상")
         if data.get("비고"):
-            lines.append(f"- 비고: {data['비고']}")
+            lines.append(f"- 비고: {self._safe_tilde(data['비고'])}")
         if data.get("이수조건"):
             lines.append(f"- 이수조건: {data['이수조건']}")
         return "\n".join(lines)

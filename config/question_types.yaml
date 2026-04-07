@@ -1,0 +1,66 @@
+# ── QuestionType 분류 설정 ──────────────────────────────────
+# 원칙 1: 새 유형 추가 시 여기에 reference phrase만 추가하면 코드 변경 불필요
+# 원칙 2: BGE-M3 임베딩 재사용, 추가 모델 없이 cosine similarity로 분류 (<5ms)
+# 원칙 4: 하드코딩 금지 — reference phrases와 modifiers를 데이터로 관리
+
+question_types:
+  overview:
+    description: "주제 개요 요청 (짧고 일반적인 쿼리)"
+    references:
+      - "주제에 대해 전반적으로 알려줘"
+      - "개요를 설명해줘"
+      - "전반적인 안내"
+      - "이거 뭐야"
+      - "알려줘"
+    weight_modifier:
+      graph: 0.8
+      vector: 1.2
+    suppress_faq_direct: true  # 개요 질문에 FAQ 단일 답변 승격 억제
+
+  factoid:
+    description: "단순 사실 질문 (날짜, 금액, 수치, 장소 등)"
+    references:
+      - "얼마야"
+      - "몇 학점이야"
+      - "언제야"
+      - "어디야"
+      - "주소가 뭐야"
+      - "전화번호 알려줘"
+      - "몇 명이야"
+    weight_modifier:
+      graph: 1.0
+      vector: 1.0
+
+  procedural:
+    description: "절차/방법 질문 (어떻게, 방법, 과정)"
+    references:
+      - "어떻게 하나요"
+      - "절차를 알려주세요"
+      - "방법이 뭐야"
+      - "신청 방법"
+      - "어떻게 신청해"
+      - "어디서 해"
+      - "서류가 뭐야"
+    weight_modifier:
+      graph: 0.9
+      vector: 1.1
+
+  reasoning:
+    description: "조건 기반 추론 (가능 여부, 자격, 예외)"
+    references:
+      - "가능한가요"
+      - "하면 어떻게 되나요"
+      - "해도 되나요"
+      - "자격이 되나요"
+      - "안 되는 건가요"
+      - "조건이 뭐야"
+      - "예외가 있나요"
+    weight_modifier:
+      graph: 1.3
+      vector: 0.7
+
+# 분류 파라미터
+classification:
+  similarity_threshold: 0.35   # 이 임계값 미달 시 heuristic fallback
+  overview_max_tokens: 4        # 토큰 수 ≤ 이 값이면 overview 후보
+  overview_no_question_words: true  # 질문어 없을 때만 overview fallback

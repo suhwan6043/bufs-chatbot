@@ -9,7 +9,7 @@ import logging
 import re
 from typing import List, Optional
 
-from app.models import SearchResult, MergedContext, Intent
+from app.models import SearchResult, MergedContext, Intent, QuestionType
 
 logger = logging.getLogger(__name__)
 
@@ -18,24 +18,35 @@ TOKENS_PER_CHAR = 1.5
 _DEFAULT_CONTEXT_TOKENS = 1200
 
 # ── 원칙 2: 인텐트별 적응형 설정 ────────────────────────────────
-# (graph_weight, vector_weight) — 인텐트에 따라 검색 채널 가중치 조정
+# (graph_weight, vector_weight) — Tier 1 (domestic+guide 벡터) 우선 정책 반영
+# 벡터에 Tier 1 공식 자료가 포함되므로 벡터 가중치를 그래프와 동등 이상으로 설정
 _INTENT_WEIGHTS = {
-    Intent.SCHEDULE:         (2.0, 0.5),   # 그래프(학사일정) 강력 우선
-    Intent.ALTERNATIVE:      (1.5, 1.0),   # FAQ가 핵심 소스 → 벡터 가중치 정상화
-    Intent.GRADUATION_REQ:   (1.8, 1.0),
-    Intent.REGISTRATION:     (1.5, 1.0),
-    Intent.EARLY_GRADUATION: (1.5, 1.0),
-    Intent.MAJOR_CHANGE:     (1.5, 1.0),
+    Intent.SCHEDULE:         (2.0, 0.8),   # 그래프(학사일정) 우선, 벡터도 참고
+    Intent.ALTERNATIVE:      (1.2, 1.2),   # FAQ·PDF 동등
+    Intent.GRADUATION_REQ:   (1.5, 1.2),
+    Intent.REGISTRATION:     (1.2, 1.5),   # Tier 1 벡터(PDF) 우선
+    Intent.EARLY_GRADUATION: (1.5, 1.2),
+    Intent.MAJOR_CHANGE:     (1.2, 1.2),
     Intent.SCHOLARSHIP:      (1.0, 1.2),   # 벡터(크롤링 공지) 우선
-    Intent.LEAVE_OF_ABSENCE: (1.5, 0.8),
+    Intent.LEAVE_OF_ABSENCE: (1.2, 1.2),   # PDF 가이드와 그래프 동등
     Intent.COURSE_INFO:      (0.8, 1.5),   # 벡터(시간표 청크) 우선
-    Intent.GENERAL:          (0.5, 1.5),
+    Intent.GENERAL:          (0.8, 1.5),   # Tier 1 벡터 우선
 }
-_DEFAULT_WEIGHTS = (1.5, 1.0)
+_DEFAULT_WEIGHTS = (1.2, 1.2)
+
+# ── 원칙 2: QuestionType별 가중치 변조 (graph_mod, vector_mod) ──
+# 토픽 Intent 가중치에 곱하여 질문 유형에 따라 vector/graph 밸런스를 동적 조정
+_QT_WEIGHT_MODIFIERS = {
+    QuestionType.OVERVIEW:    (0.8, 1.2),   # 개요 → 벡터(PDF) 강화, 그래프↓
+    QuestionType.FACTOID:     (1.0, 1.0),   # 사실 → 기본값
+    QuestionType.PROCEDURAL:  (0.9, 1.1),   # 절차 → 벡터 약간↑
+    QuestionType.REASONING:   (1.3, 0.7),   # 추론 → 그래프↑ 벡터↓
+}
+_DEFAULT_QT_MOD = (1.0, 1.0)
 
 # 인텐트별 컨텍스트 토큰 예산 — 단답형은 작게, 복합형은 크게
 _INTENT_BUDGET = {
-    Intent.SCHEDULE:       700,
+    Intent.SCHEDULE:       1000,
     Intent.ALTERNATIVE:    800,
     Intent.GRADUATION_REQ: 1400,
     Intent.REGISTRATION:   1200,
@@ -67,15 +78,28 @@ def _rrf_merge(
     result_map: dict = {}   # id(result) → SearchResult
 
     for rank, r in enumerate(graph_results, start=1):
-        r.metadata["source_type"] = "graph"
+        if r.metadata.get("source_type") != "transcript":
+            r.metadata["source_type"] = "graph"
         rid = id(r)
         rrf_scores[rid] = rrf_scores.get(rid, 0.0) + graph_weight / (_RRF_K + rank)
+        # transcript는 항상 최상위 — RRF 점수에 큰 가산
+        if r.metadata.get("source_type") == "transcript":
+            rrf_scores[rid] += 10.0
         result_map[rid] = r
 
+    # Tier 1 doc_type (공식 학사 자료)은 RRF 점수 boost
+    _TIER1_TYPES = frozenset({"domestic", "guide"})
     for rank, r in enumerate(vector_results, start=1):
         r.metadata["source_type"] = "vector"
         rid = id(r)
-        rrf_scores[rid] = rrf_scores.get(rid, 0.0) + vector_weight / (_RRF_K + rank)
+        base = vector_weight / (_RRF_K + rank)
+        # Tier 1 공식 자료 boost: RRF 점수 +30%
+        if r.metadata.get("doc_type") in _TIER1_TYPES:
+            base *= 1.3
+        # 고정공지(📌) boost: 그래프/FAQ(Tier 2)와 동등 → +15%
+        elif r.metadata.get("doc_type") == "notice" and r.metadata.get("is_pinned"):
+            base *= 1.15
+        rrf_scores[rid] = rrf_scores.get(rid, 0.0) + base
         result_map[rid] = r
 
     merged = sorted(result_map.values(), key=lambda r: rrf_scores[id(r)], reverse=True)
@@ -98,6 +122,7 @@ class ContextMerger:
         intent: Optional[Intent] = None,
         entities: Optional[dict] = None,
         transcript_context: str = "",
+        question_type: Optional[QuestionType] = None,
     ) -> MergedContext:
         """검색 결과를 통합된 컨텍스트로 병합합니다.
 
@@ -109,7 +134,7 @@ class ContextMerger:
             from app.models import SearchResult as SR
             transcript_result = SR(
                 text=transcript_context,
-                score=2.0,
+                score=10.0,  # RRF merge에서 항상 최상위 유지
                 source="transcript",
                 metadata={"source_type": "transcript"},
             )
@@ -118,13 +143,21 @@ class ContextMerger:
         # 인텐트별 가중치 + 예산 결정
         gw, vw = _INTENT_WEIGHTS.get(intent, _DEFAULT_WEIGHTS)
         budget = _INTENT_BUDGET.get(intent, _DEFAULT_CONTEXT_TOKENS)
+
+        # 원칙 2: QuestionType 변조 — 질문 유형에 따라 vector/graph 밸런스 조정
+        if question_type:
+            g_mod, v_mod = _QT_WEIGHT_MODIFIERS.get(question_type, _DEFAULT_QT_MOD)
+            gw *= g_mod
+            vw *= v_mod
+            # OVERVIEW → 컨텍스트 예산 확장 (전반 안내에 더 많은 소스 필요)
+            if question_type == QuestionType.OVERVIEW:
+                budget = max(budget, 1400)
         # 성적표 컨텍스트가 있으면 예산 확장
         if transcript_context:
             budget = max(budget, 2000)
 
-        # 그래프 direct_answer 존재 시 벡터 노이즈 억제
-        # focused handler(≤3 결과)가 정확한 답을 제공 → 벡터 완전 차단
-        # 다수 결과(>3) → 벡터 최소 보조만 허용
+        # 그래프/FAQ direct_answer 존재 시 벡터 노이즈 억제
+        # focused handler(≤3 결과)가 정확한 답을 제공 → 벡터 최소 보조만 허용
         direct_results = [r for r in graph_results if r.metadata.get("direct_answer")]
         if direct_results:
             if len(graph_results) <= 3:
@@ -132,20 +165,23 @@ class ContextMerger:
             else:
                 vw = min(vw, 0.3)
 
+        # 원칙 2: RRF 병합 전 원래 점수 캡처 (confidence 계산용)
+        # RRF merge가 r.score를 순위 점수로 덮어쓰므로, 실제 관련성 점수를 보존
+        _pre_rrf_vector_top = max((r.score for r in vector_results), default=0.0)
+        _pre_rrf_graph_top = max((r.score for r in graph_results), default=0.0)
+
         # RRF로 그래프·벡터 결과 병합 (rank 기반, 인텐트별 가중치 적용)
         all_results = _rrf_merge(graph_results, vector_results, gw, vw)
 
         # 원칙 2: 엔티티 기반 필터 — 단일 토픽 쿼리에서 무관 청크 차단
         all_results = self._filter_by_entity(all_results, entities)
 
-        # 원칙 1: FAQ 청크 조건부 최우선 배치
-        # FAQ Q/A는 질문-답변 매칭이 명확해 LLM이 정확히 활용 가능 → 관련성이 확인된 FAQ는 맨 앞.
-        # 그러나 doc_type="faq"만 보고 무조건 끌어올리면 "제2전공+교직" 같은 교차 질문에서
-        # 공통 어휘("전공")만 걸린 무관한 FAQ가 컨텍스트 최상단에 박혀 LLM이 오답을 확신하는 회귀 발생.
-        # → 관련성 신호(direct_answer 또는 질문 핵심 토큰 매칭)가 있는 FAQ만 최상단으로,
-        #    나머지는 RRF 순서를 그대로 따라간다.
-        # 리다이렉트 FAQ 판정 헬퍼 (메타 플래그 + 텍스트 휴리스틱)
-        # 벡터 DB에서 온 FAQ 청크는 answer_type 메타가 없을 수 있어 텍스트로도 판정.
+        # 원칙 2: FAQ 승격은 하이브리드 시스템의 자체 신호(IDF·RRF·Cross-Encoder)에 위임
+        #
+        # direct_answer가 부여된 FAQ = 그래프 검색에서 IDF 가중치 + 특이성 페널티 +
+        # stem 커버리지 게이트를 모두 통과 → 고신뢰 → 컨텍스트 최상단.
+        # 그 외 FAQ는 RRF 점수 그대로 경쟁 (키워드 매칭으로 재판정하지 않음).
+        # 리다이렉트 FAQ("어디서 확인/문의")는 본문 재료가 아님 → 항상 후순위.
         from app.graphdb.academic_graph import _is_redirect_answer as _is_redirect_answer_heur
 
         def _faq_answer_text(r: SearchResult) -> str:
@@ -159,38 +195,22 @@ class ContextMerger:
             return _is_redirect_answer_heur(_faq_answer_text(r), r.metadata)
 
         if all_results:
-            from app.pipeline.ko_tokenizer import stems, expand_tokens, FAQ_STOPWORDS
-            q_key = expand_tokens(stems(question or ""), FAQ_STOPWORDS)
-
-            def _faq_is_relevant(r: SearchResult) -> bool:
-                # direct_answer가 부여된 FAQ는 그래프 단에서 강한 매칭으로 판정된 것 → 신뢰
-                if r.metadata.get("direct_answer"):
-                    return True
-                if not q_key:
-                    return True  # 질문이 전부 범용어면 기존처럼 FAQ 우선
-                hay_key = expand_tokens(stems(r.text or ""), FAQ_STOPWORDS)
-                return bool(q_key & hay_key)
-
-            relevant_faq, redirect_faq, stale_faq, non_faq = [], [], [], []
+            promoted_faq, redirect_faq, rest = [], [], []
             for r in all_results:
                 is_faq = (
                     r.metadata.get("doc_type") == "faq"
                     or r.metadata.get("node_type") == "FAQ"
                 )
-                if not is_faq:
-                    non_faq.append(r)
-                    continue
-                # 리다이렉트 FAQ("어디서 확인/문의")는 관련성이 있어도 본문 재료로
-                # 쓸 수 없다 → non-FAQ 뒤로 밀어서 PDF 데이터가 최상단에 노출되게 한다.
-                # 메타 플래그 + 텍스트 휴리스틱 양쪽 경로 모두 대응.
-                if _is_redirect_faq(r):
+                if is_faq and _is_redirect_faq(r):
                     redirect_faq.append(r)
-                elif _faq_is_relevant(r):
-                    relevant_faq.append(r)
+                elif is_faq and r.metadata.get("direct_answer"):
+                    # 그래프 IDF·특이성·커버리지 게이트를 모두 통과한 FAQ만 승격
+                    # B1/B2 threshold 강화로 OVERVIEW 별도 억제 불필요
+                    promoted_faq.append(r)
                 else:
-                    stale_faq.append(r)
-            # 순서: (관련 data FAQ) → (non-FAQ: PDF/노드) → (리다이렉트 FAQ 안내용) → (무관 FAQ)
-            all_results = relevant_faq + non_faq + redirect_faq + stale_faq
+                    # FAQ 포함 모든 결과: RRF 순서 유지 (하이브리드 점수 신뢰)
+                    rest.append(r)
+            all_results = promoted_faq + rest + redirect_faq
 
         # 토큰 제한 내에서 컨텍스트 구성
         context_parts = []
@@ -201,33 +221,19 @@ class ContextMerger:
         selected_graph = []
         direct_answer = ""
 
-        # 그래프에서 이미 direct_answer가 나왔으면 먼저 채택
-        # (일정, 수강규칙 등 focused handler의 정확한 답변이 FAQ "정의"에 밀리지 않도록)
-        graph_direct = ""
-        for r in graph_results:
-            if r.metadata.get("direct_answer"):
-                graph_direct = r.metadata["direct_answer"]
-                break
-        if graph_direct:
-            direct_answer = graph_direct
+        # 그래프·FAQ direct_answer를 동등하게 경쟁시킴 (RRF 순위 기반)
+        # all_results는 이미 RRF 점수순으로 정렬되어 있으므로,
+        # 가장 높은 RRF 점수를 받은 direct_answer를 채택한다.
+        for result in all_results:
+            if not result.metadata.get("direct_answer"):
+                continue
+            if _is_redirect_faq(result):
+                continue
+            direct_answer = result.metadata["direct_answer"]
+            break
 
-        # 원칙 1: FAQ direct_answer 우선 선택 (그래프 direct가 없을 때만)
-        # 그래프 focused handler가 이미 정확한 답("장바구니 기간: 1/28~2/1")을 제공했으면
-        # FAQ의 "장바구니란 무엇인가" 같은 정의형 답은 덮어쓰지 않는다.
-        # 그래프 direct가 없을 때만 FAQ direct_answer를 채택
-        if not direct_answer:
-            for result in all_results:
-                is_faq = (
-                    result.metadata.get("doc_type") == "faq"
-                    or result.metadata.get("node_type") == "FAQ"
-                )
-                if not is_faq:
-                    continue
-                if _is_redirect_faq(result):
-                    continue
-                if result.metadata.get("direct_answer"):
-                    direct_answer = result.metadata["direct_answer"]
-                    break
+        # OCU 섹션 트리밍 플래그 (질문에 OCU 미언급 시 활성화)
+        _trim_ocu = bool(entities and not entities.get("ocu"))
 
         for result in all_results:
             if not result.text:
@@ -237,7 +243,16 @@ class ContextMerger:
             if not direct_answer and result.metadata.get("direct_answer"):
                 direct_answer = result.metadata["direct_answer"]
 
-            text_len = len(result.text)
+            # 원칙 2: OCU 미언급 쿼리에서 혼합 청크의 OCU 섹션 동적 트리밍
+            if _trim_ocu and result.metadata.get("source_type") != "graph":
+                result_text = self._strip_ocu_section(result.text)
+            else:
+                result_text = result.text
+
+            if not result_text or not result_text.strip():
+                continue
+
+            text_len = len(result_text)
             remaining = max_chars - total_chars
 
             if remaining <= 80:
@@ -245,7 +260,7 @@ class ContextMerger:
 
             if text_len > remaining:
                 # 남은 공간에 맞게 자르기 — skip 대신 truncate 후 continue
-                truncated = result.text[:remaining] + "..."
+                truncated = result_text[:remaining] + "..."
                 context_parts.append(self._format_result(result, truncated))
                 total_chars += remaining
                 result.metadata["in_context"] = True
@@ -255,7 +270,7 @@ class ContextMerger:
                     selected_vector.append(result)
                 continue
 
-            context_parts.append(self._format_result(result))
+            context_parts.append(self._format_result(result, result_text))
             total_chars += text_len
             result.metadata["in_context"] = True
 
@@ -276,6 +291,26 @@ class ContextMerger:
             if extracted:
                 direct_answer = extracted
 
+        # 원칙 2: 하이브리드 시스템 자체 신호로 context 관련성 신뢰도 산출
+        # RRF 이전의 원래 점수를 사용 (RRF 점수는 절대 관련성을 표현하지 않음)
+        #
+        # 주의: 그래프 핸들러 결과는 score ≥ 1.0 (기본값)이나 관련성 신호가 아님.
+        # FAQ 정규화 점수(0~1)와 벡터 점수만 실제 관련성을 반영함.
+        # 원칙 2: context_confidence = 컨텍스트 충분성 신뢰도 (0.0~1.0)
+        # direct_answer 있으면 1.0, 선택된 결과 수 기반 산출
+        if direct_answer:
+            confidence = 1.0
+        elif selected_vector or selected_graph:
+            n_selected = len(selected_vector) + len(selected_graph)
+            if n_selected >= 3:
+                confidence = 0.8
+            elif n_selected >= 2:
+                confidence = 0.6
+            else:
+                confidence = 0.4
+        else:
+            confidence = 0.0
+
         return MergedContext(
             vector_results=selected_vector,
             graph_results=selected_graph,
@@ -283,6 +318,7 @@ class ContextMerger:
             total_tokens_estimate=token_estimate,
             direct_answer=direct_answer,
             source_urls=source_urls,
+            context_confidence=confidence,
         )
 
     @staticmethod
@@ -388,7 +424,7 @@ class ContextMerger:
         if not entities or not results:
             return results
 
-        # OCU 토픽 필터
+        # OCU 토픽 필터 (정방향): OCU 쿼리 → OCU 청크만 유지
         if entities.get("ocu"):
             _OCU_KW = ("ocu", "열린사이버", "컨소시엄", "cons.ocu")
             filtered = [
@@ -399,7 +435,66 @@ class ContextMerger:
             if filtered:
                 return filtered
 
+        # OCU 역방향 필터: OCU 미언급 시 OCU 전용 청크를 제거
+        # 혼합 청크(본교+OCU 같은 페이지)는 유지 — LLM 프롬프트에서 OCU 무시 지시
+        if not entities.get("ocu"):
+            _OCU_PRIMARY_KW = ("열린사이버", "cons.ocu", "컨소시엄")
+            non_ocu = []
+            ocu_pure = []
+            for r in results:
+                txt_lower = (r.text or "").lower()
+                if r.metadata.get("source_type") == "graph":
+                    non_ocu.append(r)
+                # OCU가 주제인 청크만 제거 (제목/첫 100자에 OCU 핵심어)
+                elif any(kw in txt_lower[:200] for kw in _OCU_PRIMARY_KW):
+                    ocu_pure.append(r)
+                else:
+                    non_ocu.append(r)
+            if non_ocu:
+                return non_ocu
+
         return results
+
+    @staticmethod
+    def _strip_ocu_section(text: str) -> str:
+        """혼합 청크에서 OCU 섹션을 동적으로 트리밍합니다.
+
+        원칙 2: PDF 페이지에 본교+OCU 내용이 혼합된 경우,
+        OCU 섹션 시작 지점 이후 텍스트를 제거하여 본교 내용만 남김.
+
+        경계 패턴:
+        - "기타사항 안내" + "OCU" (p.23 구조)
+        - "상대평가 기준" (OCU 고유 — 본교는 2023-2부터 절대평가)
+        - "OCU 개설 교과목" / "OCU 홈페이지"
+        - "CS강의" / "On-line강의" (OCU 섹션 제목)
+        """
+        if not text:
+            return text
+
+        # OCU 섹션 시작점을 찾아서 그 이전까지만 남김
+        _OCU_SECTION_MARKERS = (
+            "기타사항 안내",
+            "상대평가 기준",
+            "나. 상대평가",
+            "OCU 개설 교과목",
+            "OCU 홈페이지",
+            "CS강의",
+            "On-line강의",
+        )
+
+        earliest_pos = len(text)
+        for marker in _OCU_SECTION_MARKERS:
+            pos = text.find(marker)
+            if pos != -1 and pos < earliest_pos:
+                earliest_pos = pos
+
+        if earliest_pos < len(text):
+            trimmed = text[:earliest_pos].rstrip()
+            # 최소 100자 이상 남아야 의미 있는 컨텍스트
+            if len(trimmed) >= 100:
+                return trimmed
+
+        return text
 
     @staticmethod
     def _collect_source_urls(results: list) -> list:

@@ -1,0 +1,153 @@
+# 학사일정 트리거 매칭 설정
+# 원칙 1(유연한 스키마): 새 이벤트는 항목 추가만으로 대응
+# 원칙 4(하드코딩 금지): Python 코드에서 한국어 키워드 제거
+#
+# 매칭 규칙:
+#   match_all: 모든 키워드가 질문에 포함되어야 매칭
+#   match_any: 하나 이상의 키워드가 포함되어야 매칭 (생략 시 match_all만 체크)
+#   exclude:   하나라도 포함되면 매칭 제외
+#   require_any: match_all 통과 후 추가 필수 조건 (선택)
+#   weight:    소프트 스코어 배율 (기본 1.0, 약한 신호는 0.5)
+#              → 복수 트리거 충돌 시 높은 점수 트리거를 자동 선택
+
+triggers:
+  - event_keywords: ["조기졸업신청"]
+    match_all: ["조기졸업"]
+    match_any: ["기간", "언제", "신청", "일정", "마감"]
+    exclude: []
+    weight: 1.0
+
+  - event_keywords: ["수업일수1/4선"]
+    match_all: ["수강", "취소"]
+    match_any: ["까지", "언제", "기간"]
+    exclude: ["복수전공", "휴학", "성적", "전과"]
+    weight: 1.0
+
+  - event_keywords: ["수업시작일"]
+    match_any: ["수업시작일", "수업시작"]
+    exclude: []
+    weight: 1.0
+
+  - event_keywords: ["ocu개강일"]
+    match_all: ["ocu", "개강"]
+    exclude: []
+    weight: 1.0
+
+  - event_keywords: ["수강신청"]
+    match_all: ["ocu"]
+    match_any: ["수강신청", "신청기간"]
+    exclude: []
+    weight: 1.0
+
+  - event_keywords: ["개강"]
+    match_any: ["개강"]
+    exclude: ["수업시작", "ocu"]
+    weight: 1.0
+
+  - event_keywords: ["장바구니"]
+    match_all: ["장바구니"]
+    match_any: ["기간", "언제", "날짜", "일자", "일정"]
+    exclude: []
+    weight: 1.0
+
+  - event_keywords: ["수강신청확인"]
+    match_any: ["수강신청확인", "수강정정"]
+    exclude: []
+    weight: 1.0
+
+  - event_keywords: ["중간고사"]
+    match_any: ["중간고사"]
+    exclude: []
+    weight: 1.0
+
+  - event_keywords: ["기말고사"]
+    match_any: ["기말고사"]
+    exclude: []
+    weight: 1.0
+
+  - event_keywords: ["중간고사", "기말고사"]
+    match_all: ["시험"]
+    match_any: ["기간", "언제", "일정"]
+    exclude: ["중간", "기말", "졸업"]
+    weight: 1.0
+
+  - event_keywords: ["중간수업평가실시"]
+    match_all: ["중간", "수업평가"]
+    exclude: []
+    weight: 1.0
+
+  - event_keywords: ["기말수업평가실시"]
+    match_all: ["기말", "수업평가"]
+    exclude: []
+    weight: 1.0
+
+  - event_keywords: ["중간수업평가실시", "기말수업평가실시"]
+    match_all: ["수업평가"]
+    exclude: ["중간", "기말"]
+    weight: 1.0
+
+  - event_keywords: ["제12전공신청및변경전과"]
+    match_any: ["제1·2전공", "제1,2전공", "변경(전과)", "전과"]
+    exclude: []
+    weight: 1.0
+
+  - event_keywords: ["ocusystem사용료납부기간", "ocu시스템사용료납부기간"]
+    match_all: ["ocu", "납부"]
+    exclude: []
+    weight: 1.0
+
+  - event_keywords: ["야간수업시간표"]
+    match_any: ["야간", "10교시", "11교시", "12교시", "13교시", "14교시"]
+    exclude: []
+    weight: 1.0
+
+  - event_keywords: ["학위수여식"]
+    match_any: ["학위수여", "졸업식"]
+    exclude: []
+    weight: 1.0
+
+  - event_keywords: ["학사학위취득유예"]
+    match_all: ["학위", "유예"]
+    exclude: []
+    weight: 1.0
+
+  - event_keywords: ["수강신청", "수강신청_1학년", "수강신청_2학년", "수강신청_3학년", "수강신청_3,4학년", "수강신청_4학년", "수강신청_전학년"]
+    match_all: ["수강신청"]
+    match_any: ["기간", "언제", "신청일", "며칠", "날짜", "일자", "일정"]
+    exclude: ["정정", "확인", "취소", "장바구니"]
+    weight: 1.0
+
+  - event_keywords: ["성적확인"]
+    match_all: ["성적"]
+    match_any: ["공시", "확인", "언제", "발표", "날짜", "일자", "일정"]
+    exclude: ["이의", "정정", "포기", "선택", "계절"]
+    weight: 1.0
+
+  - event_keywords: ["하계계절학기", "동계계절학기", "계절학기"]
+    match_all: ["계절", "성적"]
+    match_any: ["확정", "언제", "기간", "일정"]
+    exclude: []
+    weight: 1.0
+
+  - event_keywords: ["부분적성적포기"]
+    match_all: ["성적포기"]
+    match_any: ["기간", "언제", "신청", "날짜", "일자", "일정"]
+    exclude: []
+    weight: 0.5
+
+  - event_keywords: ["제12전공신청및변경전과", "전공신청및변경"]
+    match_any: ["전과", "전공변경", "전공바꾸"]
+    exclude: []
+    weight: 1.0
+
+  - event_keywords: ["제2전공", "제12전공"]
+    match_any: ["복수전공", "부전공", "제2전공", "융합전공", "마이크로전공"]
+    match_all: []
+    exclude: []
+    require_any: ["신청", "기간", "언제", "날짜", "일자", "일정"]
+    weight: 0.5
+
+  - event_keywords: ["전공졸업시험"]
+    match_any: ["졸업시험", "졸업논문"]
+    exclude: []
+    weight: 1.0

@@ -169,12 +169,35 @@ def tokenize_for_bm25(text: str) -> list[str]:
     return result
 
 
-# 공용 stopword — 그래프/컨텍스트 머저 양쪽에서 import해 일관성 유지
+# 공용 stopword — recall 단계의 최소 필터 (어미 잔여만 유지)
+# 원칙 4: 의미 토큰("신청","학점" 등)은 IDF 가중치로 자동 조절 → 하드코딩 제거
 FAQ_STOPWORDS: frozenset[str] = frozenset({
-    "전공", "신청", "가능", "방법", "학기", "이수", "학점", "기준",
-    "어떻게", "언제", "어디", "무엇", "얼마", "과목", "수강",
-    "질문", "답변", "문의", "안내",
     # 어미 잔여 (strip_suffix가 완벽하지 않을 때 대비)
     "하나요", "있나요", "되나요", "알려", "알려줘", "알려주세요",
     "해야", "인지", "인가", "는가",
+    # 메타 단어 (질문/답변 그 자체를 지칭)
+    "질문", "답변", "문의", "안내",
 })
+
+
+def compute_faq_idf(faq_texts: list[str]) -> dict[str, float]:
+    """FAQ 코퍼스에서 IDF(역문서빈도) 가중치를 자동 계산합니다.
+
+    원칙 1(유연한 스키마): FAQ 추가/삭제 시 자동 재계산.
+    원칙 2(비용·지연 최적화): 인제스트 시 1회 실행, dict lookup O(1).
+    원칙 4(하드코딩 금지): 토큰 가중치를 데이터로부터 결정.
+
+    Returns: {토큰: IDF 가중치} (높을수록 희귀하고 구별력 높음)
+    """
+    from math import log
+
+    doc_count = max(len(faq_texts), 1)
+    df: dict[str, int] = {}
+    for text in faq_texts:
+        unique_tokens = set(stems(text))
+        for token in unique_tokens:
+            if len(token) >= 2:
+                df[token] = df.get(token, 0) + 1
+
+    # IDF = log(N / df) + 1.0 (smooth IDF, 최소 1.0 보장)
+    return {token: log(doc_count / freq) + 1.0 for token, freq in df.items()}

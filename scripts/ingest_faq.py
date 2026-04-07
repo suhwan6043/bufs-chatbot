@@ -84,6 +84,15 @@ def create_chunk(item: dict, source_file: str) -> Chunk | None:
     faq_id = item.get("id", "")
     chunk_id = hashlib.md5(f"{source_file}:{faq_id}:{question}".encode()).hexdigest()
 
+    meta: dict = {
+        "category": category,
+        "faq_id": faq_id,
+    }
+    # answer_type (선택) — "redirect" / "data" — 리다이렉트 휴리스틱 override용
+    answer_type = item.get("answer_type")
+    if answer_type:
+        meta["answer_type"] = answer_type
+
     return Chunk(
         chunk_id=chunk_id,
         text=text,
@@ -94,10 +103,7 @@ def create_chunk(item: dict, source_file: str) -> Chunk | None:
         cohort_from=2016,
         cohort_to=2030,
         semester="",
-        metadata={
-            "category": category,
-            "faq_id": faq_id,
-        },
+        metadata=meta,
     )
 
 

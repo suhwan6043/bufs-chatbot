@@ -22,6 +22,16 @@ class Intent(str, Enum):
     GENERAL = "GENERAL"
 
 
+class QuestionType(str, Enum):
+    """질문 유형 — 토픽(Intent)과 직교하는 추가 차원.
+    Embedding 유사도 기반 분류로 vector/graph 가중치를 동적 변조.
+    """
+    OVERVIEW = "overview"         # 주제 개요 요청 (짧고 일반적)
+    FACTOID = "factoid"           # 단순 사실 질문 (날짜, 금액, 수치)
+    PROCEDURAL = "procedural"     # 절차/방법 질문
+    REASONING = "reasoning"       # 조건 기반 추론
+
+
 class PDFType(str, Enum):
     DIGITAL = "digital"
     SCANNED = "scanned"
@@ -64,6 +74,7 @@ class QueryAnalysis:
     requires_vector: bool = True
     missing_info: list = field(default_factory=list)
     lang: str = "ko"  # 감지된 질문 언어: 'ko' | 'en'
+    question_type: QuestionType = QuestionType.FACTOID  # 질문 유형 (Embedding 기반)
     matched_terms: list = field(default_factory=list)  # [{"ko": "수강신청", "en": "Course Registration"}]
 
 
@@ -87,6 +98,9 @@ class MergedContext:
     direct_answer: str = ""
     source_urls: list = field(default_factory=list)
     # source_urls 형식: [{"title": "공지 제목", "url": "https://..."}, ...]
+    # 원칙 2: 하이브리드 시스템(IDF·Cross-Encoder·RRF) 점수를 집약한 관련성 신호
+    # 1.0 = direct_answer 확보, 0.0 = 관련 컨텍스트 없음
+    context_confidence: float = 0.0
 
 
 @dataclass

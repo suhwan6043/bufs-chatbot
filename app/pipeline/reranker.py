@@ -69,15 +69,24 @@ class Reranker:
         pairs = [[query, r.text] for _, r in valid]
         raw_scores = self.model.predict(pairs)
 
-        # FAQ boost: FAQ 청크는 단문·핵심 답을 담고 있어 cross-encoder가 과소평가하기 쉬움
-        # → 동적 가중치(top_score 비례)로 보정하여 범용 가이드 청크에 밀리지 않도록 함
+        # Tier 기반 doc_type 가중치:
+        # Tier 1 (domestic, guide) = 공식 학사 PDF + 홈페이지 가이드 → 최우선
+        # Tier 2 (faq, 고정공지) = FAQ + 고정(📌) 공지 → 동등 경쟁
+        # Tier 3 (기타) = 일반 공지, 장학, timetable 등 → boost 없음
+        _TIER1_DOC_TYPES = frozenset({"domestic", "guide"})
         top_raw = max(raw_scores) if len(raw_scores) else 0.0
-        faq_bonus = abs(top_raw) * 0.15 if top_raw != 0 else 0.0
+        tier1_bonus = abs(top_raw) * 0.20 if top_raw != 0 else 0.0
+        tier2_bonus = abs(top_raw) * 0.10 if top_raw != 0 else 0.0
         boosted_scored = []
         for raw, (_, r) in zip(raw_scores, valid):
             s = float(raw)
-            if r.metadata.get("doc_type") == "faq":
-                s += faq_bonus
+            dt = r.metadata.get("doc_type", "")
+            if dt in _TIER1_DOC_TYPES:
+                s += tier1_bonus
+            elif dt == "faq":
+                s += tier2_bonus
+            elif dt == "notice" and r.metadata.get("is_pinned"):
+                s += tier2_bonus
             boosted_scored.append((s, r))
 
         scored = sorted(boosted_scored, key=lambda x: x[0], reverse=True)

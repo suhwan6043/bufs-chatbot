@@ -985,17 +985,20 @@ def render_sidebar() -> bool:
             st.rerun()
 
         # ── LLM 서버 경고 (에러 시에만) ────────────
-        async def _chk():
-            return await st.session_state.generator.health_check()
+        # generator를 메인 스레드에서 먼저 캡처 (스레드 내 session_state 접근 불가)
+        _gen = st.session_state.get("generator")
+        if _gen is not None:
+            async def _chk():
+                return await _gen.health_check()
 
-        if not _run_async(_chk()):
-            st.markdown(
-                '<div style="margin-top:0.6rem;padding:0.5rem 0.6rem;border-radius:7px;'
-                'background:#fef3c7;border:1px solid #fcd34d;font-size:0.78rem;color:#92400e;">'
-                '⚠️ AI 서버 미연결<br><span style="font-size:0.72rem;">LM Studio를 시작해주세요</span>'
-                '</div>',
-                unsafe_allow_html=True,
-            )
+            if not _run_async(_chk()):
+                st.markdown(
+                    '<div style="margin-top:0.6rem;padding:0.5rem 0.6rem;border-radius:7px;'
+                    'background:#fef3c7;border:1px solid #fcd34d;font-size:0.78rem;color:#92400e;">'
+                    '⚠️ AI 서버 미연결<br><span style="font-size:0.72rem;">LM Studio를 시작해주세요</span>'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
 
         # ── Version footer ────────────────────────
         st.markdown(
@@ -1230,7 +1233,8 @@ def init_components():
             chroma_store   = get_chroma_store()   # 공유 싱글톤 (스케줄러와 동일 인스턴스)
             academic_graph = AcademicGraph()
 
-            st.session_state.analyzer  = QueryAnalyzer()
+            from app.shared_resources import get_embedder
+            st.session_state.analyzer  = QueryAnalyzer(embedder=get_embedder())
             from app.shared_resources import get_bm25_index
             bm25_index = get_bm25_index()
 
@@ -1242,6 +1246,18 @@ def init_components():
             st.session_state.merger    = ContextMerger()
             st.session_state.generator = AnswerGenerator()
             st.session_state.validator = ResponseValidator()
+
+            # Reranker 백그라운드 warmup — 첫 질문 cold-start(~46초) 방지
+            # session_state는 스레드 접근 불가이므로 router를 local로 캡처
+            import threading as _threading
+            _router_ref = st.session_state.router
+            def _warmup_reranker(_r=_router_ref):
+                try:
+                    if _r and _r.reranker:
+                        _ = _r.reranker.model
+                except Exception:
+                    pass
+            _threading.Thread(target=_warmup_reranker, name="reranker-warmup", daemon=True).start()
             st.session_state.chroma_store = chroma_store
             st.session_state.chat_logger = ChatLogger()
             st.session_state.session_id  = uuid.uuid4().hex[:12]
@@ -1399,10 +1415,18 @@ def _render_source_panel(results: list) -> None:
                 seen.add(key)
                 items.append(("pdf", r))
         elif r.metadata.get("source_type") == "graph":
-            key = f"graph:{r.metadata.get('node_type', 'data')}:{r.text[:40]}"
-            if key not in seen:
-                seen.add(key)
-                items.append(("graph", r))
+            # 그래프 결과여도 원본 PDF 출처가 있으면 PDF로 표시
+            if r.source and r.source != "graph" and Path(r.source).suffix == ".pdf":
+                pg = r.page_number or 1  # 페이지 없으면 1페이지 표시
+                key = f"{r.source}:{pg}"
+                if key not in seen:
+                    seen.add(key)
+                    items.append(("pdf", r))
+            else:
+                key = f"graph:{r.metadata.get('node_type', 'data')}:{r.text[:40]}"
+                if key not in seen:
+                    seen.add(key)
+                    items.append(("graph", r))
         if len(items) >= 5:
             break
 
@@ -1530,6 +1554,7 @@ async def generate_response(question: str) -> str:
         intent=analysis.intent,
         entities=analysis.entities,
         transcript_context=transcript_context,
+        question_type=analysis.question_type,
     )
 
     if not merged.formatted_context.strip():
@@ -1551,6 +1576,8 @@ async def generate_response(question: str) -> str:
         lang=analysis.lang,
         matched_terms=analysis.matched_terms,
         student_context=student_context,
+        context_confidence=merged.context_confidence,
+        question_type=analysis.question_type.value if analysis.question_type else None,
     )
 
     all_results = search_results["vector_results"] + search_results["graph_results"]
@@ -1594,10 +1621,16 @@ async def generate_response_stream(question: str, placeholder) -> str:
     generator = st.session_state.generator
     validator = st.session_state.validator
 
+    _t_analyze = time.monotonic()
     analysis = analyzer.analyze(question)
     analysis, transcript_context, student_context = _enrich_analysis(question, analysis, router)
+    _ms_analyze = int((time.monotonic() - _t_analyze) * 1000)
 
+    _t_search = time.monotonic()
     search_results = router.route_and_search(question, analysis)
+    _ms_search = int((time.monotonic() - _t_search) * 1000)
+
+    _t_merge = time.monotonic()
     merged         = merger.merge(
         vector_results=search_results["vector_results"],
         graph_results=search_results["graph_results"],
@@ -1605,7 +1638,9 @@ async def generate_response_stream(question: str, placeholder) -> str:
         intent=analysis.intent,
         entities=analysis.entities,
         transcript_context=transcript_context,
+        question_type=analysis.question_type,
     )
+    _ms_merge = int((time.monotonic() - _t_merge) * 1000)
 
     def _log(answer: str) -> None:
         """Q&A 쌍을 로그 파일에 기록 (실패해도 메인 기능에 영향 없음)"""
@@ -1638,6 +1673,7 @@ async def generate_response_stream(question: str, placeholder) -> str:
         _log(merged.direct_answer)
         return merged.direct_answer, merged.source_urls, merged.vector_results + merged.graph_results
 
+    _t_gen = time.monotonic()
     full_answer = ""
     async for token in generator.generate(
         question=question,
@@ -1647,21 +1683,34 @@ async def generate_response_stream(question: str, placeholder) -> str:
         lang=analysis.lang,
         matched_terms=analysis.matched_terms,
         student_context=student_context,
+        context_confidence=merged.context_confidence,
+        question_type=analysis.question_type.value if analysis.question_type else None,
     ):
         if token == "\x00CLEAR\x00":
             full_answer = ""
             continue
         full_answer += token
         placeholder.markdown(full_answer + "▌")
+    _ms_gen = int((time.monotonic() - _t_gen) * 1000)
+
+    # 방어: LLM이 빈 응답을 반환한 경우
+    if not full_answer.strip():
+        full_answer = (
+            "죄송합니다. 답변 생성에 실패했습니다. 다시 질문해 주세요.\n\n"
+            "문제가 지속되면 학사지원팀(051-509-5182)에 문의하시기 바랍니다."
+        )
+        logger.warning("LLM 빈 응답: question='%s'", question[:50])
 
     placeholder.markdown(full_answer)
 
+    _t_val = time.monotonic()
     all_results = search_results["vector_results"] + search_results["graph_results"]
     passed, warnings = validator.validate(
         answer=full_answer,
         context=merged.formatted_context,
         search_results=all_results,
     )
+    _ms_val = int((time.monotonic() - _t_val) * 1000)
     if warnings:
         warning_text = "\n".join(f"- {w}" for w in warnings)
         full_answer += f"\n\n---\n*검증 경고:*\n{warning_text}"
@@ -1672,6 +1721,16 @@ async def generate_response_stream(question: str, placeholder) -> str:
     if footer:
         full_answer += footer
         placeholder.markdown(full_answer)
+
+    # 원칙 2: 파이프라인 단계별 타이밍 로그
+    _ms_total = int((time.monotonic() - _t0) * 1000)
+    logger.info(
+        "PIPELINE_TIMING total=%dms analyze=%dms search=%dms merge=%dms "
+        "generate=%dms validate=%dms intent=%s qt=%s",
+        _ms_total, _ms_analyze, _ms_search, _ms_merge,
+        _ms_gen, _ms_val, analysis.intent.value,
+        analysis.question_type.value if analysis.question_type else "?",
+    )
 
     _log(full_answer)
     return full_answer, merged.source_urls, merged.vector_results + merged.graph_results

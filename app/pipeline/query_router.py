@@ -85,18 +85,18 @@ class QueryRouter:
         Intent.GENERAL:        15,
     }
 
-    # ── 원칙 2: 인텐트별 우선 doc_type (공지 노이즈 차단) ──
+    # ── 원칙 2: 인텐트별 우선 doc_type (Tier 1: domestic+guide 최우선) ──
     _INTENT_DOC_TYPES = {
-        Intent.GRADUATION_REQ:    ["domestic", "faq"],
-        Intent.REGISTRATION:      ["domestic", "faq"],
-        Intent.SCHEDULE:          ["domestic", "faq"],
-        Intent.MAJOR_CHANGE:      ["domestic", "faq"],
-        Intent.EARLY_GRADUATION:  ["domestic", "faq"],
-        Intent.LEAVE_OF_ABSENCE:  ["domestic", "faq"],
-        Intent.COURSE_INFO:       ["domestic", "timetable", "faq"],
-        Intent.SCHOLARSHIP:       ["domestic", "scholarship", "faq"],
-        Intent.ALTERNATIVE:       ["domestic", "faq"],
-        Intent.GENERAL:           None,  # 전체 검색
+        Intent.GRADUATION_REQ:    ["domestic", "guide", "faq"],
+        Intent.REGISTRATION:      ["domestic", "guide", "faq"],
+        Intent.SCHEDULE:          ["domestic", "guide", "faq"],
+        Intent.MAJOR_CHANGE:      ["domestic", "guide", "faq"],
+        Intent.EARLY_GRADUATION:  ["domestic", "guide", "faq"],
+        Intent.LEAVE_OF_ABSENCE:  ["domestic", "guide", "faq"],
+        Intent.COURSE_INFO:       ["domestic", "guide", "timetable", "faq"],
+        Intent.SCHOLARSHIP:       ["domestic", "guide", "scholarship", "faq"],
+        Intent.ALTERNATIVE:       ["domestic", "guide", "faq"],
+        Intent.GENERAL:           ["domestic", "guide", "faq", "notice"],
     }
 
     _MIN_PHASE1_RESULTS = 3  # Phase 1 최소 결과 수 (미달 시 Phase 2 확장)
@@ -127,6 +127,9 @@ class QueryRouter:
         # ── 2단계 검색: 우선 doc_type → 부족 시 전체 확장 ──
         preferred_types = self._INTENT_DOC_TYPES.get(analysis.intent)
 
+        # 원칙 2: 임베딩 1회만 수행 → Phase 1/2/2.5 모두에 재사용
+        _q_emb = self.chroma_store.embedder.embed_query(query)
+
         # Phase 1: 우선 doc_type으로 검색
         candidates = self.chroma_store.search(
             query=query,
@@ -134,6 +137,7 @@ class QueryRouter:
             student_id=analysis.student_id,
             doc_type=preferred_types,
             department=department,
+            query_embedding=_q_emb,
         )
 
         # Phase 2: 결과 부족 시 전체 doc_type으로 확장
@@ -147,6 +151,7 @@ class QueryRouter:
                 n_results=n_candidates,
                 student_id=analysis.student_id,
                 department=department,
+                query_embedding=_q_emb,
             )
             # 중복 제거 후 병합
             seen_texts = {c.text[:100] for c in candidates}
@@ -167,6 +172,7 @@ class QueryRouter:
                     n_results=5,
                     student_id=analysis.student_id,
                     doc_type=["faq"],
+                    query_embedding=_q_emb,
                 )
                 seen_texts = {c.text[:100] for c in candidates}
                 for c in faq_only:
@@ -195,8 +201,9 @@ class QueryRouter:
             if bm25_added:
                 logger.debug("Phase 3 BM25: %d개 후보 추가 (총 %d개)", bm25_added, len(candidates))
 
+        # 원칙 2: 리랭커 스킵 — 후보 ≤3이면 Cross-Encoder 건너뜀 (재순위화 의미 없음)
         reranker = self.reranker
-        if reranker and candidates:
+        if reranker and len(candidates) > 3:
             return reranker.rerank(
                 query=query,
                 results=candidates,
@@ -219,6 +226,7 @@ class QueryRouter:
             Intent.REGISTRATION, Intent.EARLY_GRADUATION,
             Intent.SCHOLARSHIP, Intent.LEAVE_OF_ABSENCE,
             Intent.GRADUATION_REQ, Intent.MAJOR_CHANGE,
+            Intent.GENERAL,  # FAQ 검색용 — 학번 없어도 FAQ 탐색 필요
         )
 
         if analysis.intent not in no_id_intents and not analysis.student_id:
@@ -237,4 +245,5 @@ class QueryRouter:
             entities=analysis.entities,
             student_type=analysis.student_type or "내국인",
             question=query,
+            question_type=analysis.question_type.value if analysis.question_type else "",
         )
