@@ -3,6 +3,7 @@
 CPU 전용, <1ms 처리
 """
 
+import concurrent.futures
 import logging
 from typing import List
 
@@ -52,13 +53,24 @@ class QueryRouter:
             "graph_results": [],
         }
 
-        if analysis.requires_vector and self.chroma_store:
-            results["vector_results"] = self._search_vector(query, analysis)
+        # 원칙 2(비용·지연 최적화): 벡터 ∥ 그래프 병렬 실행
+        # 벡터 내부 Phase 1→2→2.5→3 티어 순서는 유지하되,
+        # 독립적인 그래프 검색은 동시에 실행해 대기 시간 절감
+        need_vector = analysis.requires_vector and self.chroma_store
+        need_graph = analysis.requires_graph and self.academic_graph
 
-        if analysis.requires_graph and self.academic_graph:
+        if need_vector and need_graph:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+                v_fut = ex.submit(self._search_vector, query, analysis)
+                g_fut = ex.submit(self._search_graph, query, analysis)
+                results["vector_results"] = v_fut.result()
+                results["graph_results"] = g_fut.result()
+        elif need_vector:
+            results["vector_results"] = self._search_vector(query, analysis)
+        elif need_graph:
             results["graph_results"] = self._search_graph(query, analysis)
 
-        # 원칙 2: 그래프 빈 결과 → 벡터 폴백 (비용 최적화)
+        # 원칙 2: 양쪽 빈 결과 → 벡터 폴백 (비용 최적화)
         if not results["graph_results"] and not results["vector_results"] and self.chroma_store:
             logger.info("그래프 결과 없음 → 벡터 폴백 활성화")
             results["vector_results"] = self._search_vector(query, analysis)
@@ -101,6 +113,9 @@ class QueryRouter:
 
     _MIN_PHASE1_RESULTS = 3  # Phase 1 최소 결과 수 (미달 시 Phase 2 확장)
 
+    # 원칙 2(비용·지연 최적화): BM25 비동기 사전 실행용 스레드풀
+    _bm25_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+
     def _search_vector(
         self, query: str, analysis: QueryAnalysis
     ) -> List[SearchResult]:
@@ -130,7 +145,16 @@ class QueryRouter:
         # 원칙 2: 임베딩 1회만 수행 → Phase 1/2/2.5 모두에 재사용
         _q_emb = self.chroma_store.embedder.embed_query(query)
 
-        # Phase 1: 우선 doc_type으로 검색
+        # 원칙 2(비용·지연 최적화): BM25를 Phase 1과 동시 시작
+        # BM25는 Phase 1 결과에 의존하지 않으므로 사전 실행 가능
+        bm25_future = None
+        if self.bm25_index and self.bm25_index.is_built:
+            bm25_future = self._bm25_pool.submit(
+                self.bm25_index.search,
+                query, 20, preferred_types,
+            )
+
+        # Phase 1: 우선 doc_type으로 검색 (Tier 1 우선)
         candidates = self.chroma_store.search(
             query=query,
             n_results=n_candidates,
@@ -140,7 +164,7 @@ class QueryRouter:
             query_embedding=_q_emb,
         )
 
-        # Phase 2: 결과 부족 시 전체 doc_type으로 확장
+        # Phase 2: 결과 부족 시 전체 doc_type으로 확장 (Tier 순서 유지)
         if preferred_types and len(candidates) < self._MIN_PHASE1_RESULTS:
             logger.info(
                 "Phase 1 결과 %d개 < %d → Phase 2 전체 검색",
@@ -182,24 +206,23 @@ class QueryRouter:
                         if sum(1 for x in candidates if x.metadata.get("doc_type") == "faq") >= 2:
                             break
 
-        # Phase 3: BM25 sparse 후보 확장 (원칙 2: 키워드 매칭 보강)
+        # Phase 3: BM25 sparse 후보 합류 (이미 병렬 실행됨)
         # Dense 검색이 놓치는 exact keyword match를 BM25로 보완해
         # Reranker(Cross-Encoder)가 더 넓은 후보 풀에서 정확도를 높이도록 한다.
-        if self.bm25_index and self.bm25_index.is_built:
-            bm25_results = self.bm25_index.search(
-                query=query,
-                n_results=20,
-                doc_type=preferred_types,
-            )
-            seen_texts = {c.text[:100] for c in candidates}
-            bm25_added = 0
-            for c in bm25_results:
-                if c.text and c.text[:100] not in seen_texts:
-                    candidates.append(c)
-                    seen_texts.add(c.text[:100])
-                    bm25_added += 1
-            if bm25_added:
-                logger.debug("Phase 3 BM25: %d개 후보 추가 (총 %d개)", bm25_added, len(candidates))
+        if bm25_future:
+            try:
+                bm25_results = bm25_future.result(timeout=10)
+                seen_texts = {c.text[:100] for c in candidates}
+                bm25_added = 0
+                for c in bm25_results:
+                    if c.text and c.text[:100] not in seen_texts:
+                        candidates.append(c)
+                        seen_texts.add(c.text[:100])
+                        bm25_added += 1
+                if bm25_added:
+                    logger.debug("Phase 3 BM25: %d개 후보 추가 (총 %d개)", bm25_added, len(candidates))
+            except Exception as e:
+                logger.warning("BM25 병렬 검색 실패 (무시): %s", e)
 
         # 원칙 2: 리랭커 스킵 — 후보 ≤3이면 Cross-Encoder 건너뜀 (재순위화 의미 없음)
         reranker = self.reranker

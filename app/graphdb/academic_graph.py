@@ -296,6 +296,46 @@ class AcademicGraph:
                 if number:
                     self._course_index[number] = nid
 
+        # 원칙 2(비용·지연 최적화): FAQ 역인덱스 + stems 캐시
+        # search_faq()의 O(M) 전수 스캔을 O(K) 후보 조회로 단축
+        self._faq_token_index: dict[str, set[str]] = {}   # {토큰: {nid, ...}}
+        self._faq_stems_cache: dict[str, tuple[set, set]] = {}  # {nid: (q_stems, a_stems)}
+        self._build_faq_index()
+
+    def _build_faq_index(self) -> None:
+        """FAQ 역인덱스 + stems 캐시를 구축합니다.
+
+        원칙 2(비용·지연 최적화): search_faq()에서 매번 전체 FAQ 노드를
+        순회하며 stems()를 호출하는 O(M) 비용을 제거.
+        빌드 시 1회 계산 후 딕셔너리 lookup O(K)로 대체.
+        """
+        from app.pipeline.ko_tokenizer import stems, expand_tokens, FAQ_STOPWORDS
+
+        self._faq_token_index.clear()
+        self._faq_stems_cache.clear()
+
+        for nid in self._type_index.get("FAQ", []):
+            if nid not in self.G.nodes:
+                continue
+            data = self.G.nodes[nid]
+            if data.get("is_category_root"):
+                continue
+            q_text = data.get("구분", "") or ""
+            a_text = data.get("설명", "") or ""
+            q_st = set(stems(q_text))
+            a_st = set(stems(a_text))
+            self._faq_stems_cache[nid] = (q_st, a_st)
+
+            # 역인덱스: expand_tokens(bigram 포함) → nid 매핑
+            all_tokens = expand_tokens(q_st | a_st, FAQ_STOPWORDS)
+            for tok in all_tokens:
+                self._faq_token_index.setdefault(tok, set()).add(nid)
+
+        logger.debug(
+            "FAQ 역인덱스 구축: %d개 FAQ, %d개 토큰",
+            len(self._faq_stems_cache), len(self._faq_token_index),
+        )
+
     def _index_add(self, node_id: str, node_type: str, data: dict = None) -> None:
         """노드 추가 시 인덱스 증분 갱신."""
         self._type_index.setdefault(node_type, []).append(node_id)
@@ -693,28 +733,36 @@ class AcademicGraph:
         # 원칙 4(하드코딩 금지): IDF 가중치로 토큰 중요도 자동 결정
         idf = self._get_faq_idf()
 
+        # 원칙 2(비용·지연 최적화): 역인덱스로 후보 FAQ만 조회 O(K)
+        # 기존 O(M) 전수 스캔 제거 → 매칭 토큰이 있는 FAQ만 스코어링
+        candidate_nids: set[str] = set()
+        for tok in q_key:
+            candidate_nids |= self._faq_token_index.get(tok, set())
+
         scored: list[tuple[float, str, dict]] = []
-        for nid in self._type_index.get("FAQ", []):
-            # 방어: _type_index는 stale할 수 있음 (G 교체 시)
+        for nid in candidate_nids:
             if nid not in self.G.nodes:
                 continue
             data = self.G.nodes[nid]
             if category and data.get("카테고리") != category:
                 continue
-            if data.get("is_category_root"):
-                continue
+
+            # stems 캐시 활용 (빌드 시 사전 계산)
+            cached = self._faq_stems_cache.get(nid)
+            if cached:
+                faq_q_stems_raw, faq_a_stems_raw = cached
+            else:
+                q_text = data.get("구분", "") or ""
+                a_text = data.get("설명", "") or ""
+                faq_q_stems_raw = set(stems(q_text))
+                faq_a_stems_raw = set(stems(a_text))
+
             q_text = data.get("구분", "") or ""
             a_text = data.get("설명", "") or ""
 
-            # recall: bigram 확장 토큰으로 후보 필터링 (기존 방식)
-            q_hay_key = expand_tokens(stems(q_text), FAQ_STOPWORDS)
-            a_hay_key = expand_tokens(stems(a_text), FAQ_STOPWORDS)
-            if not (q_key & q_hay_key) and not (q_key & a_hay_key):
-                continue
-
             # precision: 원본 stem + IDF 가중치로 점수 계산
-            faq_q_core = {s for s in stems(q_text) if len(s) >= 2}
-            faq_a_core = {s for s in stems(a_text) if len(s) >= 2}
+            faq_q_core = {s for s in faq_q_stems_raw if len(s) >= 2}
+            faq_a_core = {s for s in faq_a_stems_raw if len(s) >= 2}
             matched_q = q_core & faq_q_core
             matched_a = q_core & faq_a_core
 
@@ -732,7 +780,7 @@ class AcademicGraph:
             # 원칙 2: FAQ 구체성 페널티 — FAQ Q에 사용자가 안 물은 한정어가 있으면 감점
             # "수강취소 어떻게?" vs "계절학기 수강취소 어떻게?" → "계절학기"가 초과 토큰
             # IDF 가중: 흔한 토큰(과목)은 작은 페널티, 희귀 한정어(교양전공상호인정)는 큰 페널티
-            faq_q_filtered = {s for s in stems(q_text) if s not in FAQ_STOPWORDS and len(s) >= 2}
+            faq_q_filtered = {s for s in faq_q_stems_raw if s not in FAQ_STOPWORDS and len(s) >= 2}
             faq_extra = faq_q_filtered - q_core
             if faq_extra:
                 extra_weight = sum(idf.get(t, 1.0) for t in faq_extra)
@@ -788,8 +836,12 @@ class AcademicGraph:
                 # 원본 stem 커버리지 게이트: bigram 부풀리기 방지
                 # expand_tokens의 bigram이 점수를 과대 계산하는 문제를 원본 어근 기준으로 보정
                 q_core = {s for s in q_stems if s not in FAQ_STOPWORDS and len(s) >= 2}
-                faq_q_core = {s for s in stems(question_text) if s not in FAQ_STOPWORDS and len(s) >= 2}
-                faq_a_core = {s for s in stems(answer_text) if s not in FAQ_STOPWORDS and len(s) >= 2}
+                # stems 캐시 활용
+                _da_cached = self._faq_stems_cache.get(nid)
+                _da_q_raw = _da_cached[0] if _da_cached else set(stems(question_text))
+                _da_a_raw = _da_cached[1] if _da_cached else set(stems(answer_text))
+                faq_q_core = {s for s in _da_q_raw if s not in FAQ_STOPWORDS and len(s) >= 2}
+                faq_a_core = {s for s in _da_a_raw if s not in FAQ_STOPWORDS and len(s) >= 2}
                 stem_coverage = (
                     len(q_core & (faq_q_core | faq_a_core)) / len(q_core)
                     if q_core else 1.0
