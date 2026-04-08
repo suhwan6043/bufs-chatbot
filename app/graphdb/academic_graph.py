@@ -774,6 +774,8 @@ class AcademicGraph:
                 "doc_type": "faq",
                 "카테고리": category_tag,
                 "faq_id": data.get("faq_id", ""),
+                "faq_question": question_text,
+                "faq_answer": answer_text,
             }
             # FAQ 노드 자체 answer_type 속성(선언형 플래그)을 메타로 전파
             declared_type = data.get("answer_type")

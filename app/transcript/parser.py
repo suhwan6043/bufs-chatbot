@@ -119,13 +119,20 @@ class TranscriptParser:
         "D+", "D", "D0", "F", "P", "NP",
     }
 
+    # ── 확장자 → 파서 라우팅 ──
+    _IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".bmp", ".gif"})
+    _DOCX_EXTS = frozenset({".doc", ".docx"})
+    _PPTX_EXTS = frozenset({".ppt", ".pptx"})
+
     def parse(self, file_bytes: bytes, filename: str = "transcript.xls") -> StudentAcademicProfile:
         """
-        XLS 바이트를 파싱하여 구조화된 학생 프로필 반환.
+        다중 파일 포맷을 파싱하여 구조화된 학생 프로필 반환.
+
+        지원 포맷: XLS, PDF, DOC/DOCX, PPT/PPTX, HWP, 이미지(PNG/JPG/BMP/GIF)
 
         Args:
-            file_bytes: XLS 파일 원본 바이트
-            filename: 파일명 (검증용)
+            file_bytes: 파일 원본 바이트
+            filename: 파일명 (검증 + 포맷 라우팅용)
 
         Returns:
             StudentAcademicProfile
@@ -138,8 +145,20 @@ class TranscriptParser:
         if not ok:
             raise ValueError(err)
 
-        # 2) XLS → 2D 그리드
-        grid = self._read_xls(file_bytes)
+        # 2) 확장자 기반 포맷 라우팅 → 2D 그리드
+        ext = os.path.splitext(filename)[1].lower()
+        if ext in self._IMAGE_EXTS:
+            grid = self._read_image_ocr(file_bytes)
+        elif ext == ".pdf":
+            grid = self._read_pdf(file_bytes)
+        elif ext in self._DOCX_EXTS:
+            grid = self._read_docx(file_bytes)
+        elif ext in self._PPTX_EXTS:
+            grid = self._read_pptx(file_bytes)
+        elif ext == ".hwp":
+            grid = self._read_hwp(file_bytes)
+        else:
+            grid = self._read_xls(file_bytes)
 
         # ⚠️ 원본 바이트 참조 해제 (메모리 잔류 방지)
         del file_bytes
@@ -165,6 +184,186 @@ class TranscriptParser:
             source_filename=UploadValidator.sanitize_filename(filename),
             parse_timestamp=datetime.now().isoformat(),
         )
+
+    # ── 이미지 OCR ────────────────────────────────────
+
+    def _read_image_ocr(self, file_bytes: bytes) -> list[list]:
+        """이미지(스크린샷)를 EasyOCR로 텍스트 추출 → 좌표 기반 2D 그리드 변환."""
+        import easyocr
+        from io import BytesIO
+        from PIL import Image
+        import numpy as np
+
+        img = Image.open(BytesIO(file_bytes)).convert("RGB")
+        img_array = np.array(img)
+        del file_bytes
+
+        reader = easyocr.Reader(["ko", "en"], gpu=False, verbose=False)
+        raw = reader.readtext(img_array)
+        del img, img_array
+
+        if not raw:
+            raise ValueError("이미지에서 텍스트를 인식하지 못했습니다.")
+
+        # raw: [([[x1,y1],[x2,y2],[x3,y3],[x4,y4]], text, confidence), ...]
+        # y 좌표 중심으로 행 그룹핑 (같은 y 범위 ≤ 15px → 같은 행)
+        items = []
+        for bbox, text, conf in raw:
+            if conf < 0.3:
+                continue
+            y_center = (bbox[0][1] + bbox[2][1]) / 2
+            x_center = (bbox[0][0] + bbox[2][0]) / 2
+            items.append((y_center, x_center, text.strip()))
+
+        items.sort(key=lambda t: (t[0], t[1]))
+
+        rows: list[list] = []
+        cur_row: list = []
+        cur_y = -999
+        for y, x, text in items:
+            if abs(y - cur_y) > 15:
+                if cur_row:
+                    cur_row.sort(key=lambda t: t[0])
+                    rows.append([t[1] for t in cur_row])
+                cur_row = [(x, text)]
+                cur_y = y
+            else:
+                cur_row.append((x, text))
+        if cur_row:
+            cur_row.sort(key=lambda t: t[0])
+            rows.append([t[1] for t in cur_row])
+
+        logger.info("OCR 추출: %d행, %d텍스트", len(rows), len(items))
+        return rows
+
+    # ── PDF 읽기 ──────────────────────────────────────
+
+    def _read_pdf(self, file_bytes: bytes) -> list[list]:
+        """PDF에서 테이블 추출 → 2D 그리드 (PyMuPDF)."""
+        import fitz
+
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        del file_bytes
+        grid: list[list] = []
+
+        for page in doc:
+            # PyMuPDF 1.23+ 테이블 추출 시도
+            try:
+                tables = page.find_tables()
+                for table in tables:
+                    for row in table.extract():
+                        cleaned = [_cell_str(c) for c in row]
+                        if any(cleaned):
+                            grid.append(cleaned)
+            except AttributeError:
+                # PyMuPDF 버전이 낮아 find_tables() 미지원 → 텍스트 기반 폴백
+                text = page.get_text("text")
+                for line in text.split("\n"):
+                    line = line.strip()
+                    if line:
+                        grid.append([line])
+        doc.close()
+
+        if not grid:
+            raise ValueError("PDF에서 성적표 데이터를 추출하지 못했습니다.")
+        return grid
+
+    # ── DOCX 읽기 ─────────────────────────────────────
+
+    def _read_docx(self, file_bytes: bytes) -> list[list]:
+        """DOC/DOCX에서 테이블 추출 → 2D 그리드."""
+        from io import BytesIO
+        from docx import Document
+
+        doc = Document(BytesIO(file_bytes))
+        del file_bytes
+        grid: list[list] = []
+
+        for table in doc.tables:
+            for row in table.rows:
+                cells = [_cell_str(cell.text) for cell in row.cells]
+                if any(cells):
+                    grid.append(cells)
+
+        if not grid:
+            raise ValueError("문서에서 성적표 테이블을 찾지 못했습니다.")
+        return grid
+
+    # ── PPTX 읽기 ─────────────────────────────────────
+
+    def _read_pptx(self, file_bytes: bytes) -> list[list]:
+        """PPT/PPTX에서 테이블 추출 → 2D 그리드."""
+        from io import BytesIO
+        from pptx import Presentation
+
+        prs = Presentation(BytesIO(file_bytes))
+        del file_bytes
+        grid: list[list] = []
+
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if shape.has_table:
+                    tbl = shape.table
+                    for row in tbl.rows:
+                        cells = [_cell_str(cell.text) for cell in row.cells]
+                        if any(cells):
+                            grid.append(cells)
+
+        if not grid:
+            raise ValueError("프레젠테이션에서 성적표 테이블을 찾지 못했습니다.")
+        return grid
+
+    # ── HWP 읽기 ──────────────────────────────────────
+
+    def _read_hwp(self, file_bytes: bytes) -> list[list]:
+        """HWP 파일에서 텍스트 추출 → 2D 그리드."""
+        try:
+            import olefile
+        except ImportError:
+            raise ModuleNotFoundError("olefile")
+
+        from io import BytesIO
+        import zlib
+
+        ole = olefile.OleFileIO(BytesIO(file_bytes))
+        del file_bytes
+        grid: list[list] = []
+
+        # HWP 본문 스트림 읽기
+        if ole.exists("BodyText/Section0"):
+            data = ole.openstream("BodyText/Section0").read()
+            # HWP 압축 여부 확인
+            if ole.exists("FileHeader"):
+                header = ole.openstream("FileHeader").read()
+                is_compressed = (header[36] & 1) == 1
+                if is_compressed:
+                    try:
+                        data = zlib.decompress(data, -15)
+                    except zlib.error:
+                        pass
+            # 바이너리에서 한글 텍스트 추출 (UTF-16LE)
+            text_parts = []
+            i = 0
+            while i < len(data) - 1:
+                ch = int.from_bytes(data[i:i+2], "little")
+                if 0x20 <= ch < 0xFFFF and ch not in (0x0D, 0x0A):
+                    text_parts.append(chr(ch))
+                elif ch in (0x0D, 0x0A) or ch == 0:
+                    if text_parts:
+                        text_parts.append("\n")
+                i += 2
+            text = "".join(text_parts)
+            for line in text.split("\n"):
+                line = line.strip()
+                if line:
+                    # 탭 기준으로 열 분리
+                    cells = [_cell_str(c) for c in line.split("\t")]
+                    grid.append(cells)
+
+        ole.close()
+        if not grid:
+            raise ValueError("HWP 파일에서 성적표 데이터를 추출하지 못했습니다.")
+        return grid
 
     # ── XLS 읽기 ──────────────────────────────────────
 

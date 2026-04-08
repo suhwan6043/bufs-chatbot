@@ -28,7 +28,15 @@ audit_logger = logging.getLogger("transcript.audit")
 # 학번 패턴 (7-8자리: 19XXXXXX ~ 20XXXXXX)
 _STUDENT_ID_RE = re.compile(r"(?:19|20)[0-9]\d{4,6}")
 # 파일명 허용 패턴 (영숫자, 한글, 밑줄, 하이픈, 괄호, 공백, 점)
-_SAFE_FILENAME_RE = re.compile(r"^[\w\s\-.()\[\]가-힣]+\.xls$", re.UNICODE)
+_ALLOWED_EXTENSIONS = frozenset({
+    ".xls", ".pdf", ".doc", ".docx", ".ppt", ".pptx", ".hwp",
+    ".png", ".jpg", ".jpeg", ".bmp", ".gif",
+})
+_EXT_PATTERN = "|".join(e.lstrip(".") for e in _ALLOWED_EXTENSIONS)
+_SAFE_FILENAME_RE = re.compile(
+    rf"^[\w\s\-.()\[\]가-힣]+\.({_EXT_PATTERN})$",
+    re.UNICODE | re.IGNORECASE,
+)
 
 
 def audit_log(event: str, session_id: str, detail: str = "") -> None:
@@ -252,8 +260,8 @@ class UploadValidator:
     4. 매직 바이트 (OLE2 Compound Document)
     """
 
-    MAX_SIZE_MB = 5
-    # OLE2 Compound Document 매직 (레거시 BIFF .xls)
+    MAX_SIZE_MB = 200
+    # OLE2 Compound Document 매직 (레거시 BIFF .xls / .doc / .hwp / .ppt)
     ALLOWED_MAGIC_OLE2 = b"\xd0\xcf\x11\xe0"
     # 하위 호환용 별칭
     ALLOWED_MAGIC = ALLOWED_MAGIC_OLE2
@@ -277,9 +285,11 @@ class UploadValidator:
             return False, "잘못된 파일명입니다."
 
         # 확장자 검사
-        if not basename.lower().endswith(".xls"):
-            return False, "지원하지 않는 파일 형식입니다. (.xls만 가능)"
-        if basename.lower().endswith(".xlsx"):
+        ext = os.path.splitext(basename)[1].lower()
+        if ext not in _ALLOWED_EXTENSIONS:
+            allowed = ", ".join(sorted(_ALLOWED_EXTENSIONS))
+            return False, f"지원하지 않는 파일 형식입니다. (지원: {allowed})"
+        if ext == ".xlsx":
             return False, ".xlsx는 지원하지 않습니다. 학생포털에서 .xls로 다운로드해주세요."
 
         # 파일명 문자 검사 (XSS 방지)
@@ -297,10 +307,30 @@ class UploadValidator:
 
     @classmethod
     def _has_valid_magic(cls, file_bytes: bytes) -> bool:
-        """레거시 BIFF(OLE2) 또는 HTML-in-XLS 매직 바이트 검증."""
+        """다중 파일 포맷 매직 바이트 검증."""
         if len(file_bytes) < 4:
             return False
-        if file_bytes[:4] == cls.ALLOWED_MAGIC_OLE2:
+        head4 = file_bytes[:4]
+        # OLE2 Compound Document (.xls, .doc, .ppt, .hwp)
+        if head4 == cls.ALLOWED_MAGIC_OLE2:
+            return True
+        # PDF
+        if file_bytes[:5] == b"%PDF-":
+            return True
+        # PNG
+        if head4 == b"\x89PNG":
+            return True
+        # JPEG
+        if file_bytes[:2] == b"\xff\xd8":
+            return True
+        # GIF
+        if head4[:3] == b"GIF":
+            return True
+        # BMP
+        if file_bytes[:2] == b"BM":
+            return True
+        # ZIP-based (.docx, .pptx)
+        if head4 == b"PK\x03\x04":
             return True
         # HTML-in-XLS: 선행 공백·BOM 후 `<`로 시작하면 HTML 테이블로 간주
         head = file_bytes[:64].lstrip(b"\xef\xbb\xbf \t\r\n").lower()

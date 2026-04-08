@@ -780,10 +780,11 @@ def _render_transcript_upload() -> None:
 
         uploaded = st.file_uploader(
             "학업성적사정표 업로드",
-            type=["xls"],
+            type=["xls", "pdf", "doc", "docx", "ppt", "pptx", "hwp",
+                  "png", "jpg", "jpeg", "bmp", "gif"],
             key="transcript_upload",
             label_visibility="collapsed",
-            help="학생포털에서 다운로드한 .xls 파일",
+            help="학생포털 다운로드 파일(.xls) 또는 스크린샷(이미지)",
         )
         if uploaded:
             _handle_transcript_upload(uploaded)
@@ -1409,6 +1410,12 @@ def _render_source_panel(results: list) -> None:
             if key and key not in seen:
                 seen.add(key)
                 items.append(("notice", r))
+        elif doc_type == "faq":
+            faq_id = r.metadata.get("faq_id", "")
+            key = f"faq:{faq_id}" if faq_id else f"faq:{r.text[:40]}"
+            if key not in seen:
+                seen.add(key)
+                items.append(("faq", r))
         elif r.source and r.source != "graph" and r.page_number:
             key = f"{r.source}:{r.page_number}"
             if key not in seen:
@@ -1443,10 +1450,30 @@ def _render_source_panel(results: list) -> None:
                     st.image(page_img, use_container_width=True)
                 else:
                     st.markdown(r.text[:300])
+            elif kind == "faq":
+                category = r.metadata.get("카테고리", "")
+                faq_id = r.metadata.get("faq_id", "")
+                q_text = r.metadata.get("faq_question", "")
+                a_text = r.metadata.get("faq_answer", "")
+                if not q_text and "Q:" in r.text:
+                    parts = r.text.split("A:", 1)
+                    q_text = parts[0].split("Q:", 1)[-1].strip()
+                    a_text = parts[1].strip() if len(parts) > 1 else ""
+                header = "FAQ"
+                if category:
+                    header += f" — {category}"
+                if faq_id:
+                    header += f" ({faq_id})"
+                st.caption(f"📋 **{header}**")
+                if q_text:
+                    st.markdown(f"**Q.** {q_text}")
+                if a_text:
+                    st.markdown(f"**A.** {a_text}")
+                st.divider()
             elif kind == "graph":
                 node_type = r.metadata.get("node_type", "학사 데이터")
                 st.caption(f"📊 **{node_type}** (그래프 데이터)")
-                st.markdown(r.text[:300])
+                st.markdown(r.text[:500])
                 st.divider()
             else:
                 title = r.metadata.get("title", "공지사항")
