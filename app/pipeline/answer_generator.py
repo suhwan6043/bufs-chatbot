@@ -168,6 +168,59 @@ class AnswerGenerator:
         if lang == "en":
             if student_context:
                 parts.append(f"[Student Info]\n{student_context}\n")
+
+            # Gap 1-a: context_confidence warning
+            if context_confidence is not None and context_confidence < 0.5:
+                parts.append(
+                    f"[Warning — Low Relevance {context_confidence:.0%}] "
+                    "The retrieval system could not find documents closely matching this question. "
+                    "If the context does not directly address the specific topic, "
+                    "respond with exactly: "
+                    "'I'm sorry, but I couldn't find relevant information. "
+                    "Please contact the Academic Affairs Office at +82-51-509-5182.'\n"
+                )
+
+            # Gap 1-b: question_type hint
+            if question_type == "overview":
+                parts.append(
+                    "[Note] This question asks for a general overview. "
+                    "Synthesize the key rules, schedules, and procedures from the context "
+                    "into a comprehensive summary. Do not limit your answer to a single FAQ entry.\n"
+                )
+
+            # Gap 1-c: question_focus hints
+            if question_focus == "period":
+                parts.append(
+                    "[Note] This question asks about dates or periods. "
+                    "Find the specific schedule (e.g., registration window, deadline) "
+                    "in the context and answer with exact dates and times. "
+                    "Do not answer with credits or numeric limits.\n"
+                )
+            elif question_focus == "limit":
+                parts.append(
+                    "[Note] This question asks about a numeric limit (credits, count, amount). "
+                    "Lead with the single key number, then briefly note any exceptions.\n"
+                )
+
+            # Gap 1-d: OCU contamination warning
+            _ctx_lower = context.lower()
+            _has_ocu = "ocu" in _ctx_lower or "열린사이버" in _ctx_lower
+            _asks_ocu = "ocu" in question.lower() or "열린사이버" in question.lower()
+            if _has_ocu and not _asks_ocu:
+                parts.append(
+                    "[Warning — OCU Content] The context contains content about OCU "
+                    "(Korea Open CyberUniversity). This question does NOT ask about OCU. "
+                    "Ignore all OCU-related content and answer using BUFS (Busan University of "
+                    "Foreign Studies) information only.\n"
+                )
+
+            # Gap 1-e: student cohort hint
+            if student_id:
+                parts.append(
+                    f"[Student Cohort] Base your answer on enrollment year {student_id}. "
+                    "If rules differ by cohort, prioritize the rule that applies to this year.\n"
+                )
+
             parts.append(f"[Context]\n{context}\n")
             parts.append(f"[Question] {question}")
         else:
