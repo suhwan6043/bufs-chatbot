@@ -22,6 +22,7 @@ from app.pipeline import (
 )
 from app.scheduler import get_scheduler
 from app.contacts import get_dept_searcher
+from app.ui.i18n import t, STYPE_EN_TO_KO
 
 logger = logging.getLogger(__name__)
 
@@ -57,25 +58,28 @@ def _run_async(coro):
 
 
 # ── Brand ──────────────────────────────────────────
-APP_NAME    = "캠챗"
-APP_SUBTITLE = "부산외대 학사 도우미"
 APP_VERSION  = "0.2.0"
 LOGO_PATH    = Path(__file__).parent / "static" / "logo.png"
 
-QUICK_FEATURES = [
-    {"label": "수강신청",     "question": "수강신청 일정과 방법을 알려줘"},
-    {"label": "성적조회",     "question": "성적 처리 방법과 이의신청 절차 알려줘"},
-    {"label": "학사일정",     "question": "이번 학기 주요 학사일정을 알려줘"},
-    {"label": "자주묻는질문", "question": "학사 관련 자주 묻는 질문을 알려줘"},
-]
 
-# 성적표 업로드 시 기본 개인화 기능
-QUICK_FEATURES_PERSONAL_BASE = [
-    {"label": "🎯 부족학점",   "question": "내 성적 기준으로 뭐가 부족한지 알려줘"},
-    {"label": "🔁 재수강 추천", "question": "재수강할만한 과목 추천해줘"},
-    {"label": "📚 이번 학기",   "question": "이번 학기 내가 듣는 과목 알려줘"},
-    {"label": "🎓 졸업 상태",   "question": "졸업까지 얼마나 남았는지 정리해줘"},
-]
+def _get_quick_features() -> list:
+    """언어별 빠른 기능 목록."""
+    return [
+        {"label": t("qf.register"),  "question": t("qf.register_q")},
+        {"label": t("qf.grades"),    "question": t("qf.grades_q")},
+        {"label": t("qf.schedule"),  "question": t("qf.schedule_q")},
+        {"label": t("qf.faq"),       "question": t("qf.faq_q")},
+    ]
+
+
+def _get_personal_base() -> list:
+    """언어별 개인화 빠른 기능 기본 목록."""
+    return [
+        {"label": t("qf.shortage"),   "question": t("qf.shortage_q")},
+        {"label": t("qf.retake"),     "question": t("qf.retake_q")},
+        {"label": t("qf.semester"),   "question": t("qf.semester_q")},
+        {"label": t("qf.graduation"), "question": t("qf.graduation_q")},
+    ]
 
 
 def _build_personal_quick_features(transcript) -> list:
@@ -85,7 +89,7 @@ def _build_personal_quick_features(transcript) -> list:
     원칙 1 (유연한 스키마): 학생의 실제 데이터(복수전공/부족학점/수강중 과목)에 따라
     버튼 구성이 자동으로 진화. 복수전공 없는 학생에게는 복수전공 버튼 미표시.
     """
-    features = list(QUICK_FEATURES_PERSONAL_BASE)
+    features = list(_get_personal_base())
 
     if transcript is None:
         return features
@@ -96,26 +100,28 @@ def _build_personal_quick_features(transcript) -> list:
     # 복수전공 있는 학생만 복수전공 버튼 추가
     if p.복수전공:
         features.append({
-            "label": "🎯 복수전공",
-            "question": "복수전공 학점 얼마나 남았어?",
+            "label": t("qf.dual"),
+            "question": t("qf.dual_q"),
         })
 
     # 부족학점 있는 학생만 수강 가능 학점 버튼 추가
     if c.총_부족학점 > 0:
         features.append({
-            "label": "📊 수강 가능",
-            "question": "내 평점으로 몇 학점까지 신청 가능해?",
+            "label": t("qf.reg_limit"),
+            "question": t("qf.reg_limit_q"),
         })
 
     # 최대 6개까지 (2열 × 3행)
     return features[:6]
 
-PORTAL_LINKS = [
-    {"icon": "🖥️", "label": "수강신청 사이트 바로가기", "url": "https://sugang.bufs.ac.kr/Login.aspx"},
-    {"icon": "📊", "label": "학생포털시스템",            "url": "https://m.bufs.ac.kr/default.aspx?ReturnUrl=%2f"},
-    {"icon": "📅", "label": "학사일정",                 "url": "https://m.bufs.ac.kr/popup/Haksa_Iljeong.aspx?gbn="},
-    {"icon": "📢", "label": "학사공지",                 "url": "https://www.bufs.ac.kr/bbs/board.php?bo_table=notice_aca"},
-]
+def _get_portal_links() -> list:
+    """언어별 포탈 바로가기 링크."""
+    return [
+        {"icon": "🖥️", "label": t("portal.register"), "url": "https://sugang.bufs.ac.kr/Login.aspx"},
+        {"icon": "📊", "label": t("portal.student"),   "url": "https://m.bufs.ac.kr/default.aspx?ReturnUrl=%2f"},
+        {"icon": "📅", "label": t("portal.calendar"),  "url": "https://m.bufs.ac.kr/popup/Haksa_Iljeong.aspx?gbn="},
+        {"icon": "📢", "label": t("portal.notices"),   "url": "https://www.bufs.ac.kr/bbs/board.php?bo_table=notice_aca"},
+    ]
 
 # 학과 목록 (departments.json에서 동적 로드)
 def _load_departments() -> list:
@@ -144,59 +150,59 @@ def _load_departments() -> list:
 DEPARTMENTS = _load_departments()
 
 # ── Loading animation (답변 생성 중 표시) ───────────
-THINKING_HTML = """
+_THINKING_TEMPLATE = """
 <style>
-@keyframes _bkFlt {
-    0%,100% { transform: translateY(0px) rotate(-4deg); }
-    25%     { transform: translateY(-8px) rotate(0deg); }
-    50%     { transform: translateY(-12px) rotate(4deg); }
-    75%     { transform: translateY(-6px) rotate(0deg); }
-}
-@keyframes _pgTrn {
-    0%,100% { transform: scaleX(1);  opacity: 1;   }
-    45%,55% { transform: scaleX(0);  opacity: 0.3; }
-}
-@keyframes _dtPop {
-    0%,80%,100% { transform: scale(0.5); opacity: 0.25; }
-    40%         { transform: scale(1.1); opacity: 1;    }
-}
-._cam-ld { display:flex; align-items:center; gap:16px; padding:8px 2px; }
-._cam-book-wrap {
+@keyframes _bkFlt {{
+    0%,100% {{ transform: translateY(0px) rotate(-4deg); }}
+    25%     {{ transform: translateY(-8px) rotate(0deg); }}
+    50%     {{ transform: translateY(-12px) rotate(4deg); }}
+    75%     {{ transform: translateY(-6px) rotate(0deg); }}
+}}
+@keyframes _pgTrn {{
+    0%,100% {{ transform: scaleX(1);  opacity: 1;   }}
+    45%,55% {{ transform: scaleX(0);  opacity: 0.3; }}
+}}
+@keyframes _dtPop {{
+    0%,80%,100% {{ transform: scale(0.5); opacity: 0.25; }}
+    40%         {{ transform: scale(1.1); opacity: 1;    }}
+}}
+._cam-ld {{ display:flex; align-items:center; gap:16px; padding:8px 2px; }}
+._cam-book-wrap {{
     position: relative; width: 44px; height: 44px;
     display: flex; align-items: center; justify-content: center;
-}
-._cam-book {
+}}
+._cam-book {{
     font-size: 2.4rem; display: inline-block;
     animation: _bkFlt 1.8s ease-in-out infinite;
     filter: drop-shadow(0 4px 8px rgba(79,70,229,0.25));
-}
-._cam-page {
+}}
+._cam-page {{
     position: absolute; right: 4px; top: 10px;
     width: 10px; height: 20px;
     background: rgba(79,70,229,0.18);
     border-radius: 0 3px 3px 0;
     animation: _pgTrn 1.8s ease-in-out infinite;
     transform-origin: left center;
-}
-._cam-info { display:flex; flex-direction:column; gap:7px; }
-._cam-lbl {
+}}
+._cam-info {{ display:flex; flex-direction:column; gap:7px; }}
+._cam-lbl {{
     font-size: 0.86rem; color: #374151;
     font-family: 'Noto Sans KR', sans-serif;
     font-weight: 500; letter-spacing: -0.01em;
-}
-._cam-sub {
+}}
+._cam-sub {{
     font-size: 0.74rem; color: #9ca3af;
     font-family: 'Noto Sans KR', sans-serif;
     margin-top: -4px;
-}
-._cam-dots { display:flex; gap:5px; align-items:center; }
-._cam-dot {
+}}
+._cam-dots {{ display:flex; gap:5px; align-items:center; }}
+._cam-dot {{
     width: 7px; height: 7px; border-radius: 50%;
     background: #4f46e5;
     animation: _dtPop 1.2s infinite ease-in-out;
-}
-._cam-dot:nth-child(2) { animation-delay: 0.22s; }
-._cam-dot:nth-child(3) { animation-delay: 0.44s; }
+}}
+._cam-dot:nth-child(2) {{ animation-delay: 0.22s; }}
+._cam-dot:nth-child(3) {{ animation-delay: 0.44s; }}
 </style>
 <div class="_cam-ld">
   <div class="_cam-book-wrap">
@@ -204,8 +210,8 @@ THINKING_HTML = """
     <div class="_cam-page"></div>
   </div>
   <div class="_cam-info">
-    <div class="_cam-lbl">답변을 생성하고 있어요</div>
-    <div class="_cam-sub">학사 자료를 분석하는 중입니다</div>
+    <div class="_cam-lbl">{lbl}</div>
+    <div class="_cam-sub">{sub}</div>
     <div class="_cam-dots">
       <div class="_cam-dot"></div>
       <div class="_cam-dot"></div>
@@ -214,6 +220,13 @@ THINKING_HTML = """
   </div>
 </div>
 """
+
+
+def _thinking_html() -> str:
+    return _THINKING_TEMPLATE.format(
+        lbl=t("loading.generating"),
+        sub=t("loading.analyzing"),
+    )
 
 
 # ── CSS ────────────────────────────────────────────
@@ -591,6 +604,36 @@ def inject_custom_css():
     )
 
 
+# ── Language selection ─────────────────────────────
+def render_language_selection() -> None:
+    """언어 선택 히어로 페이지 — 온보딩 이전에 1회 표시."""
+    inject_custom_css()
+    _, center, _ = st.columns([1, 2, 1])
+    with center:
+        st.markdown(
+            '<div style="text-align:center;padding:4rem 0 1.5rem;">'
+            '<div style="font-size:3.2rem;">🎓</div>'
+            '<div style="font-size:1.35rem;font-weight:700;color:#1e3a5f;margin:0.7rem 0 0.4rem;">'
+            'BUFS Academic Guide AI</div>'
+            '<div style="font-size:0.88rem;color:#64748b;line-height:1.6;">'
+            '언어를 선택해주세요 / Please select your language</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        st.markdown('<div style="height:0.5rem;"></div>', unsafe_allow_html=True)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("🇰🇷  한국어로 시작하기", key="lang_ko", use_container_width=True, type="primary"):
+                st.session_state.ui_lang = "ko"
+                st.rerun()
+        with c2:
+            if st.button("🇺🇸  Start in English", key="lang_en", use_container_width=True, type="primary"):
+                st.session_state.ui_lang = "en"
+                st.rerun()
+
+
 # ── Onboarding ─────────────────────────────────────
 def render_onboarding() -> None:
     """최초 접속 시 표시하는 사용자 프로필 설정 화면."""
@@ -600,44 +643,44 @@ def render_onboarding() -> None:
             '<div style="text-align:center;padding:2.5rem 0 1.2rem;">'
             '<div style="font-size:2.8rem;">🎓</div>'
             '<div style="font-size:1.25rem;font-weight:700;color:#1e3a5f;margin:0.5rem 0 0.3rem;">'
-            '캠챗에 오신 것을 환영합니다</div>'
+            f'{t("onboard.welcome")}</div>'
             '<div style="font-size:0.84rem;color:#64748b;line-height:1.6;">'
-            '맞춤 학사 안내를 위해 기본 정보를 입력해주세요.<br>'
-            '입력한 정보는 질문에 자동으로 반영됩니다.</div>'
+            f'{t("onboard.desc")}</div>'
             '</div>',
             unsafe_allow_html=True,
         )
 
+        stype_options = [
+            t("onboard.type_domestic"),
+            t("onboard.type_intl"),
+            t("onboard.type_transfer"),
+        ]
+
         with st.form("onboarding_form", border=True):
             year = st.selectbox(
-                "📅 입학연도",
+                t("onboard.year_label"),
                 options=list(range(2026, 2015, -1)),
-                format_func=lambda y: f"{y}학번",
-                index=3,  # 기본값: 2023학번
+                format_func=lambda y: t("onboard.year_fmt", y=y),
+                index=3,
             )
             dept = st.selectbox(
-                "🏫 학과 / 전공",
-                options=["선택 안 함"] + sorted(DEPARTMENTS),
+                t("onboard.dept_label"),
+                options=[t("onboard.dept_none")] + sorted(DEPARTMENTS),
             )
             stype = st.radio(
-                "👤 학생 유형",
-                options=["내국인", "외국인", "편입생"],
+                t("onboard.type_label"),
+                options=stype_options,
                 horizontal=True,
             )
 
             st.divider()
             st.markdown(
                 '<p style="font-size:0.78rem;color:#64748b;line-height:1.65;margin:0 0 0.3rem;">'
-                '본 서비스의 답변은 인공지능(AI)에 의해 자동 생성되며, '
-                '사실과 다르거나 부정확한 내용을 포함할 수 있습니다. '
-                '제공된 정보는 참고용이며, 중요한 학사 사항은 학과 사무실 또는 '
-                '학사지원팀을 통해 확인하시기 바랍니다. '
-                'AI 답변의 오류·누락으로 인해 발생한 직접적·간접적 불이익에 대해 '
-                '본 서비스는 책임을 지지 않습니다.</p>',
+                f'{t("onboard.disclaimer")}</p>',
                 unsafe_allow_html=True,
             )
             disclaimer_checked = st.checkbox(
-                "위 내용을 확인하였으며, 이에 동의합니다.",
+                t("onboard.agree"),
                 value=False,
                 key="disclaimer_check",
             )
@@ -645,21 +688,23 @@ def render_onboarding() -> None:
             c_start, c_skip = st.columns([3, 2])
             with c_start:
                 submitted = st.form_submit_button(
-                    "시작하기", use_container_width=True, type="primary"
+                    t("onboard.btn_start"), use_container_width=True, type="primary"
                 )
             with c_skip:
                 skipped = st.form_submit_button(
-                    "나중에 설정", use_container_width=True
+                    t("onboard.btn_skip"), use_container_width=True
                 )
 
         if submitted or skipped:
             if not disclaimer_checked:
-                st.warning("면책 조항에 동의해야 시작할 수 있습니다.", icon="⚠️")
+                st.warning(t("onboard.warn_agree"), icon="⚠️")
             elif submitted:
+                # student_type은 항상 한국어로 저장 (파이프라인 호환)
+                stype_ko = STYPE_EN_TO_KO.get(stype, stype)
                 st.session_state.user_profile = {
                     "student_id": str(year),
-                    "department": dept if dept != "선택 안 함" else "",
-                    "student_type": stype,
+                    "department": dept if dept != t("onboard.dept_none") else "",
+                    "student_type": stype_ko,
                 }
                 st.rerun()
             else:  # skipped
@@ -675,7 +720,7 @@ def _render_transcript_upload() -> None:
     st.markdown(
         '<p style="font-size:0.7rem;font-weight:700;color:#94a3b8;'
         'text-transform:uppercase;letter-spacing:0.5px;margin:0.2rem 0 0.4rem;">'
-        '성적 사정표</p>',
+        f'{t("sidebar.transcript")}</p>',
         unsafe_allow_html=True,
     )
 
@@ -683,7 +728,7 @@ def _render_transcript_upload() -> None:
 
     if transcript:
         # 등록된 성적표 상태 표시 (이름은 store() 시점에 삭제됨, _masked_name 사용)
-        masked = getattr(transcript, "_masked_name", "등록됨")
+        masked = getattr(transcript, "_masked_name", t("status.registered"))
         c = transcript.credits
         p = transcript.profile
 
@@ -698,13 +743,13 @@ def _render_transcript_upload() -> None:
             shortage_block = (
                 f'<div style="font-size:0.72rem;color:#b45309;margin-top:0.3rem;'
                 f'padding:0.2rem 0.4rem;background:#fef3c7;border-radius:4px;">'
-                f'⚠️ 부족 {c.총_부족학점}학점</div>'
+                f'{t("sidebar.shortage", n=c.총_부족학점)}</div>'
             )
         else:
             shortage_block = (
                 f'<div style="font-size:0.72rem;color:#15803d;margin-top:0.3rem;'
                 f'padding:0.2rem 0.4rem;background:#dcfce7;border-radius:4px;">'
-                f'✓ 졸업요건 충족</div>'
+                f'{t("sidebar.req_met")}</div>'
             )
 
         # 복수전공 정보 (있을 때만)
@@ -716,7 +761,7 @@ def _render_transcript_upload() -> None:
                 if "복수전공" in cat.name or "다전공" in cat.name:
                     dual_shortage = cat.부족학점
                     break
-            dual_status = f"{dual_shortage}학점 남음" if dual_shortage > 0 else "충족"
+            dual_status = t("sidebar.dual_remain", n=dual_shortage) if dual_shortage > 0 else t("sidebar.dual_met")
             dual_block = (
                 f'<div style="font-size:0.7rem;color:#475569;margin-top:0.2rem;">'
                 f'🎯 복수전공: {dual_status}</div>'
@@ -727,14 +772,14 @@ def _render_transcript_upload() -> None:
             f'background:#f0fdf4;border:1px solid #bbf7d0;margin-bottom:0.3rem;">'
             f'<div style="display:flex;align-items:baseline;justify-content:space-between;">'
             f'<span style="font-size:0.85rem;font-weight:700;color:#166534;">{masked}</span>'
-            f'<span style="font-size:0.72rem;color:#22c55e;">평점 {c.평점평균}</span>'
+            f'<span style="font-size:0.72rem;color:#22c55e;">{t("sidebar.gpa", v=c.평점평균)}</span>'
             f'</div>'
             # 진행률 바
             f'<div style="margin-top:0.35rem;height:6px;background:#dcfce7;border-radius:3px;overflow:hidden;">'
             f'<div style="height:100%;width:{progress_pct}%;background:linear-gradient(90deg,#22c55e,#16a34a);"></div>'
             f'</div>'
             f'<div style="font-size:0.7rem;color:#15803d;margin-top:0.2rem;">'
-            f'{c.총_취득학점} / {c.총_졸업기준}학점 ({progress_pct}%)</div>'
+            f'{t("sidebar.credits_fmt", done=c.총_취득학점, total=c.총_졸업기준, pct=progress_pct)}</div>'
             f'{shortage_block}'
             f'{dual_block}'
             f'</div>',
@@ -743,32 +788,28 @@ def _render_transcript_upload() -> None:
 
         c1, c2 = st.columns(2)
         with c1:
-            if st.button("🔄 갱신", key="refresh_transcript", use_container_width=True):
+            if st.button(t("sidebar.btn_refresh"), key="refresh_transcript", use_container_width=True):
                 SecureTranscriptStore.destroy(st.session_state)
                 st.rerun()
         with c2:
-            if st.button("🗑️ 삭제", key="delete_transcript", use_container_width=True):
+            if st.button(t("sidebar.btn_delete"), key="delete_transcript", use_container_width=True):
                 SecureTranscriptStore.destroy(st.session_state)
                 st.rerun()
 
         remaining = SecureTranscriptStore.remaining_seconds(st.session_state)
-        st.caption(f"⏱️ {remaining // 60}분 후 자동 삭제")
+        st.caption(t("sidebar.auto_delete", m=remaining // 60))
         return
 
     # ── 업로드 전 개인정보 동의 ──
     st.markdown(
         '<div style="font-size:0.72rem;color:#64748b;line-height:1.5;'
         'padding:0.45rem;background:#fef3c7;border-radius:6px;border:1px solid #fbbf24;">'
-        '⚠️ <b>개인정보 처리 안내</b><br>'
-        '• 세션에서만 사용, 서버에 저장하지 않습니다<br>'
-        '• 30분 후 자동 삭제됩니다<br>'
-        '• AI 답변에 이름/학번이 노출되지 않습니다<br>'
-        '• 언제든 삭제 버튼으로 즉시 삭제할 수 있습니다</div>',
+        f'{t("sidebar.privacy_html")}</div>',
         unsafe_allow_html=True,
     )
 
     consent = st.checkbox(
-        "위 내용을 확인하였으며, 성적표 활용에 동의합니다",
+        t("sidebar.consent"),
         key="transcript_consent_cb",
     )
 
@@ -779,12 +820,12 @@ def _render_transcript_upload() -> None:
             SecureTranscriptStore.grant_consent(st.session_state, session_id)
 
         uploaded = st.file_uploader(
-            "학업성적사정표 업로드",
+            t("sidebar.upload_label"),
             type=["xls", "pdf", "doc", "docx", "ppt", "pptx", "hwp",
                   "png", "jpg", "jpeg", "bmp", "gif"],
             key="transcript_upload",
             label_visibility="collapsed",
-            help="학생포털 다운로드 파일(.xls) 또는 스크린샷(이미지)",
+            help=t("sidebar.upload_help"),
         )
         if uploaded:
             _handle_transcript_upload(uploaded)
@@ -813,7 +854,7 @@ def _handle_transcript_upload(uploaded_file) -> None:
     safe_filename = UploadValidator.sanitize_filename(uploaded_file.name)
     if not ok:
         audit_log("UPLOAD_REJECTED", session_id, err)
-        st.error(f"파일 검증 실패: {err}")
+        st.error(t("error.file_validation", e=err))
         return
 
     # 2) 파싱 (성명은 여기서만 사용 후 store()에서 삭제됨)
@@ -823,21 +864,18 @@ def _handle_transcript_upload(uploaded_file) -> None:
     except ModuleNotFoundError as e:
         # 서버 설정 문제: 의존성 누락 (예: xlrd). 사용자 파일 문제 아님.
         audit_log("PARSE_MODULE_MISSING", session_id, e.name or "")
-        st.error(
-            f"서버 설정 문제: 필수 라이브러리가 설치되지 않았습니다 "
-            f"({e.name}). 관리자에게 문의해 주세요."
-        )
+        st.error(t("error.parse_module", lib=e.name or ""))
         logger.error("성적표 파싱 의존성 누락: %s", e)
         return
     except ValueError as e:
         # 파일 포맷/구조 문제 (예: HTML에 <table> 없음, 데이터 부족)
         audit_log("PARSE_INVALID", session_id, type(e).__name__)
-        st.error(f"성적표 형식이 올바르지 않습니다: {e}")
+        st.error(t("error.parse_invalid", e=e))
         logger.warning("성적표 포맷 오류: %s", e)
         return
     except Exception as e:
         audit_log("PARSE_FAILED", session_id, type(e).__name__)
-        st.error("성적표 파싱 실패. 올바른 파일인지 확인해주세요.")
+        st.error(t("error.parse_failed"))
         logger.exception("성적표 파싱 실패")
         return
     finally:
@@ -851,7 +889,7 @@ def _handle_transcript_upload(uploaded_file) -> None:
     if old:
         diff = TranscriptVersionManager.detect_diff(old, profile)
         if diff:
-            st.info(f"변경사항 {len(diff)}건 감지")
+            st.info(t("status.diff_detected", n=len(diff)))
 
     # 5) 보안 저장 (⚠️ store()에서 성명/학번 원본 즉시 삭제됨)
     SecureTranscriptStore.store(st.session_state, profile, session_id)
@@ -864,7 +902,7 @@ def _handle_transcript_upload(uploaded_file) -> None:
         "student_type": profile.profile.student_type or "내국인",
     }
 
-    st.success(f"✅ {masked}님의 성적표 등록 완료 (30분 후 자동 삭제)")
+    st.success(t("status.upload_ok", name=masked))
     st.rerun()
 
 
@@ -875,18 +913,19 @@ def _render_profile_sidebar() -> None:
 
     st.markdown(
         '<p style="font-size:0.7rem;font-weight:700;color:#94a3b8;'
-        'text-transform:uppercase;letter-spacing:0.5px;margin:0.2rem 0 0.4rem;">내 정보</p>',
+        f'text-transform:uppercase;letter-spacing:0.5px;margin:0.2rem 0 0.4rem;">{t("sidebar.my_info")}</p>',
         unsafe_allow_html=True,
     )
 
     if profile.get("student_id"):
-        dept_txt  = profile.get("department") or "학과 미설정"
+        dept_txt  = profile.get("department") or t("sidebar.dept_unset")
         stype_txt = profile.get("student_type", "내국인")
+        year_display = f'{profile["student_id"]}{t("sidebar.year_suffix")}'
         st.markdown(
             f'<div style="padding:0.5rem 0.65rem;border-radius:7px;'
             f'background:#eef2ff;border:1px solid #c7d2fe;margin-bottom:0.3rem;">'
             f'<span style="font-size:0.85rem;font-weight:700;color:#3730a3;">'
-            f'{profile["student_id"]}학번</span>'
+            f'{year_display}</span>'
             f'<span style="font-size:0.77rem;color:#4f46e5;margin-left:0.45rem;">'
             f'{dept_txt}</span>'
             f'<span style="font-size:0.73rem;color:#818cf8;margin-left:0.3rem;">· {stype_txt}</span>'
@@ -896,11 +935,11 @@ def _render_profile_sidebar() -> None:
     else:
         st.markdown(
             '<div style="font-size:0.79rem;color:#94a3b8;padding:0.2rem 0 0.3rem;">'
-            '정보 미설정</div>',
+            f'{t("sidebar.info_unset")}</div>',
             unsafe_allow_html=True,
         )
 
-    if st.button("✏️  정보 수정", key="edit_profile_btn", use_container_width=True):
+    if st.button(t("sidebar.edit_profile"), key="edit_profile_btn", use_container_width=True):
         st.session_state.user_profile = None  # 온보딩으로 복귀
         st.rerun()
 
@@ -916,15 +955,15 @@ def render_sidebar() -> bool:
             st.markdown(
                 '<div style="width:56px;height:56px;background:linear-gradient(135deg,#1e3a5f,#2d5a9e);'
                 'border-radius:14px;display:flex;align-items:center;justify-content:center;'
-                'font-size:1.5rem;color:white;font-weight:700;margin-bottom:0.1rem;">캠</div>',
+                f'font-size:1.5rem;color:white;font-weight:700;margin-bottom:0.1rem;">{t("brand.logo_fallback")}</div>',
                 unsafe_allow_html=True,
             )
 
         st.markdown(
             f'<div style="margin:0.45rem 0 0.2rem;">'
-            f'  <span style="font-size:1.15rem;font-weight:700;color:#1e293b;">{APP_NAME}</span>'
+            f'  <span style="font-size:1.15rem;font-weight:700;color:#1e293b;">{t("brand.app_name")}</span>'
             f'</div>'
-            f'<div style="font-size:0.76rem;color:#64748b;margin-bottom:0.3rem;">{APP_SUBTITLE}</div>',
+            f'<div style="font-size:0.76rem;color:#64748b;margin-bottom:0.3rem;">{t("brand.subtitle")}</div>',
             unsafe_allow_html=True,
         )
 
@@ -934,7 +973,7 @@ def render_sidebar() -> bool:
         try:
             init_components()
         except Exception:
-            st.error("서비스를 준비 중입니다. 잠시 후 다시 시도해주세요.")
+            st.error(t("sidebar.init_error"))
             return False
 
         # ── 내 정보 ────────────────────────────────
@@ -950,8 +989,8 @@ def render_sidebar() -> bool:
         # ── 빠른 기능 (성적표 있으면 개인화 버튼으로 전환) ──
         from app.transcript.security import SecureTranscriptStore
         _tx = SecureTranscriptStore.retrieve(st.session_state)
-        _features = _build_personal_quick_features(_tx) if _tx else QUICK_FEATURES
-        _label = "맞춤 기능" if _tx else "빠른 기능"
+        _features = _build_personal_quick_features(_tx) if _tx else _get_quick_features()
+        _label = t("sidebar.qf_personal") if _tx else t("sidebar.qf_label")
 
         st.markdown(
             f'<p style="font-size:0.7rem;font-weight:700;color:#94a3b8;'
@@ -970,18 +1009,17 @@ def render_sidebar() -> bool:
         # ── 대화 ──────────────────────────────────
         st.markdown(
             '<p style="font-size:0.7rem;font-weight:700;color:#94a3b8;'
-            'text-transform:uppercase;letter-spacing:0.5px;margin:0.2rem 0 0.4rem;">대화</p>',
+            f'text-transform:uppercase;letter-spacing:0.5px;margin:0.2rem 0 0.4rem;">{t("sidebar.chat")}</p>',
             unsafe_allow_html=True,
         )
         st.markdown(
             '<div style="padding:0.45rem 0.6rem;border-radius:7px;'
             'background:#eef2ff;color:#4f46e5 !important;'
-            'font-size:0.85rem;font-weight:600;margin-bottom:0.2rem;">'
-            '💬&nbsp; 전체 대화</div>',
+            f'font-size:0.85rem;font-weight:600;margin-bottom:0.2rem;">{t("sidebar.all_chats")}</div>',
             unsafe_allow_html=True,
         )
 
-        if st.button("🗑️  대화 초기화", key="clr", use_container_width=True):
+        if st.button(t("sidebar.clear_chat"), key="clr", use_container_width=True):
             st.session_state.messages = []
             st.rerun()
 
@@ -996,7 +1034,7 @@ def render_sidebar() -> bool:
                 st.markdown(
                     '<div style="margin-top:0.6rem;padding:0.5rem 0.6rem;border-radius:7px;'
                     'background:#fef3c7;border:1px solid #fcd34d;font-size:0.78rem;color:#92400e;">'
-                    '⚠️ AI 서버 미연결<br><span style="font-size:0.72rem;">LM Studio를 시작해주세요</span>'
+                    f'{t("sidebar.server_warn")}<br><span style="font-size:0.72rem;">{t("sidebar.server_hint")}</span>'
                     '</div>',
                     unsafe_allow_html=True,
                 )
@@ -1005,7 +1043,7 @@ def render_sidebar() -> bool:
         st.markdown(
             f'<div style="position:absolute;bottom:0.75rem;left:1rem;right:1rem;'
             f'font-size:0.7rem;color:#cbd5e1;border-top:1px solid #e2e8f0;padding-top:0.6rem;">'
-            f'버전 {APP_VERSION}</div>',
+            f'{t("brand.version", v=APP_VERSION)}</div>',
             unsafe_allow_html=True,
         )
 
@@ -1021,20 +1059,18 @@ def render_chat_header():
     if transcript:
         badge_html = (
             '<div class="chat-hdr-badge" style="background:#ecfdf5;color:#047857;'
-            'border:1px solid #a7f3d0;">'
-            '📋 성적표 연동 중 — 개인 맞춤 답변 활성화</div>'
+            f'border:1px solid #a7f3d0;">{t("chat.badge_transcript")}</div>'
         )
     else:
         badge_html = (
-            '<div class="chat-hdr-badge">'
-            '📢 학사 정보는 학교 포털에서도 확인하세요</div>'
+            f'<div class="chat-hdr-badge">{t("chat.badge_default")}</div>'
         )
 
     st.markdown(
         '<div class="chat-hdr">'
         '  <div>'
-        '    <h2>캠챗 &mdash; 부산외대 학사챗봇</h2>'
-        '    <p>수강신청 &middot; 성적 &middot; 학사일정 &middot; 학사행정 지원</p>'
+        f'    <h2>{t("chat.header_title")}</h2>'
+        f'    <p>{t("chat.header_sub")}</p>'
         '  </div>'
         f'  {badge_html}'
         '</div>',
@@ -1055,46 +1091,38 @@ def render_welcome_screen():
 
         # 상태 요약 문구 (PII 없이 학점 수치만)
         if c.총_부족학점 > 0:
-            status_msg = (
-                f'졸업까지 <b style="color:#b45309;">{c.총_부족학점}학점</b>이 남아 있어요. '
-                f'어떤 정보가 필요하신가요?'
-            )
+            status_msg = t("welcome.credits_short", n=c.총_부족학점)
         else:
-            status_msg = (
-                f'<b style="color:#15803d;">졸업요건을 충족하셨어요!</b> '
-                f'수강신청·학사일정 등 궁금한 것을 물어보세요.'
-            )
+            status_msg = t("welcome.credits_met")
 
-        major_display = p.전공 or p.학부과 or "재학생"
+        major_display = p.전공 or p.학부과 or t("welcome.student_label")
 
         st.markdown(
             f'<div class="wc-wrap">'
             f'  <div class="wc-icon">🎓</div>'
-            f'  <div class="wc-title">성적표 연동 완료</div>'
+            f'  <div class="wc-title">{t("welcome.transcript_title")}</div>'
             f'  <div class="wc-sub">'
-            f'    {major_display} {p.입학연도}학번 · 평점 {c.평점평균}<br>'
+            f'    {major_display} {p.입학연도}{t("sidebar.year_suffix")} · {t("sidebar.gpa", v=c.평점평균)}<br>'
             f'    {status_msg}'
             f'  </div>'
             f'</div>',
             unsafe_allow_html=True,
         )
         features = _build_personal_quick_features(transcript)
-        hint_text = "성적표 기반 맞춤 질문을 바로 시작하세요"
+        hint_text = t("welcome.hint_personal")
     else:
         # 성적표 없음 — 기본 인사 + 업로드 유도
         st.markdown(
             '<div class="wc-wrap">'
             '  <div class="wc-icon">🎓</div>'
-            '  <div class="wc-title">캠챗에 오신 것을 환영합니다</div>'
-            '  <div class="wc-sub">부산외국어대학교 학사 안내 AI입니다.<br>'
-            '  졸업요건, 수강신청, 학사일정 등 궁금한 것을 물어보세요.<br>'
-            '  <span style="color:#2563eb;font-weight:600;">💡 왼쪽 사이드바에서 성적표를 업로드하면 맞춤 답변을 받을 수 있어요.</span>'
+            f'  <div class="wc-title">{t("welcome.title")}</div>'
+            f'  <div class="wc-sub">{t("welcome.desc")}'
             '  </div>'
             '</div>',
             unsafe_allow_html=True,
         )
-        features = QUICK_FEATURES
-        hint_text = "위 버튼을 누르거나 아래 입력창에 직접 질문하세요"
+        features = _get_quick_features()
+        hint_text = t("welcome.hint_buttons")
 
     c1, c2 = st.columns(2)
     for i, feat in enumerate(features):
@@ -1122,7 +1150,7 @@ def _render_rating(msg_idx: int, msg: dict) -> None:
         stars = "★" * rating_value + "☆" * (5 - rating_value)
         st.markdown(
             f'<div style="font-size:0.78rem;color:#94a3b8;margin:0.2rem 0 0.6rem 0.2rem;">'
-            f'만족도: <span style="color:#f59e0b;letter-spacing:2px;">{stars}</span>'
+            f'{t("rating.done")} <span style="color:#f59e0b;letter-spacing:2px;">{stars}</span>'
             f'&nbsp;({rating_value}/5)</div>',
             unsafe_allow_html=True,
         )
@@ -1130,7 +1158,7 @@ def _render_rating(msg_idx: int, msg: dict) -> None:
 
     st.markdown(
         '<div style="font-size:0.78rem;color:#64748b;margin:0.3rem 0 0.4rem 0.2rem;">'
-        '이 답변이 도움이 됐나요?</div>',
+        f'{t("rating.prompt")}</div>',
         unsafe_allow_html=True,
     )
     cols = st.columns([1, 1, 1, 1, 1, 6])
@@ -1186,8 +1214,8 @@ def _save_feedback(text: str) -> None:
 def render_right_panel():
     # 모바일에서 이 컬럼 전체를 숨기기 위한 마커 (CSS :has(#rp-marker) 대상)
     st.markdown('<div id="rp-marker"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="rp-section">바로가기</div>', unsafe_allow_html=True)
-    for lnk in PORTAL_LINKS:
+    st.markdown(f'<div class="rp-section">{t("right.shortcuts")}</div>', unsafe_allow_html=True)
+    for lnk in _get_portal_links():
         st.markdown(
             f'<a href="{lnk["url"]}" target="_blank" class="rp-link">'
             f'{lnk["icon"]} {lnk["label"]}</a>',
@@ -1195,42 +1223,37 @@ def render_right_panel():
         )
 
     st.markdown(
-        '<div style="margin-top:0.9rem;" class="rp-section">도움말</div>',
+        f'<div style="margin-top:0.9rem;" class="rp-section">{t("right.help")}</div>',
         unsafe_allow_html=True,
     )
     st.markdown(
-        '<div class="rp-tip">'
-        '학번을 포함하면 더 정확한 답변을 받을 수 있어요<br><br>'
-        '<span style="color:#64748b;">예시</span><br>'
-        '&bull; <em>"2023학번 졸업요건"</em><br>'
-        '&bull; <em>"2024학번 수강신청 학점"</em>'
-        '</div>',
+        f'<div class="rp-tip">{t("right.help_tip")}</div>',
         unsafe_allow_html=True,
     )
 
     st.markdown(
-        '<div style="margin-top:1.2rem;" class="rp-section">피드백</div>',
+        f'<div style="margin-top:1.2rem;" class="rp-section">{t("right.feedback")}</div>',
         unsafe_allow_html=True,
     )
     with st.form("feedback_form", clear_on_submit=True, border=False):
         fb_text = st.text_area(
-            "의견",
-            placeholder="불편한 점, 개선 제안, 칭찬 등 자유롭게 작성해 주세요.",
+            t("right.feedback"),
+            placeholder=t("right.feedback_ph"),
             height=110,
             label_visibility="collapsed",
         )
-        if st.form_submit_button("전송", use_container_width=True):
+        if st.form_submit_button(t("right.feedback_submit"), use_container_width=True):
             if fb_text.strip():
                 _save_feedback(fb_text.strip())
-                st.success("피드백이 전송됐습니다. 감사합니다!")
+                st.success(t("right.feedback_ok"))
             else:
-                st.warning("내용을 입력해 주세요.")
+                st.warning(t("right.feedback_empty"))
 
 
 # ── Pipeline (UNCHANGED) ───────────────────────────
 def init_components():
     if "initialized" not in st.session_state:
-        with st.spinner("시스템 초기화 중..."):
+        with st.spinner(t("sidebar.init_spinner")):
             chroma_store   = get_chroma_store()   # 공유 싱글톤 (스케줄러와 동일 인스턴스)
             academic_graph = AcademicGraph()
 
@@ -1440,12 +1463,12 @@ def _render_source_panel(results: list) -> None:
     if not items:
         return
 
-    with st.expander("📄 근거 문서 확인", expanded=False):
+    with st.expander(t("source.expander"), expanded=False):
         for kind, r in items:
             if kind == "pdf":
                 page_img = _render_pdf_page(r.source, r.page_number, r.text)
                 fname = Path(r.source).name
-                st.caption(f"📑 **{fname}** — {r.page_number}페이지")
+                st.caption(f"📑 **{fname}** — {t('source.page', n=r.page_number)}")
                 if page_img:
                     st.image(page_img, use_container_width=True)
                 else:
@@ -1472,11 +1495,11 @@ def _render_source_panel(results: list) -> None:
                 st.divider()
             elif kind == "graph":
                 node_type = r.metadata.get("node_type", "학사 데이터")
-                st.caption(f"📊 **{node_type}** (그래프 데이터)")
+                st.caption(f"📊 **{node_type}** {t('source.graph_label')}")
                 st.markdown(r.text[:500])
                 st.divider()
             else:
-                title = r.metadata.get("title", "공지사항")
+                title = r.metadata.get("title", t("source.notice_title"))
                 url   = r.metadata.get("source_url", "") or r.metadata.get("source_notice_url", "")
                 date  = r.metadata.get("post_date", "")
                 st.markdown(
@@ -1486,7 +1509,7 @@ def _render_source_panel(results: list) -> None:
                 )
                 st.caption(r.text[:200] + ("..." if len(r.text) > 200 else ""))
                 if url:
-                    st.markdown(f"[원문 보기 →]({url})")
+                    st.markdown(f"[{t('source.view_original')}]({url})")
                 st.divider()
 
 
@@ -1498,12 +1521,12 @@ def _render_source_urls(source_urls: list) -> None:
     """
     lines = []
     for item in source_urls:
-        title = item.get("title", "공지 원문")
+        title = item.get("title", t("source.notice_default"))
         url   = item.get("url", "")
         if url:
             lines.append(f"- [{title}]({url})")
     if lines:
-        st.caption("📌 **관련 공지**\n" + "\n".join(lines))
+        st.caption(t("source.related") + "\n" + "\n".join(lines))
 
 
 def _enrich_analysis(question: str, analysis, router) -> tuple:
@@ -1571,6 +1594,8 @@ async def generate_response(question: str) -> str:
     validator = st.session_state.validator
 
     analysis = analyzer.analyze(question)
+    if st.session_state.get("ui_lang") == "en":
+        analysis.lang = "en"
     analysis, transcript_context, student_context = _enrich_analysis(question, analysis, router)
 
     search_results = router.route_and_search(question, analysis)
@@ -1627,7 +1652,7 @@ async def generate_response(question: str) -> str:
 
 async def generate_response_stream(question: str, placeholder) -> str:
     # 처리 시작 즉시 애니메이션 표시 → 첫 토큰 도착 시 자동 대체됨
-    placeholder.markdown(THINKING_HTML, unsafe_allow_html=True)
+    placeholder.markdown(_thinking_html(), unsafe_allow_html=True)
     _t0 = time.monotonic()
 
     # ── 연락처 쿼리 단락 처리 (LLM 없이 즉시 응답) ───────────────
@@ -1655,6 +1680,9 @@ async def generate_response_stream(question: str, placeholder) -> str:
 
     _t_analyze = time.monotonic()
     analysis = analyzer.analyze(question)
+    # EN UI 사용자는 항상 영어 답변
+    if st.session_state.get("ui_lang") == "en":
+        analysis.lang = "en"
     analysis, transcript_context, student_context = _enrich_analysis(question, analysis, router)
     _ms_analyze = int((time.monotonic() - _t_analyze) * 1000)
 
@@ -1733,10 +1761,7 @@ async def generate_response_stream(question: str, placeholder) -> str:
 
     # 방어: LLM이 빈 응답을 반환한 경우
     if not full_answer.strip():
-        full_answer = (
-            "죄송합니다. 답변 생성에 실패했습니다. 다시 질문해 주세요.\n\n"
-            "문제가 지속되면 학사지원팀(051-509-5182)에 문의하시기 바랍니다."
-        )
+        full_answer = t("error.empty_response")
         logger.warning("LLM 빈 응답: question='%s'", question[:50])
 
     placeholder.markdown(full_answer)
@@ -1751,7 +1776,7 @@ async def generate_response_stream(question: str, placeholder) -> str:
     _ms_val = int((time.monotonic() - _t_val) * 1000)
     if warnings:
         warning_text = "\n".join(f"- {w}" for w in warnings)
-        full_answer += f"\n\n---\n*검증 경고:*\n{warning_text}"
+        full_answer += f"\n\n---\n*{t('error.validation_warning')}*\n{warning_text}"
         placeholder.markdown(full_answer)
 
     # 연락처 꼬리말 추가 (학사 질문 → 학사지원팀 / 학과 졸업시험·과행사 → 학과 사무실)
@@ -1777,7 +1802,7 @@ async def generate_response_stream(question: str, placeholder) -> str:
 # ── Main ───────────────────────────────────────────
 def main():
     st.set_page_config(
-        page_title="캠챗 - 부산외대 학사챗봇",
+        page_title="CamChat",
         page_icon="🎓",
         layout="wide",
     )
@@ -1785,18 +1810,23 @@ def main():
     # 크롤링 스케줄러 싱글톤 시작 (CRAWLER_ENABLED=false면 no-op)
     get_scheduler()
 
+    # ── Gate 0: 언어 선택 (최초 1회) ────────────────────
+    if "ui_lang" not in st.session_state:
+        render_language_selection()
+        return
+
     inject_custom_css()
 
     if not render_sidebar():
         return
 
-    # ── 온보딩 게이트: 프로필 미설정 시 입력 화면 표시 ────────────
+    # ── Gate 1: 온보딩 (프로필 미설정) ─────────────────
     if "user_profile" not in st.session_state:
         render_onboarding()
         return
 
     pending    = st.session_state.pop("pending_question", None)
-    user_input = st.chat_input("이번 학기 수강신청 일정 알려줘")
+    user_input = st.chat_input(t("chat.input_placeholder"))
     prompt     = pending or user_input
 
     # ── 3-column: main chat | right panel ──────────
