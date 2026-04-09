@@ -901,3 +901,49 @@ terms:
     en: International College
     aliases_ko: [인터내셔널칼리지, IC, 국제대학]
     aliases_en: [international college, IC, global studies college, english-medium college]
+
+  # ── 추가 학사 용어 (EN 쿼리 커버리지 확장) ──────────────────────────────────
+  - ko: 학점인정
+    en: Credit Recognition
+    aliases_ko: [학점인정제, 타대학 학점인정, 학점 인정]
+    aliases_en: [credit recognition, credit transfer, transfer credits, credit equivalency, credit exemption]
+
+  - ko: 졸업요건 면제
+    en: Graduation Requirement Exemption
+    aliases_ko: [면제, 요건 면제, 졸업 면제]
+    aliases_en: [exemption, waiver, graduation exemption, requirement waiver, exempt from graduation requirement]
+
+  - ko: 졸업유보
+    en: Graduation Deferral
+    aliases_ko: [졸업유보자, 학사학위취득유예, 학위취득유예]
+    aliases_en: [graduation deferral, graduation postponement, defer graduation, degree deferral, graduation delay]
+
+  - ko: 제적
+    en: Academic Dismissal
+    aliases_ko: [학적 박탈, 제적 처리]
+    aliases_en: [academic dismissal, expulsion, dismissed, enrollment cancellation, forced withdrawal]
+
+  - ko: 공인결석계
+    en: Authorized Absence
+    aliases_ko: [공인결석, 결석계, 공인 결석]
+    aliases_en: [authorized absence, official absence, excuse absence, documented absence, absence excuse]
+
+  - ko: 재학증명서
+    en: Certificate of Enrollment
+    aliases_ko: [재학증명, 재학 증명서, 재학확인서]
+    aliases_en: [certificate of enrollment, enrollment certificate, proof of enrollment, student verification letter]
+
+  - ko: 졸업증명서
+    en: Certificate of Graduation
+    aliases_ko: [졸업증명, 졸업 증명서]
+    aliases_en: [certificate of graduation, graduation certificate, degree certificate, proof of graduation]
+
+  - ko: 평점
+    en: GPA
+    aliases_ko: [평균평점, 평점평균, GPA, 학점평균]
+    aliases_en: [gpa, grade point average, cumulative gpa, academic gpa, grade average]
+
+  - ko: 수업료반환
+    en: Tuition Refund
+    aliases_ko: [등록금 반환, 수업료환불, 수업료 반환기준]
+    aliases_en: [tuition refund policy, refund policy, fee refund schedule, tuition reimbursement]
