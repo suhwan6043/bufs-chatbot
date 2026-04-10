@@ -710,7 +710,21 @@ class QueryAnalyzer:
         _METHOD_KW_FOCUS  = ("어떻게", "방법", "절차", "서류", "어디서")
         _LOCATION_KW      = ("어디", "어디서", "장소", "건물")
         _ELIGIBILITY_KW   = ("가능한가", "가능한지", "되나요", "자격", "조건", "요건")
-        if any(kw in text for kw in self._PERIOD_KW):
+
+        # table_lookup: 학번/년도 + 수치 질문 → 표 데이터 추출 전용
+        _TABLE_KW = ("이론", "실습", "이수과목", "이수학점표")
+        _YEAR_KW = ("학번", "학년도", "입학")
+        _has_table_kw = any(kw in text for kw in _TABLE_KW)
+        _has_year_kw = any(kw in text for kw in _YEAR_KW)
+
+        # rule_list: 자격 요건/조건 나열
+        _RULE_LIST_KW = ("요건", "자격요건", "이수요건", "조건은", "자격은", "기준은")
+
+        if _has_table_kw and _has_year_kw:
+            entities["question_focus"] = "table_lookup"
+        elif any(kw in text for kw in _RULE_LIST_KW):
+            entities["question_focus"] = "rule_list"
+        elif any(kw in text for kw in self._PERIOD_KW):
             entities["question_focus"] = "period"
         elif any(kw in text for kw in self._LIMIT_KW):
             entities["question_focus"] = "limit"
@@ -805,6 +819,8 @@ class QueryAnalyzer:
         _FOCUS_MAP = {
             "period": QuestionType.FACTOID,
             "limit": QuestionType.FACTOID,
+            "table_lookup": QuestionType.FACTOID,
+            "rule_list": QuestionType.FACTOID,
             "method": QuestionType.PROCEDURAL,
             "location": QuestionType.FACTOID,
             "eligibility": QuestionType.REASONING,

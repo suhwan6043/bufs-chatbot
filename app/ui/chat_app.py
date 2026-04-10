@@ -4,6 +4,7 @@
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from pathlib import Path
@@ -1756,13 +1757,17 @@ async def generate_response_stream(question: str, placeholder) -> str:
             full_answer = ""
             continue
         full_answer += token
-        placeholder.markdown(full_answer + "▌")
+        _preview = re.sub(r'(?<!~)~(?!~)', r'\~', full_answer)
+        placeholder.markdown(_preview + "▌")
     _ms_gen = int((time.monotonic() - _t_gen) * 1000)
 
     # 방어: LLM이 빈 응답을 반환한 경우
     if not full_answer.strip():
         full_answer = t("error.empty_response")
         logger.warning("LLM 빈 응답: question='%s'", question[:50])
+
+    # ~ 이스케이프: 시간 범위 표기(10:00~15:20)가 마크다운 취소선으로 렌더링되는 현상 방지
+    full_answer = re.sub(r'(?<!~)~(?!~)', r'\~', full_answer)
 
     placeholder.markdown(full_answer)
 

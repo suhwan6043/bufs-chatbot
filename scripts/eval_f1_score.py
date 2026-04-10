@@ -36,6 +36,9 @@ def normalize_text(text: str) -> str:
 
 def canonicalize_dates(text: str) -> str:
     text = normalize_text(text)
+    # 한국어 종결어미 정규화: "~이다.", "~입니다.", "~합니다." 등 제거
+    text = re.sub(r"(?:이다|입니다|합니다|됩니다|있습니다|않습니다)[.]?\s*$", "", text)
+    text = re.sub(r"(?:이다|입니다|합니다|됩니다|있습니다|않습니다)[.]?\s", " ", text)
     # 날짜: 2026년 4월 20일 → 20260420
     text = re.sub(
         r"(20\d{2})년\s*(\d{1,2})월\s*(\d{1,2})일",
@@ -66,7 +69,7 @@ def canonicalize_dates(text: str) -> str:
 
 def tokenize(text: str) -> list[str]:
     normalized = canonicalize_dates(text)
-    return re.findall(r"http://\S+|https://\S+|[a-z0-9가-힣+/.:]+", normalized)
+    return re.findall(r"https?://[^\s가-힣)}\]]+|[a-z0-9가-힣+/.:]+", normalized)
 
 
 def extract_key_tokens(text: str) -> list[str]:
@@ -74,7 +77,7 @@ def extract_key_tokens(text: str) -> list[str]:
     tokens: list[str] = []
 
     patterns = [
-        r"https?://\S+",
+        r"https?://[^\s가-힣)}\]]+",  # URL: 후행 한국어 문자 제외
         r"20\d{6}",
         r"20\d{2}학번",
         r"\d+학점",

@@ -400,6 +400,24 @@ class ContextMerger:
             if m:
                 return f"로그인은 {m.group(1).strip()} 오픈됩니다."
 
+        # ── 9) 이론/실습 학점 추출 ──
+        if any(kw in q for kw in ("이론", "실습", "이수과목")):
+            m = re.search(r"이론\s*(\d+)\s*(?:학점)?\s*실습\s*(\d+)", context)
+            if m:
+                return f"이론 {m.group(1)}학점, 실습 {m.group(2)}학점입니다."
+
+        # ── 10) 금액 추출 ("수강료", "비용", "금액", "얼마") ──
+        if any(kw in q for kw in ("수강료", "비용", "금액", "얼마")) and "초과" not in q:
+            m = re.search(r"(\d{1,3}(?:,\d{3})*)\s*원", context)
+            if m:
+                return f"{m.group(1)}원입니다."
+
+        # ── 11) 초과 수강료 ──
+        if "초과" in q and any(kw in q for kw in ("수강료", "비용", "금액")):
+            m = re.search(r"초과[^:]*?(\d{1,3}(?:,\d{3})*)\s*원", context)
+            if m:
+                return f"초과 수강료는 {m.group(1)}원입니다."
+
         return ""
 
     @staticmethod
