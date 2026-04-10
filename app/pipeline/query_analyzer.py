@@ -149,7 +149,36 @@ class QueryAnalyzer:
     _EN_LIMIT_KW = (
         "maximum", "max", "how many credits", "limit",
         "how much", "up to", "at most",
+        "how many",                     # "how many courses can I take"
+        "minimum", "at least",          # "minimum number of credits"
+        "minimum credits", "credits required", "credits needed",
+        "credits to graduate", "double major credits", "minor credits", "major credits",
     )
+
+    # EN 엔티티 키워드 상수
+    _EN_OCU_KW = ("ocu", "open cyber university", "cyber university consortium")
+    _EN_GPA_KW = ("gpa 4.0", "4.0 gpa", "grade point average 4", "prior semester gpa", "previous semester gpa")
+    _EN_BASKET_KW = ("wish list", "basket", "shopping cart", "pre-registration cart")
+    _EN_PAYMENT_KW = ("tuition payment", "tuition fee payment", "pay tuition", "payment deadline", "fee payment")
+    _EN_2ND_MAJOR_CREDITS_KW = (
+        "double major credit", "double major requirement",
+        "minor credit", "second major credit", "dual major credit",
+    )
+    _EN_GRAD_CERT_KW = ("topik", "toeic", "toefl", "ielts", "language proficiency", "english proficiency")
+    # "option N" / "track N" 오탐 방지: 전공이수 맥락 키워드가 함께 있을 때만 적용
+    _EN_MAJOR_METHOD = {
+        "method 1": "방법1", "method 2": "방법2", "method 3": "방법3",
+    }
+    # "option N"은 맥락 키워드(major/double/minor/track) 동반 시에만 인식
+    _EN_MAJOR_METHOD_CONTEXT_KW = ("major", "double", "minor", "second major", "track")
+    _EN_MAJOR_METHOD_OPTION = {
+        "option 1": "방법1", "track 1": "방법1",
+        "option 2": "방법2", "track 2": "방법2",
+        "option 3": "방법3", "track 3": "방법3",
+    }
+    _EN_METHOD_KW = ("how to", "how do i", "procedure", "process", "steps to", "how can i apply", "how to apply", "submit")
+    _EN_LOCATION_KW = ("where", "which office", "which building", "which department", "which place")
+    _EN_ELIGIBILITY_KW = ("eligible", "qualify", "qualified", "can i", "am i able", "is it possible", "allowed to")
 
     COURSE_NUMBER_PATTERN = re.compile(r"[A-Z]{2,4}\d{3,4}")
 
@@ -395,20 +424,69 @@ class QueryAnalyzer:
                 student_type = stype
                 break
 
-        # Gap 2: EN question_focus 추출 (period / limit)
         q_lower = question.lower()
         entities: dict = {}
-        if any(kw in q_lower for kw in self._EN_PERIOD_KW):
-            entities["question_focus"] = "period"
-        elif any(kw in q_lower for kw in self._EN_LIMIT_KW):
-            entities["question_focus"] = "limit"
 
-        # Gap 3: 학과/부서 엔티티 추출 (matched_terms 기반)
+        # ── OCU ──────────────────────────────────────────────────────────────
+        if any(kw in q_lower for kw in self._EN_OCU_KW):
+            entities["ocu"] = True
+
+        # ── GPA exception (직전학기 평점 4.0 이상) ───────────────────────────
+        if any(kw in q_lower for kw in self._EN_GPA_KW):
+            entities["gpa_exception"] = True
+
+        # ── 장바구니 한도 (period 질문이 아닐 때만) ──────────────────────────
+        if any(kw in q_lower for kw in self._EN_BASKET_KW):
+            if not any(kw in q_lower for kw in self._EN_PERIOD_KW):
+                entities["basket_limit"] = True
+
+        # ── 등록금 납부 기간 ─────────────────────────────────────────────────
+        if any(kw in q_lower for kw in self._EN_PAYMENT_KW):
+            entities["payment_period"] = True
+
+        # ── 복수전공 이수학점 ────────────────────────────────────────────────
+        if any(kw in q_lower for kw in self._EN_2ND_MAJOR_CREDITS_KW):
+            entities["second_major_credits"] = True
+
+        # ── 졸업인증 자격 (TOPIK 등) ─────────────────────────────────────────
+        for cert_kw in self._EN_GRAD_CERT_KW:
+            if cert_kw in q_lower:
+                entities["graduation_cert"] = cert_kw.upper() if cert_kw in ("topik", "toeic", "toefl", "ielts") else cert_kw
+                break
+
+        # ── 전공이수방법 (방법1/2/3) ─────────────────────────────────────────
+        # "method N": 전공이수 맥락 불필요 (충분히 구체적)
+        for en_kw, ko_val in self._EN_MAJOR_METHOD.items():
+            if en_kw in q_lower:
+                entities["major_method"] = ko_val
+                break
+        # "option N" / "track N": 전공이수 맥락 키워드 동반 시에만 인식 (오탐 방지)
+        if "major_method" not in entities:
+            has_major_ctx = any(kw in q_lower for kw in self._EN_MAJOR_METHOD_CONTEXT_KW)
+            if has_major_ctx:
+                for en_kw, ko_val in self._EN_MAJOR_METHOD_OPTION.items():
+                    if en_kw in q_lower:
+                        entities["major_method"] = ko_val
+                        break
+
+        # ── 학과/부서 엔티티 추출 (matched_terms 기반) ───────────────────────
         dept_terms = [t["ko"] for t in matched_terms if any(
             kw in t["ko"] for kw in self.DEPARTMENT_KEYWORDS
         )]
         if dept_terms:
             entities["department"] = dept_terms[0]
+
+        # ── question_focus (period → limit → method → location → eligibility) ─
+        if any(kw in q_lower for kw in self._EN_PERIOD_KW):
+            entities["question_focus"] = "period"
+        elif any(kw in q_lower for kw in self._EN_LIMIT_KW):
+            entities["question_focus"] = "limit"
+        elif any(kw in q_lower for kw in self._EN_METHOD_KW):
+            entities["question_focus"] = "method"
+        elif any(kw in q_lower for kw in self._EN_LOCATION_KW):
+            entities["question_focus"] = "location"
+        elif any(kw in q_lower for kw in self._EN_ELIGIBILITY_KW):
+            entities["question_focus"] = "eligibility"
 
         requires_graph = intent in (
             Intent.GRADUATION_REQ, Intent.EARLY_GRADUATION,
@@ -440,6 +518,7 @@ class QueryAnalyzer:
             lang="en",
             question_type=question_type,
             matched_terms=matched_terms,
+            ko_query=ko_text if ko_text else None,
         )
 
     @staticmethod

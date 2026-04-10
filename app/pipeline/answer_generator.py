@@ -19,6 +19,22 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# ── Intent → 기본 EN 용어 (matched_terms 비었을 때 Mandatory Terms 최소 보장) ──
+# EN UI에서 KO 타이핑 시 FlashText가 동작하지 않아 matched_terms=[]가 됨.
+# intent로 최소 1개의 학사 용어를 주입해 LLM 번역 일관성을 확보한다.
+_INTENT_FALLBACK_TERM: dict[str, dict] = {
+    "GRADUATION_REQ":    {"ko": "졸업요건",   "en": "Graduation Requirements"},
+    "EARLY_GRADUATION":  {"ko": "조기졸업",   "en": "Early Graduation"},
+    "REGISTRATION":      {"ko": "수강신청",   "en": "Course Registration"},
+    "SCHEDULE":          {"ko": "학사일정",   "en": "Academic Calendar"},
+    "MAJOR_CHANGE":      {"ko": "복수전공",   "en": "Double Major"},
+    "LEAVE_OF_ABSENCE":  {"ko": "휴학",       "en": "Leave of Absence"},
+    "SCHOLARSHIP":       {"ko": "장학금",     "en": "Scholarship"},
+    "COURSE_INFO":       {"ko": "교과목",     "en": "Course"},
+    "ALTERNATIVE":       {"ko": "대체과목",   "en": "Alternative Course"},
+    "TRANSCRIPT":        {"ko": "성적표",     "en": "Transcript"},
+}
+
 # ── EN One-Pass 시스템 프롬프트 ───────────────────────────────────────────────
 EN_ONE_PASS_SYSTEM_PROMPT = """\
 You are an official academic administration AI chatbot for university students.
@@ -157,15 +173,27 @@ class AnswerGenerator:
         self,
         target_lang: str = "English",
         matched_terms: Optional[list] = None,
+        intent: Optional[str] = None,
     ) -> str:
-        """EN One-Pass 시스템 프롬프트를 구성합니다."""
-        if matched_terms:
-            term_list = "\n".join(
-                f"- {t['en']} ({t['ko']})" for t in matched_terms
-            )
+        """EN One-Pass 시스템 프롬프트를 구성합니다.
+
+        matched_terms가 비어있어도 intent 기반 fallback 용어를 주입해
+        LLM이 학사 용어를 일관된 영어 표현으로 번역하도록 보장한다.
+        """
+        terms = list(matched_terms) if matched_terms else []
+
+        # matched_terms가 없을 때 intent로 최소 1개 주입
+        if not terms and intent:
+            fallback = _INTENT_FALLBACK_TERM.get(intent)
+            if fallback:
+                terms = [fallback]
+
+        if terms:
+            term_list = "\n".join(f"- {t['en']} ({t['ko']})" for t in terms)
             mandatory_section = f"[Mandatory Terms]\n{term_list}\n"
         else:
             mandatory_section = ""
+
         return EN_ONE_PASS_SYSTEM_PROMPT.format(
             target_lang=target_lang,
             mandatory_terms_section=mandatory_section,
@@ -429,6 +457,7 @@ class AnswerGenerator:
         student_context: Optional[str] = None,
         context_confidence: Optional[float] = None,
         question_type: Optional[str] = None,
+        intent: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """스트리밍으로 답변을 생성합니다."""
         url = f"{self.base_url}/v1/chat/completions"
@@ -437,6 +466,7 @@ class AnswerGenerator:
             system = self._build_en_system_prompt(
                 target_lang="English",
                 matched_terms=matched_terms,
+                intent=intent,
             )
         else:
             system = SYSTEM_PROMPT
@@ -525,6 +555,7 @@ class AnswerGenerator:
         student_context: Optional[str] = None,
         context_confidence: Optional[float] = None,
         question_type: Optional[str] = None,
+        intent: Optional[str] = None,
     ) -> str:
         """전체 답변을 한 번에 반환합니다 (비스트리밍).
 
@@ -535,7 +566,7 @@ class AnswerGenerator:
         async for token in self.generate(
             question, context, student_id, question_focus, lang, matched_terms,
             student_context, context_confidence=context_confidence,
-            question_type=question_type,
+            question_type=question_type, intent=intent,
         ):
             parts.append(token)
         full = "".join(parts)

@@ -217,3 +217,184 @@ def test_en_schedule_intent_period_question(analyzer):
     """'when' + 학사일정 관련 용어 → SCHEDULE intent"""
     result = analyzer.analyze("when does the course registration period start?")
     assert result.intent == Intent.SCHEDULE
+
+
+# ── 갭 1: EN 엔티티 추출 보강 검증 ────────────────────────────────────────────
+
+def test_en_entity_ocu(analyzer):
+    """EN: 'ocu' 키워드 → entities['ocu']=True"""
+    result = analyzer.analyze("how do I register for an OCU course?")
+    assert result.lang == "en"
+    assert result.entities.get("ocu") is True
+
+
+def test_en_entity_gpa_exception(analyzer):
+    """EN: 'gpa 4.0' 키워드 → entities['gpa_exception']=True"""
+    result = analyzer.analyze("if my gpa 4.0 last semester, how many credits can I take?")
+    assert result.entities.get("gpa_exception") is True
+
+
+def test_en_entity_basket_limit(analyzer):
+    """EN: 'wish list' → entities['basket_limit']=True (기간 질문 아닐 때)"""
+    result = analyzer.analyze("what is the maximum credits I can put in my wish list?")
+    assert result.entities.get("basket_limit") is True
+
+
+def test_en_entity_basket_no_limit_when_period(analyzer):
+    """EN: 'basket' + 'when' → basket_limit 미설정 (기간 질문)"""
+    result = analyzer.analyze("when does the basket registration period start?")
+    assert result.entities.get("basket_limit") is None
+
+
+def test_en_entity_payment_period(analyzer):
+    """EN: 'tuition payment' → entities['payment_period']=True"""
+    result = analyzer.analyze("when is the tuition payment deadline?")
+    assert result.entities.get("payment_period") is True
+
+
+def test_en_entity_second_major_credits(analyzer):
+    """EN: 'double major credits' → entities['second_major_credits']=True"""
+    result = analyzer.analyze("how many double major credits do I need?")
+    assert result.entities.get("second_major_credits") is True
+
+
+def test_en_entity_graduation_cert_topik(analyzer):
+    """EN: 'topik' → entities['graduation_cert']='TOPIK'"""
+    result = analyzer.analyze("do I need to pass TOPIK to graduate?")
+    assert result.entities.get("graduation_cert") == "TOPIK"
+
+
+def test_en_entity_graduation_cert_toeic(analyzer):
+    """EN: 'toeic' → entities['graduation_cert']='TOEIC'"""
+    result = analyzer.analyze("is toeic required for graduation certification?")
+    assert result.entities.get("graduation_cert") == "TOEIC"
+
+
+def test_en_entity_major_method(analyzer):
+    """EN: 'method 1' → entities['major_method']='방법1' (맥락 불필요)"""
+    result = analyzer.analyze("what is method 1 for completing a double major?")
+    assert result.entities.get("major_method") == "방법1"
+
+
+def test_en_entity_major_method_option_with_context(analyzer):
+    """EN: 'option 2' + 전공 맥락 → entities['major_method']='방법2'"""
+    result = analyzer.analyze("how do I complete a double major using option 2?")
+    assert result.entities.get("major_method") == "방법2"
+
+
+def test_en_entity_major_method_option_no_context(analyzer):
+    """EN: 'option 1' 단독 (전공 맥락 없음) → major_method 미설정 (오탐 방지)"""
+    result = analyzer.analyze("this option 1 is not related to academics at all")
+    assert result.entities.get("major_method") is None
+
+
+def test_en_limit_credits_standalone_no_false_positive(analyzer):
+    """EN: 'I got 3 credits' 같은 일반 문장 → 'double major credits'는 limit, 단순 credits는 아님"""
+    # _EN_LIMIT_KW에서 "credits" 단독 제거 후, 복합 표현만 남음
+    result = analyzer.analyze("I got 3 credits this semester")
+    # "credits" 단독은 더 이상 limit 트리거 안 함
+    assert result.entities.get("question_focus") != "limit"
+
+
+def test_en_limit_double_major_credits_triggers_limit(analyzer):
+    """EN: 'double major credits' → question_focus='limit' (복합 표현)"""
+    result = analyzer.analyze("how many double major credits do I need?")
+    assert result.entities.get("question_focus") == "limit"
+
+
+def test_en_question_focus_method(analyzer):
+    """EN: 'how to' → question_focus='method'"""
+    result = analyzer.analyze("how to apply for a leave of absence?")
+    assert result.entities.get("question_focus") == "method"
+
+
+def test_en_question_focus_location(analyzer):
+    """EN: 'where' (절차 키워드 없음) → question_focus='location'"""
+    result = analyzer.analyze("where is the academic affairs office located?")
+    assert result.entities.get("question_focus") == "location"
+
+
+def test_en_question_focus_eligibility(analyzer):
+    """EN: 'eligible' → question_focus='eligibility'"""
+    result = analyzer.analyze("am I eligible for early graduation?")
+    assert result.entities.get("question_focus") == "eligibility"
+
+
+def test_en_ko_query_populated(analyzer):
+    """EN 쿼리 분석 시 ko_query가 None이 아닌 한국어 용어로 설정됨"""
+    result = analyzer.analyze("what are the graduation requirements?")
+    assert result.lang == "en"
+    assert result.ko_query is not None
+    assert len(result.ko_query) > 0
+
+
+def test_en_ko_query_none_when_no_match(analyzer):
+    """FlashText 미매칭 시 ko_query=None"""
+    result = analyzer.analyze("hello how are you today")
+    assert result.lang == "en"
+    assert result.ko_query is None
+
+
+# ── 갭 4: _EN_LIMIT_KW 확장 검증 ───────────────────────────────────────────────
+
+def test_en_limit_credits_keyword(analyzer):
+    """'credits' 단독 → question_focus='limit' (갭 4 수정)"""
+    result = analyzer.analyze("double major credits?")
+    assert result.entities.get("question_focus") == "limit"
+
+
+def test_en_limit_minimum_keyword(analyzer):
+    """'minimum' → question_focus='limit'"""
+    result = analyzer.analyze("what is the minimum number of credits for graduation?")
+    assert result.entities.get("question_focus") == "limit"
+
+
+def test_en_limit_how_many_keyword(analyzer):
+    """'how many' → question_focus='limit'"""
+    result = analyzer.analyze("how many courses can I take per semester?")
+    assert result.entities.get("question_focus") == "limit"
+
+
+# ── 갭 5: en_glossary 신규 alias 검증 ─────────────────────────────────────────
+
+def test_en_glossary_credit_recognition(analyzer):
+    """'credit transfer' → matched_terms에 '학점인정' 포함"""
+    result = analyzer.analyze("how does credit transfer work at this university?")
+    assert result.lang == "en"
+    ko_terms = [t["ko"] for t in result.matched_terms]
+    assert "학점인정" in ko_terms
+
+
+def test_en_glossary_exemption(analyzer):
+    """'exemption' → matched_terms에 '졸업요건 면제' 포함"""
+    result = analyzer.analyze("can I get an exemption from the graduation requirement?")
+    ko_terms = [t["ko"] for t in result.matched_terms]
+    assert "졸업요건 면제" in ko_terms
+
+
+def test_en_glossary_graduation_deferral(analyzer):
+    """'graduation deferral' → matched_terms에 '졸업유보' 포함"""
+    result = analyzer.analyze("how do I apply for graduation deferral?")
+    ko_terms = [t["ko"] for t in result.matched_terms]
+    assert "졸업유보" in ko_terms
+
+
+def test_en_glossary_authorized_absence(analyzer):
+    """'authorized absence' → matched_terms에 '공인결석계' 포함"""
+    result = analyzer.analyze("how do I get an authorized absence?")
+    ko_terms = [t["ko"] for t in result.matched_terms]
+    assert "공인결석계" in ko_terms
+
+
+def test_en_glossary_gpa_term(analyzer):
+    """'grade point average' → matched_terms에 '평점' 포함"""
+    result = analyzer.analyze("what grade point average do I need to maintain?")
+    ko_terms = [t["ko"] for t in result.matched_terms]
+    assert "평점" in ko_terms
+
+
+def test_en_glossary_enrollment_certificate(analyzer):
+    """'certificate of enrollment' → matched_terms에 '재학증명서' 포함"""
+    result = analyzer.analyze("how do I get a certificate of enrollment?")
+    ko_terms = [t["ko"] for t in result.matched_terms]
+    assert "재학증명서" in ko_terms
