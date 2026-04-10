@@ -1635,6 +1635,7 @@ async def generate_response(question: str) -> str:
         student_context=student_context,
         context_confidence=merged.context_confidence,
         question_type=analysis.question_type.value if analysis.question_type else None,
+        intent=analysis.intent.value,
     )
 
     all_results = search_results["vector_results"] + search_results["graph_results"]
@@ -1751,6 +1752,7 @@ async def generate_response_stream(question: str, placeholder) -> str:
         student_context=student_context,
         context_confidence=merged.context_confidence,
         question_type=analysis.question_type.value if analysis.question_type else None,
+        intent=analysis.intent.value,
     ):
         if token == "\x00CLEAR\x00":
             full_answer = ""

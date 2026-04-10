@@ -147,11 +147,17 @@ class QueryRouter:
 
         # 원칙 2(비용·지연 최적화): BM25를 Phase 1과 동시 시작
         # BM25는 Phase 1 결과에 의존하지 않으므로 사전 실행 가능
+        # EN 쿼리: BM25 인덱스가 한국어 토큰 기반이므로 ko_query 사용
+        bm25_query = (
+            analysis.ko_query
+            if analysis.lang == "en" and analysis.ko_query
+            else query
+        )
         bm25_future = None
         if self.bm25_index and self.bm25_index.is_built:
             bm25_future = self._bm25_pool.submit(
                 self.bm25_index.search,
-                query, 20, preferred_types,
+                bm25_query, 20, preferred_types,
             )
 
         # Phase 1: 우선 doc_type으로 검색 (Tier 1 우선)
@@ -262,11 +268,18 @@ class QueryRouter:
                 logger.debug("student_id 없음 - 그래프 탐색 스킵")
                 return []
 
+        # EN 쿼리: 그래프 내부 키워드 매칭이 한국어 기반이므로
+        # matched_terms에서 변환된 ko_query를 사용해야 올바른 노드가 탐색됨
+        graph_question = (
+            analysis.ko_query
+            if analysis.lang == "en" and analysis.ko_query
+            else query
+        )
         return self.academic_graph.query_to_search_results(
             student_id=analysis.student_id or "2023",
             intent=analysis.intent.value,
             entities=analysis.entities,
             student_type=analysis.student_type or "내국인",
-            question=query,
+            question=graph_question,
             question_type=analysis.question_type.value if analysis.question_type else "",
         )

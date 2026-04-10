@@ -11,11 +11,8 @@ sentence-transformers>=3.0.0
 
 # 벡터 DB
 # ChromaDB: Rust 백엔드(1.x)가 Windows + Python 3.12에서 쓰기 경로 segfault → pre-Rust 마지막 안정판 고정.
-# 참고: chromadb 0.6.3은 chroma-hnswlib==0.7.6을 고정하지만 Py3.12/Windows 사전 빌드 wheel은 0.7.5뿐이라
-#       chroma-hnswlib==0.7.5를 먼저 설치한 뒤 `pip install chromadb==0.6.3 --no-deps`로 설치한다.
-#       런타임 API는 동일하게 동작한다.
+# chroma-hnswlib 버전은 chromadb가 자동으로 결정 (Linux/Py3.10에서는 0.7.6 사용)
 chromadb>=0.6.0,<0.7.0
-chroma-hnswlib==0.7.5
 
 # 그래프
 networkx>=3.0
