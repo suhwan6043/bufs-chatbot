@@ -5,6 +5,7 @@ CPU 전용, <1ms 처리
 
 import concurrent.futures
 import logging
+import os
 from typing import List
 
 from app.config import settings
@@ -55,16 +56,24 @@ class QueryRouter:
 
         # 원칙 2(비용·지연 최적화): 벡터 ∥ 그래프 병렬 실행
         # 벡터 내부 Phase 1→2→2.5→3 티어 순서는 유지하되,
-        # 독립적인 그래프 검색은 동시에 실행해 대기 시간 절감
+        # 독립적인 그래프 검색은 동시에 실행해 대기 시간 절감.
+        #
+        # 안전 스위치: ChromaDB 일부 빌드에서 병렬 query가 segfault를 일으키는
+        # 경우가 보고되어, 환경변수 QUERY_ROUTER_SEQUENTIAL=1로 순차 실행 강제 가능.
         need_vector = analysis.requires_vector and self.chroma_store
         need_graph = analysis.requires_graph and self.academic_graph
+        _sequential = os.getenv("QUERY_ROUTER_SEQUENTIAL", "").lower() in ("1", "true", "yes")
 
-        if need_vector and need_graph:
+        if need_vector and need_graph and not _sequential:
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
                 v_fut = ex.submit(self._search_vector, query, analysis)
                 g_fut = ex.submit(self._search_graph, query, analysis)
                 results["vector_results"] = v_fut.result()
                 results["graph_results"] = g_fut.result()
+        elif need_vector and need_graph and _sequential:
+            # 순차: 그래프 먼저(빠름) → 벡터(임베딩 포함)
+            results["graph_results"] = self._search_graph(query, analysis)
+            results["vector_results"] = self._search_vector(query, analysis)
         elif need_vector:
             results["vector_results"] = self._search_vector(query, analysis)
         elif need_graph:
@@ -84,17 +93,20 @@ class QueryRouter:
         return results
 
     # ── 원칙 2: 인텐트별 벡터 검색 후보 수 (동적 k 선택) ──
+    # 주의: 리랭커 활성 시 실제 검색은 `max(intent_k, candidate_k=30)`로 수행되므로
+    # 아래 값은 리랭커 비활성 경로의 fallback이자, 향후 candidate_k 조정 시 보험.
+    # 다년도·다표 질문(q044/q050 등)의 누락 방지 차원에서 하한을 상향 조정.
     _INTENT_K = {
-        Intent.SCHEDULE:       5,    # 그래프가 처리, 벡터 최소
-        Intent.ALTERNATIVE:    5,
-        Intent.GRADUATION_REQ: 10,
-        Intent.REGISTRATION:   12,
-        Intent.EARLY_GRADUATION: 8,
-        Intent.SCHOLARSHIP:    12,
-        Intent.LEAVE_OF_ABSENCE: 12,
-        Intent.COURSE_INFO:    20,   # 시간표 청크 다수 필요
-        Intent.MAJOR_CHANGE:   10,
-        Intent.GENERAL:        15,
+        Intent.SCHEDULE:       15,   # 5 → 15: 학사일정 다중 청크 대응
+        Intent.ALTERNATIVE:    10,   # 5 → 10
+        Intent.GRADUATION_REQ: 15,   # 10 → 15
+        Intent.REGISTRATION:   15,   # 12 → 15
+        Intent.EARLY_GRADUATION: 10, # 8 → 10
+        Intent.SCHOLARSHIP:    15,   # 12 → 15
+        Intent.LEAVE_OF_ABSENCE: 15, # 12 → 15
+        Intent.COURSE_INFO:    20,   # 유지: 시간표 청크 다수 필요
+        Intent.MAJOR_CHANGE:   15,   # 10 → 15: 학번별 표 분산 대응
+        Intent.GENERAL:        15,   # 유지
     }
 
     # ── 원칙 2: 인텐트별 우선 doc_type (Tier 1: domestic+guide 최우선) ──
@@ -106,7 +118,11 @@ class QueryRouter:
         Intent.EARLY_GRADUATION:  ["domestic", "guide", "faq"],
         Intent.LEAVE_OF_ABSENCE:  ["domestic", "guide", "faq"],
         Intent.COURSE_INFO:       ["domestic", "guide", "timetable", "faq"],
-        Intent.SCHOLARSHIP:       ["domestic", "guide", "scholarship", "faq"],
+        # Phase 2 Step C (2026-04-12): notice_attachment 영구 포함.
+        # 장학금 공지 첨부파일 (TA장학 지침, KOSAF 안내 등)이 SCHOLARSHIP 질문의
+        # 주요 소스인데 기존 preferred_types에서 제외돼 retrieval에 미도달.
+        # sc03 (TA장학 선발 기준), sc01 (국가장학 신청처) 등 복구.
+        Intent.SCHOLARSHIP:       ["domestic", "guide", "scholarship", "notice_attachment", "faq"],
         Intent.ALTERNATIVE:       ["domestic", "guide", "faq"],
         Intent.GENERAL:           ["domestic", "guide", "faq", "notice"],
     }
@@ -119,12 +135,26 @@ class QueryRouter:
     def _search_vector(
         self, query: str, analysis: QueryAnalysis
     ) -> List[SearchResult]:
+        # Phase 3+ 튜닝 (2026-04-12): asks_url + COURSE_INFO 쿼리 확장.
+        # c01 "수업시간표 어디서 확인" → sugang.bufs.ac.kr 청크가 dense embedding 상위에
+        # 오지 않는 문제. "수강신청 사이트"를 쿼리에 추가해 BM25/dense 양쪽에서
+        # sugang 관련 청크가 후보 풀에 포함되도록 함.
+        # 하드코딩 아닌 일반 규칙: URL 기대 질문 + 특정 intent에서 관련 키워드 확장.
+        if (analysis.entities.get("asks_url")
+                and analysis.intent == Intent.COURSE_INFO
+                and "시간표" in query):
+            query = f"{query} 수강신청 사이트"
+            logger.debug("query expanded for URL-seeking COURSE_INFO: %s", query)
+
         # 원칙 2: 인텐트별 검색 후보 수 동적 조정
         intent_k = self._INTENT_K.get(analysis.intent, settings.chroma.n_results)
 
-        # 단일 토픽 쿼리(OCU 등)는 후보 수를 줄여 노이즈 억제
-        if analysis.entities.get("ocu"):
-            intent_k = min(intent_k, 6)
+        # OCU intent_k 제한 제거 (2026-04-11 병목 진단):
+        # 이전: `intent_k = min(intent_k, 6)` — "단일 토픽 쿼리 노이즈 억제" 목적
+        # 문제: OCU 세부 정책 청크(학사안내 p.20-23)가 6위 밖으로 밀려나서
+        #       q033/q035/q040 3건이 동일 패턴으로 실패.
+        # 해결: intent_k 제한 제거 → REGISTRATION 기본 k=15 + candidate_k=30 경로로
+        #       후보 풀 확보. OCU 필터링은 context_merger._filter_by_entity에서 수행.
 
         n_candidates = (
             max(intent_k, settings.reranker.candidate_k)
@@ -141,6 +171,16 @@ class QueryRouter:
 
         # ── 2단계 검색: 우선 doc_type → 부족 시 전체 확장 ──
         preferred_types = self._INTENT_DOC_TYPES.get(analysis.intent)
+
+        # Phase 2 Step B (2026-04-12): asks_url 질문은 preferred_types 확장.
+        # "어디서 신청/확인" 같은 URL 기대 질문은 intent 기본 범위 외에도
+        # notice_attachment(공지 첨부: KOSAF 장학 공지 등), scholarship, notice를
+        # retrieval 범위에 포함시켜 sc01 같은 문항에서 URL 청크가 탈락하지 않게 함.
+        if preferred_types and analysis.entities.get("asks_url"):
+            _URL_EXTRA_TYPES = ("notice_attachment", "notice", "scholarship", "timetable")
+            preferred_types = list(preferred_types) + [
+                t for t in _URL_EXTRA_TYPES if t not in preferred_types
+            ]
 
         # 원칙 2: 임베딩 1회만 수행 → Phase 1/2/2.5 모두에 재사용
         _q_emb = self.chroma_store.embedder.embed_query(query)
@@ -237,6 +277,7 @@ class QueryRouter:
                 query=query,
                 results=candidates,
                 top_k=settings.reranker.top_k,
+                analysis=analysis,  # Phase 2 Step B: asks_url URL-aware boost
             )
 
         return candidates

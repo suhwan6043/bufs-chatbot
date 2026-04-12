@@ -5,7 +5,8 @@ import yaml
 from pathlib import Path
 from app.pipeline.glossary import Glossary
 
-_TERMS_YAML = Path(__file__).parent.parent / "config" / "academic_terms.yaml"
+# academic_terms.yaml → en_glossary.yaml로 리네임됨 (2026-04 EN/KO 패리티 커밋)
+_TERMS_YAML = Path(__file__).parent.parent / "config" / "en_glossary.yaml"
 
 
 @pytest.fixture

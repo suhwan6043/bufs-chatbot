@@ -162,10 +162,9 @@ terms:
     aliases_ko: [7학기 졸업, 6학기 졸업]
     aliases_en: [early graduation, accelerated graduation]
 
-  - ko: 학사학위취득유예
-    en: Graduation Deferral
-    aliases_ko: [졸업유예]
-    aliases_en: [graduation deferral, degree deferral]
+  # '학사학위취득유예' 항목은 '졸업유보'와 동일 개념이므로 통합 (L916-919 참조)
+  # 별칭 중복 제거: aliases_en 'graduation deferral'/'degree deferral'이
+  # 두 용어에 동시 등록되어 FlashText 매핑 충돌을 일으키던 문제 수정.
 
   - ko: 전공졸업시험
     en: Major Graduation Examination

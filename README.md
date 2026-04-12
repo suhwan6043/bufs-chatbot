@@ -12,42 +12,54 @@
 LanguageDetector    → 언어 감지 (ko / en), <1ms 휴리스틱
     │
     ▼
-QueryAnalyzer       → 의도(Intent) + 엔티티 추출, 학번 파싱
-    │  [EN 쿼리] FlashText(aliases_en→ko) 키워드 매핑
-    │            키워드 미검출 시 → GENERAL + BGE-M3 시맨틱 fallback
+QueryAnalyzer       → 의도(Intent) + 엔티티 + 학번/학과/학기 파싱
+    │  [EN 쿼리] FlashText(aliases_en→ko) 키워드 매핑 + en_glossary
+    │            키워드 미검출 시 → GENERAL + BGE-M3 크로스링구얼 fallback
     │
-    ├──▶ ChromaDB (Vector)   → BGE-M3 임베딩 + 상위 15~20개 후보
-    │        │                  (수업시간표: department 필터 적용)
-    │        └──▶ Reranker   → BGE-Reranker-v2-m3으로 상위 5개 선택
-    │
-    └──▶ AcademicGraph (NetworkX) → 학사일정, 졸업요건, 학과 구조 탐색
+    ├──▶ ChromaDB (Vector)  ──┐
+    │    BGE-M3 임베딩         │ ← 병렬 실행 (검색 파이프라인 병렬화)
+    │    department 필터       │
+    │                          │
+    ├──▶ AcademicGraph         │
+    │    FAQ 역인덱스 캐시     │
+    │    direct_answer / 고정공지 경로
+    │                          │
+    └──▶ CommunitySelector ◀──┘  동적 커뮤니티 선택으로 후보 축소
                 │
- ContextMerger ◀──┘  → Vector + Graph 결과 병합 (토큰 예산 관리)
-    │
-    ▼
-AnswerGenerator     → Ollama(Qwen3:8B) LLM으로 최종 답변 생성
-    │  [EN 쿼리] EN 전용 시스템 프롬프트 + 매칭 용어 주입
-    │
-    ▼
-ResponseValidator   → 답변 품질 검증
-    │
-    ▼
-ChatLogger          → 대화 로그 JSONL 저장 (data/logs/)
+                ▼
+           Reranker            BGE-Reranker-v2-m3 (Top 5)
+                │
+                ▼
+         ContextMerger         Vector + Graph 병합, 토큰 예산 관리
+                │
+                ▼
+        AnswerGenerator        Ollama LLM (환경변수 LLM_MODEL)
+                │              [EN] One-Pass 스트리밍: KO 초안 → 목표 언어 번역
+                ▼
+      ResponseValidator        답변 품질 검증
+                │
+                ▼
+          ChatLogger           대화 로그 JSONL (data/logs/)
 ```
+
+> **LLM 모델 SSOT**: 실제 사용 모델은 `.env` 또는 `app/config.py`의 `LLM_MODEL` 값을 기준으로 한다. 이 문서에는 모델명을 하드코딩하지 않는다 (CLAUDE.md 원칙 4).
 
 ## 주요 기술 스택
 
 | 구성요소 | 기술 |
 |----------|------|
-| LLM | Ollama + Qwen3:8B (로컬, think=False) |
+| LLM | Ollama 로컬 모델 (환경변수 `LLM_MODEL`, `think=False`) |
 | 임베딩 | BAAI/bge-m3 (multilingual, CPU) |
 | 리랭킹 | BAAI/bge-reranker-v2-m3 (Cross-Encoder, CPU) |
 | 벡터 DB | ChromaDB (SQLite 기반 로컬 파일) |
-| 지식 그래프 | NetworkX (pkl 파일) |
+| 지식 그래프 | NetworkX (pkl 파일) + FAQ 역인덱스 캐시 |
+| 검색 | Vector/Graph 병렬 실행 + 동적 커뮤니티 선택 |
 | PDF 처리 | PyMuPDF + pdfplumber |
 | 수업시간표 파싱 | timetable_parser (교시→시각 변환, 학과명 정규화) |
-| EN 키워드 매핑 | FlashText (Aho-Corasick, aliases_en→ko, O(N)) |
-| UI | Streamlit (멀티페이지: 챗봇 + 로그 뷰어) |
+| 성적표 파싱 | transcript_parser (다중 포맷 성적표 업로드) |
+| EN/KO 매핑 | FlashText (Aho-Corasick) + `config/en_glossary.yaml` |
+| 다국어 | 언어 선택 랜딩 페이지 (ko / en i18n) |
+| UI | Streamlit (멀티페이지: 챗봇 + 관리자 + 로그 뷰어) |
 
 ## 설치
 
@@ -71,30 +83,29 @@ pip install -r requirements.txt
 
 ### 2. Ollama 모델 설치
 
-[Ollama](https://ollama.com)를 설치한 후 아래 명령으로 모델을 다운로드합니다.
+[Ollama](https://ollama.com)를 설치한 뒤, `.env` / `app/config.py`에서 사용 중인 모델명을 확인하여 다운로드합니다.
 
 ```bash
-ollama pull qwen3:8b
+# 예: 현재 설정된 LLM_MODEL 값으로 교체
+ollama pull <LLM_MODEL 값>
 ```
+
+사용 모델은 설정 파일이 단일 진실원천(SSOT)입니다. 이 README에는 모델명을 하드코딩하지 않습니다.
 
 ### 3. 환경 설정 (선택)
 
-`.env` 파일을 생성하여 설정을 커스터마이즈할 수 있습니다:
+`.env` 파일을 생성하여 설정을 커스터마이즈할 수 있습니다. 전체 변수는 하단의 **환경 변수 전체 목록** 섹션을 참조하세요.
 
 ```env
 # LLM (Ollama OpenAI 호환 API)
 LLM_BASE_URL=http://localhost:11434
-LLM_MODEL=qwen3:8b
+LLM_MODEL=<사용하려는 ollama 모델명>
 LLM_MAX_TOKENS=2048
 LLM_TEMPERATURE=0.1
 
-# 임베딩
+# 임베딩 / 리랭킹
 EMBEDDING_MODEL=BAAI/bge-m3
-EMBEDDING_DEVICE=cpu
-
-# 리랭킹
 RERANKER_MODEL=BAAI/bge-reranker-v2-m3
-RERANKER_ENABLED=true
 RERANKER_TOP_K=5
 RERANKER_CANDIDATE_K=15
 
@@ -189,22 +200,28 @@ streamlit run main.py
 ├── pages/
 │   ├── admin.py                # 관리자 페이지 (졸업요건·학사일정·크롤러)
 │   └── logs.py                 # 로그 뷰어 페이지
-├── scripts/
-│   ├── ingest_all.py           # 전체 재학습 (PDF+그래프+정적페이지+고정공지)
-│   ├── ingest_pdf.py           # PDF → ChromaDB 인제스트
-│   ├── ingest_pinned_notices.py# 고정공지 → 벡터DB + 그래프DB
+├── scripts/                    # 인제스트 / 그래프 / 평가 / 유틸 스크립트 (그룹별 대표 파일)
+│   ├── ingest_all.py           # 전체 재학습 오케스트레이션
+│   ├── ingest_pdf.py           # PDF → ChromaDB
+│   ├── ingest_pinned_notices.py# 고정공지 → 벡터DB + 그래프
+│   ├── ingest_faq.py           # FAQ → 벡터DB (역인덱스 캐시 생성)
+│   ├── ingest_static_page.py   # 학생포털 정적 페이지 크롤링
 │   ├── build_graph.py          # 지식 그래프 빌드
-│   ├── update_dept_grad_exam.py# 학과별 졸업인증 데이터 업데이트
-│   ├── pdf_to_graph.py         # PDF에서 학사 데이터 자동 파싱
+│   ├── pdf_to_graph.py         # PDF → 학사 데이터 자동 파싱
+│   ├── update_dept_grad_exam.py# 학과별 졸업인증 업데이트
+│   ├── rebuild_chromadb.py     # ChromaDB 재빌드
+│   ├── cleanup_duplicate_chunks.py  # 중복 청크 정리
 │   ├── evaluate.py             # 자동 평가 + LLM-as-a-Judge
-│   └── eval_ragas.py           # RAGAS 기반 RAG 평가
+│   ├── eval_ragas.py           # RAGAS 기반 RAG 평가
+│   ├── eval_f1_score.py        # F1 / 정답 매칭 기반 평가
+│   └── ...                     # 기타 평가/유틸 (eval_benchmark, qualitative_judge 등)
 ├── data/
 │   ├── pdfs/                   # 학사 안내 PDF 파일
 │   ├── chromadb/               # ChromaDB 영구 저장소
 │   ├── graphs/                 # academic_graph.pkl
 │   ├── logs/                   # 대화 로그 (chat_YYYY-MM-DD.jsonl)
 │   └── eval/                   # 평가 데이터셋/결과
-├── tests/                      # 52개 테스트
+├── tests/                      # 파이프라인·그래프·파서 단위/통합 테스트 (19개)
 ├── requirements.txt
 └── main.py
 ```
@@ -273,9 +290,11 @@ python scripts/qualitative_judge.py data/eval/eval_results_XXXXXXXX_XXXXXX.json
 ## 테스트
 
 ```bash
-cd "C:\Users\User\Desktop\챗봇"
-.venv/Scripts/pytest tests/ -v  # 52개 테스트
+# 프로젝트 루트에서
+.venv/Scripts/pytest tests/ -v
 ```
+
+테스트 범위: 파이프라인(쿼리 분석·컨텍스트 머지·응답 검증·글로서리), 그래프(academic_graph), 추출기(PDF/성적표), Phase1/Phase2 크롤러, 통합 테스트.
 
 ## 성능 특성
 
@@ -283,15 +302,16 @@ cd "C:\Users\User\Desktop\챗봇"
 |------|------|
 | 임베딩 | BGE-M3 (1024차원, CPU ~2-5초/배치) |
 | 리랭킹 | Cross-Encoder (후보 15-20개 → 상위 5개, CPU ~1-2초) |
-| LLM 응답 | Qwen3.5-9B Q4_K_M (GPU 스트리밍, LM Studio) |
-| 그래프 탐색 | NetworkX (즉시, <10ms) |
+| LLM 응답 | Ollama 스트리밍 (모델은 `LLM_MODEL`에 따름) |
+| 그래프 탐색 | NetworkX (즉시, <10ms) + FAQ 역인덱스 캐시 |
+| 검색 | Vector/Graph 병렬 실행으로 응답 지연 단축 |
 
 ## 환경 변수 전체 목록
 
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
 | `LLM_BASE_URL` | `http://localhost:11434` | Ollama 서버 주소 |
-| `LLM_MODEL` | `qwen3:8b` | LLM 모델 (OpenAI 호환 API) |
+| `LLM_MODEL` | (config 기본값 참조) | LLM 모델 (OpenAI 호환 API, `app/config.py`의 기본값이 SSOT) |
 | `LLM_MAX_TOKENS` | `2048` | 최대 생성 토큰 |
 | `LLM_TEMPERATURE` | `0.1` | 생성 온도 |
 | `LLM_TOP_P` | `0.9` | Top-p 샘플링 |
@@ -308,6 +328,21 @@ cd "C:\Users\User\Desktop\챗봇"
 | `CHROMA_COLLECTION` | `bufs_academic` | 컬렉션 이름 |
 
 ## 업데이트 이력
+
+### [2026-04 이후] EN/KO 패리티·검색 병렬화·기능 확장
+
+최근 반영된 주요 변경(요약):
+
+- **검색 파이프라인 병렬화** — Vector/Graph 검색을 병렬 실행해 응답 지연 단축
+- **FAQ 역인덱스 캐시** — 그래프 FAQ 직접 답변 경로의 Lookup을 O(1)화
+- **언어 선택 랜딩 페이지** — ko/en 랜딩 + UI 전체 i18n
+- **EN/KO 검색 패리티** — BM25·엔티티 추출·글로서리 전면 보강, `config/en_glossary.yaml` 추가
+- **다중 포맷 성적표 업로드** — `transcript_parser` 계열 신설, FAQ 근거문서 수정 플로우
+- **로컬 파이프라인 수정사항 커밋** — `answer_generator`, `context_merger`, `query_analyzer` 세부 개선
+
+> 세부 변경 내역은 `git log`를 참조. 본 섹션은 카테고리 수준 요약만 유지.
+
+---
 
 ### [2026-04-05 / 임성원] EN 다국어 파이프라인 구축 및 One-Pass 스트리밍 아키텍처 도입
 

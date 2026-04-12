@@ -35,12 +35,17 @@ class SuryaOCRExtractor:
 
         try:
             from surya.ocr import run_ocr
-            from surya.model.detection.segformer import (
+            # 2026-04-12 Phase 3: surya-ocr 0.4.15 API 경로로 갱신.
+            # 구버전 (0.3 이하)에서는 `surya.model.detection.segformer`였으나
+            # 0.4.x부터 `surya.model.detection.model`로 이동. 모델 클래스명은 동일.
+            from surya.model.detection.model import (
                 load_model as load_det_model,
                 load_processor as load_det_processor,
             )
             from surya.model.recognition.model import (
                 load_model as load_rec_model,
+            )
+            from surya.model.recognition.processor import (
                 load_processor as load_rec_processor,
             )
         except ImportError:

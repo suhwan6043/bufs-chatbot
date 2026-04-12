@@ -75,7 +75,16 @@ each rule applies to and list them all.
 """
 
 # ── KO 시스템 프롬프트 (기존 유지) ──────────────────────────────────────────
-SYSTEM_PROMPT = """당신은 부산외국어대학교(BUFS) 학사 안내 AI입니다.
+SYSTEM_PROMPT = """/no_think
+
+당신은 부산외국어대학교(BUFS) 학사 안내 AI입니다.
+
+## 출력 형식 (최우선 규칙)
+- **사고 과정(thinking)·추론 과정·분석 단계를 절대 출력하지 마세요.**
+- "Thinking Process", "Analyze the Request", "Step 1", "Let me think", "First, I will" 같은 메타 문구 금지.
+- 영어 내부 독백 금지. 최종 답변만 **한국어**로 바로 작성하세요.
+- `<think>`, `<thinking>`, `</think>` 같은 태그도 출력에 포함하지 마세요.
+- 답변은 곧바로 결론 문장으로 시작해야 합니다.
 
 ## 절대 규칙 (위반 금지)
 1. 답변은 반드시 [컨텍스트]에 실제로 적혀 있는 정보로만 구성하세요. 컨텍스트 밖 지식·상식·추측은 일체 금지입니다.
@@ -209,6 +218,8 @@ class AnswerGenerator:
         student_context: Optional[str] = None,
         context_confidence: Optional[float] = None,
         question_type: Optional[str] = None,
+        entities: Optional[dict] = None,
+        intent: Optional[str] = None,
     ) -> str:
         """LLM에 전달할 유저 프롬프트를 구성합니다."""
         parts = []
@@ -217,15 +228,28 @@ class AnswerGenerator:
             if student_context:
                 parts.append(f"[Student Info]\n{student_context}\n")
 
-            # Gap 1-a: context_confidence warning
+            # Gap 1-a: Structured pre-answer checklist for low-confidence contexts
+            # Previous version was a soft "warning + suggestion" that the LLM
+            # often ignored. Structured checklist forces explicit verification
+            # before attempting to answer.
             if context_confidence is not None and context_confidence < 0.5:
                 parts.append(
-                    f"[Warning — Low Relevance {context_confidence:.0%}] "
-                    "The retrieval system could not find documents closely matching this question. "
-                    "If the context does not directly address the specific topic, "
-                    "respond with exactly: "
-                    "'I'm sorry, but I couldn't find relevant information. "
+                    f"[Relevance {context_confidence:.0%} — Mandatory Pre-Answer Check]\n"
+                    "Before generating an answer, verify ALL of the following:\n"
+                    "  1) Does the context contain the **exact topic keyword** "
+                    "     from the question (e.g., 'double major', 'OCU', 'start date')?\n"
+                    "  2) Do the relevant sentences in the context address the "
+                    "     **same specific topic** as the question? "
+                    "     (e.g., 'registration period' ≠ 'grade check period')\n"
+                    "  3) Do the numbers/dates/names in the context **match what the "
+                    "     question asks for**?\n"
+                    "\n"
+                    "If ANY answer is 'no', DO NOT guess. Respond with EXACTLY this sentence:\n"
+                    "  → 'I'm sorry, but I couldn't find relevant information. "
                     "Please contact the Academic Affairs Office at +82-51-509-5182.'\n"
+                    "\n"
+                    "Warning: Similar keywords on different topics are wrong answers. "
+                    "(e.g., 'OCU system fee' vs 'summer session fee')\n"
                 )
 
             # Gap 1-b: question_type hint
@@ -287,16 +311,26 @@ class AnswerGenerator:
             if student_id:
                 parts.append(f"[학번] {student_id}학번 기준으로 답변하세요.\n")
 
-            # 원칙 2: 하이브리드 시스템 confidence가 낮으면 LLM에 경고 전달
+            # 원칙 2: 저신뢰 컨텍스트 → 구조화된 거절 절차 강제
+            # 이전 버전은 "경고 + 제안" 형태라 LLM이 무시하고 답변을 시도했음.
+            # 사전 체크리스트 + 정확한 템플릿 문장을 제공해 거절 성공률을 높인다.
             if context_confidence is not None and context_confidence < 0.5:
                 parts.append(
-                    f"[경고 — 검색 관련성 {context_confidence:.0%}] "
-                    "검색 시스템이 질문에 정확히 맞는 문서를 찾지 못했습니다. "
-                    "컨텍스트가 질문의 **구체적 주제**에 대해 직접 설명하지 않으면 "
-                    "'관련 정보를 찾을 수 없습니다. "
-                    "학사지원팀(051-509-5182)에 문의하시기 바랍니다.'로만 답하세요. "
-                    "비슷한 키워드가 있어도 다른 주제(예: OCU 시스템사용료 vs 계절학기 수강료)라면 "
-                    "'정보 없음'으로 처리하세요.\n"
+                    f"[검색 관련성 {context_confidence:.0%} — 답변 전 필수 체크]\n"
+                    "답변을 생성하기 전에 다음 3가지를 반드시 확인하세요:\n"
+                    "  1) 컨텍스트에 질문의 **핵심 주제어**(예: '복수전공', 'OCU', '개강일')가 "
+                    "     실제로 포함되어 있는가?\n"
+                    "  2) 컨텍스트의 해당 문장이 **질문과 정확히 같은 주제**를 다루는가? "
+                    "     (예: '수강신청 기간' 질문에 '성적조회 기간'은 틀린 주제)\n"
+                    "  3) 숫자·날짜·명칭이 **질문이 요구하는 것과 일치**하는가?\n"
+                    "\n"
+                    "위 3개 중 하나라도 '아니오'면 추측하지 말고 아래 문장 하나로만 답하세요:\n"
+                    "  → '관련 정보를 찾을 수 없습니다. "
+                    "학사지원팀(051-509-5182)에 문의하시기 바랍니다.'\n"
+                    "\n"
+                    "주의: 비슷한 키워드가 있어도 주제가 다르면 오답입니다. "
+                    "(예: 'OCU 시스템사용료' vs '계절학기 수강료', "
+                    "'수업일수 1/4선' vs '수강신청 기간')\n"
                 )
 
             # 성적표 기반 학생 학점 현황 (PII 제거됨)
@@ -323,11 +357,22 @@ class AnswerGenerator:
                     "학사지원팀(051-509-5182)에 문의하시기 바랍니다.'로 답하세요.\n"
                 )
             elif question_focus == "limit":
+                # q028 회귀 교훈: 질문이 '재수강 제한 기준'을 묻는데 LLM이
+                # 같은 페이지의 '재수강 가능 성적(C+)' 문장을 참조해 오답 생성.
+                # "제한/최대/초과"를 묻는 질문에서는 제한을 서술한 문장을 우선 참조.
+                _asks_limit = any(kw in question for kw in ("제한", "최대", "초과", "이상", "상한"))
                 parts.append(
                     "[주목] 이 질문은 학점·횟수·금액 등 한도·수치를 묻습니다. "
                     "핵심 숫자 하나로 먼저 답하고, 예외 조건은 간략히만 언급하세요. "
                     "질문에서 묻지 않은 다른 조건까지 나열하지 마세요.\n"
                 )
+                if _asks_limit:
+                    parts.append(
+                        "[중요] 질문이 '제한/최대/초과/상한'을 묻습니다. "
+                        "컨텍스트에서 **제한·상한을 서술한 문장**(예: '최대 X학점으로 제한', "
+                        "'X학점 초과 시', '한도는 X')을 우선 인용하세요. "
+                        "'가능하다'·'조건을 충족하면' 같은 가능·조건 문장은 보조 정보로만 사용합니다.\n"
+                    )
             elif question_focus == "table_lookup":
                 parts.append(
                     "[주목] 이 질문은 표/숫자 데이터를 묻습니다. "
@@ -341,6 +386,74 @@ class AnswerGenerator:
                     "컨텍스트에 있는 조건을 하나도 빠뜨리지 말고 전부 나열하세요. "
                     "요약하지 말고 각 조건을 별도 항목(-)으로 제시하세요.\n"
                 )
+
+            # Phase 3 Step 4 (2026-04-12): asks_url 엔티티 기반 URL 강제 힌트 (l01, c01)
+            # 질문이 "어디서/어디에서/사이트/신청 기관"을 묻는 경우 답변에 구체 URL을 반드시 포함.
+            # Phase 2에서 query_analyzer._URL_SEEKING_KWS로 asks_url=True 감지됨.
+            if entities and entities.get("asks_url"):
+                parts.append(
+                    "[중요] 이 질문은 접속 URL/사이트/신청 기관을 묻습니다. "
+                    "답변에 반드시 **구체적인 URL 또는 도메인**(예: m.bufs.ac.kr, "
+                    "sugang.bufs.ac.kr, www.kosaf.go.kr)을 포함하세요. "
+                    "'학생포털시스템', '홈페이지' 같은 일반 명사만으로는 부족합니다. "
+                    "컨텍스트에서 URL을 찾아 그대로 인용하세요.\n"
+                )
+
+            # Phase 3 Step 4 (2026-04-12): limit 류 질문 단위 정합성 (l02)
+            # GT "4회(4년)" vs LLM "4 학기" 같은 단위 환산 오류 방지.
+            # 수치 답변 시 컨텍스트 원문 표기를 그대로 사용하도록 강제.
+            if question_focus == "limit":
+                parts.append(
+                    "[단위 일치] 수치를 답할 때 컨텍스트 원문에 적힌 **단위 표기를 그대로** "
+                    "사용하세요. '회 → 학기', '년 → 학기' 같은 임의 환산 금지. "
+                    "컨텍스트가 '4회(4년)'이면 답변도 '4회(4년)'로, "
+                    "'12학점'이면 '12학점'으로 인용하세요.\n"
+                )
+
+            # Phase 3 Step 3 (2026-04-12): bi-value 질문 완전성 힌트 (g04)
+            # 복수전공/부전공/제2전공 관련 질문은 주전공 값과 제2전공 값 둘 다 답해야 함.
+            _bi_value_triggers = (
+                ("복수전공" in question and any(kw in question for kw in ("학점", "이수", "몇"))),
+                ("제2전공" in question and "학점" in question),
+                ("부전공" in question and "학점" in question),
+            )
+            if any(_bi_value_triggers):
+                parts.append(
+                    "[완전성] 이 질문은 **주전공과 제2전공(또는 복수·부전공)** 각각의 "
+                    "이수학점을 묻습니다. 답변에 두 값을 **모두** 포함해야 합니다. "
+                    "예: '주전공 36학점, 제2전공 27학점입니다.' "
+                    "한 값만 답하면 불완전한 답변입니다.\n"
+                )
+
+            # Phase 3+ 튜닝 (2026-04-12): Intent-aware field selection 힌트.
+            # EARLY_GRADUATION 질문에서 "자격/조건"을 묻는데 LLM이 "기간/날짜"로 답하는
+            # e02 문제 해결. 또한 e01 "정의"를 묻는 질문에 간결한 1문장 답변 유도.
+            if intent and intent.upper() in ("EARLY_GRADUATION",):
+                _asks_definition = any(kw in question for kw in ("정의", "무엇", "뭐", "어떤 제도", "의미"))
+                _asks_qualification = any(kw in question for kw in ("자격", "요건", "조건", "기준", "성적", "평점"))
+                if _asks_qualification:
+                    parts.append(
+                        "[중요 — 자격 요건 질문] 이 질문은 조기졸업의 **자격 조건/성적 기준**을 묻습니다. "
+                        "답변에 반드시 **평점(GPA) 기준, 이수학점 조건** 등 자격 요건을 포함하세요. "
+                        "신청 기간·날짜·절차가 아닌 **자격 요건**을 최우선으로 답하세요. "
+                        "컨텍스트에서 '평점 3.7 이상' 또는 '이수학점 충족' 같은 조건 문장을 찾아 인용하세요.\n"
+                    )
+                elif _asks_definition:
+                    parts.append(
+                        "[중요 — 정의 질문] 이 질문은 조기졸업이 **무엇인지 정의**를 묻습니다. "
+                        "핵심을 1~2문장으로 간결하게 답하세요: '정규 8학기보다 일찍(6 또는 7학기에) "
+                        "졸업하는 제도'라는 핵심만 전달하면 됩니다. "
+                        "세부 절차나 조건은 별도 질문으로 다루므로 여기서는 생략하세요.\n"
+                    )
+
+            # Phase 3+ 튜닝: MAJOR_CHANGE intent 힌트 (m02 자유전공제)
+            if intent and intent.upper() == "MAJOR_CHANGE":
+                if "자유전공" in question:
+                    parts.append(
+                        "[중요 — 자유전공제] 이 질문은 자유전공제 학생의 전공 변경에 대해 묻습니다. "
+                        "'자유전공제로 입학한 학생'이 전공을 변경하는 방법(전부(과) vs 전공 변경 신청)의 "
+                        "차이점을 명확히 답하세요. 컨텍스트에서 '자유전공' 또는 '전공변경'을 찾아 인용하세요.\n"
+                    )
 
             # 원칙 2: OCU 혼입 감지 → 동적 경고 삽입
             # PDF 페이지가 본교+OCU 혼합인 경우, 질문이 OCU를 묻지 않았으면 무시 지시
@@ -446,6 +559,81 @@ class AnswerGenerator:
 
     # ── 공개 인터페이스 ───────────────────────────────────────────────────────
 
+    async def rewrite_query(
+        self,
+        question: str,
+        lang: str = "ko",
+        intent: Optional[str] = None,
+    ) -> str:
+        """저신뢰 컨텍스트 케이스에서 질문을 검색 친화적으로 재작성.
+
+        원칙 2(비용·지연 최적화): 짧은 프롬프트 + max_tokens=80 + 5초 타임아웃.
+        실패·공백·지나친 변형 시 원본 반환 (안전 폴백).
+
+        사용 시점: `context_confidence < 0.5`일 때 chat_app에서 1회 호출.
+        """
+        if not question or not question.strip():
+            return question
+
+        if lang == "en":
+            system = (
+                "You rewrite user questions into a more specific Korean search query "
+                "for a Korean university academic-affairs chatbot. "
+                "Output only the rewritten Korean query, no explanation, no quotes."
+            )
+            user = f"Original: {question}\nRewritten Korean query:"
+        else:
+            system = (
+                "당신은 부산외국어대학교 학사 챗봇의 검색 쿼리 재작성기입니다. "
+                "주어진 질문을 학사 규정 문서에서 찾기 쉽도록 "
+                "핵심 키워드 중심의 한국어 쿼리로 재작성하세요. "
+                "재작성된 쿼리만 한 줄로 출력하고, 설명이나 따옴표는 붙이지 마세요."
+            )
+            user = f"원본: {question}\n재작성된 쿼리:"
+
+        url = f"{self.base_url}/v1/chat/completions"
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "stream": False,
+            "max_tokens": 80,
+            "temperature": 0.1,
+            "top_p": 0.9,
+            "think": False,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                data = response.json()
+                content = (
+                    data.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                    .strip()
+                )
+        except Exception as e:
+            logger.warning("쿼리 재작성 실패, 원본 사용: %s", e)
+            return question
+
+        # 한 줄만 취하고, 접두사 제거 후 따옴표 제거
+        rewritten = content.split("\n")[0].strip()
+        for prefix in ("재작성된 쿼리:", "쿼리:", "Rewritten:", "Query:"):
+            if rewritten.startswith(prefix):
+                rewritten = rewritten[len(prefix):].strip()
+        rewritten = rewritten.strip('"').strip("'").strip("`").strip()
+
+        # 지나치게 짧거나 길면 원본 유지
+        if not rewritten or len(rewritten) < 3 or len(rewritten) > len(question) * 3:
+            return question
+
+        logger.info("쿼리 재작성: '%s' → '%s'", question[:60], rewritten[:60])
+        return rewritten
+
     async def generate(
         self,
         question: str,
@@ -458,6 +646,7 @@ class AnswerGenerator:
         context_confidence: Optional[float] = None,
         question_type: Optional[str] = None,
         intent: Optional[str] = None,
+        entities: Optional[dict] = None,
     ) -> AsyncGenerator[str, None]:
         """스트리밍으로 답변을 생성합니다."""
         url = f"{self.base_url}/v1/chat/completions"
@@ -474,21 +663,34 @@ class AnswerGenerator:
         prompt = self._build_prompt(
             question, context, student_id, question_focus, lang,
             student_context, context_confidence=context_confidence,
-            question_type=question_type,
+            question_type=question_type, entities=entities, intent=intent,
         )
 
+        # Qwen3 계열 thinking 다층 차단 (2026-04-11 LM Studio thinking 버그 대응):
+        # - Layer 1: system prompt 최상단 "/no_think" + "thinking 출력 금지" 지시 (별도 편집)
+        # - Layer 2a: user prompt 말미에 "/no_think" (Qwen3 공식 trigger)
+        # - Layer 2b: payload에 chat_template_kwargs.enable_thinking=False (LM Studio/vLLM)
+        # - Layer 2c: payload에 reasoning_effort=none (OpenAI 호환 일부 구현)
+        # - Layer 3: 스트림 파싱에서 reasoning_content silent drop (아래 루프)
+        # - Layer 4: content 없이 reasoning만 오면 refusal로 대체 (사용자에게 사고 과정 비노출)
+        user_content = prompt + "\n\n/no_think"
         payload = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system},
-                {"role": "user", "content": prompt},
+                {"role": "user", "content": user_content},
             ],
             "stream": True,
             "max_tokens": settings.llm.max_tokens,
             "temperature": settings.llm.temperature,
             "top_p": settings.llm.top_p,
             "repeat_penalty": settings.llm.repeat_penalty,
-            "think": False,  # qwen3 thinking 비활성화
+            # Ollama 전용
+            "think": False,
+            # LM Studio / vLLM (Qwen3 chat template enable_thinking 끄기)
+            "chat_template_kwargs": {"enable_thinking": False},
+            # OpenAI 호환 일부 구현 (LM Studio 최신)
+            "reasoning_effort": "none",
         }
 
         try:
@@ -502,9 +704,9 @@ class AnswerGenerator:
                             yield chunk
                     else:
                         # KO 기존 흐름
-                        thinking = False
+                        thinking_detected = False
                         content_started = False
-                        reasoning_buf = []  # thinking 내용 보존 (fallback용)
+                        reasoning_len = 0
                         async for line in response.aiter_lines():
                             if not line or not line.startswith("data: "):
                                 continue
@@ -514,12 +716,16 @@ class AnswerGenerator:
                             data = json.loads(data_str)
                             delta = data["choices"][0].get("delta", {})
 
+                            # Layer 3: reasoning_content는 완전히 폐기 (사용자에게 노출 X)
+                            # Qwen3 thinking이 새어 나오면 로그만 남기고 토큰은 drop.
                             rc = delta.get("reasoning_content", "")
                             if rc:
-                                reasoning_buf.append(rc)
-                                if not thinking and not content_started:
-                                    thinking = True
-                                    yield "\u23f3 _분석 중..._\n\n"
+                                thinking_detected = True
+                                reasoning_len += len(rc)
+                                # 사용자 측에 "분석 중" 마커도 더 이상 노출하지 않음.
+                                # 이유: LM Studio의 thinking은 수백~수천 자라 latency가 길어져서
+                                # UI에 "분석 중"이 뜨면 오히려 혼란. content가 오기 시작하면 바로 출력.
+                                continue
 
                             token = delta.get("content", "")
                             if token:
@@ -528,13 +734,21 @@ class AnswerGenerator:
                                     yield "\x00CLEAR\x00"
                                 yield token
 
-                        # Fallback: thinking만 하고 content가 없으면 thinking 내용을 답변으로 사용
-                        if thinking and not content_started and reasoning_buf:
-                            logger.warning(
-                                "LLM thinking-only 응답 감지 — reasoning_content를 답변으로 fallback"
+                        # Layer 4: thinking만 있고 content가 비었으면 refusal로 대체
+                        # (reasoning_buf를 사용자에게 보여주던 이전 fallback은 제거)
+                        if thinking_detected and not content_started:
+                            logger.error(
+                                "LLM thinking-only 응답 감지 — refusal로 대체. "
+                                "reasoning_len=%d. SYSTEM_PROMPT의 /no_think + "
+                                "chat_template_kwargs.enable_thinking=False 다층 차단이 "
+                                "모두 실패한 상황. LM Studio 버전 업데이트나 모델 변경 검토 필요.",
+                                reasoning_len,
                             )
                             yield "\x00CLEAR\x00"
-                            yield "".join(reasoning_buf)
+                            yield (
+                                "죄송합니다. 답변 생성 중 문제가 발생했습니다. "
+                                "학사지원팀(051-509-5182)에 문의하시기 바랍니다."
+                            )
 
         except httpx.ConnectError:
             logger.error("Ollama 서버 연결 실패. Ollama를 실행해주세요.")
@@ -556,17 +770,23 @@ class AnswerGenerator:
         context_confidence: Optional[float] = None,
         question_type: Optional[str] = None,
         intent: Optional[str] = None,
+        entities: Optional[dict] = None,
     ) -> str:
         """전체 답변을 한 번에 반환합니다 (비스트리밍).
 
         EN One-Pass: CLEAR 신호 기준으로 ko_draft를 제거하고 final_answer만 반환.
         KO: 기존 방식 그대로.
+
+        Fix D (2026-04-11): 생성 후 AnswerUnit 누락 검사.
+        질문이 요구하는 단위(URL/날짜/학점 등)가 생성 답변에 빠졌으면
+        컨텍스트에서 그 단위를 찾아 "[참고] ..." 블록으로 주입한다.
+        entities.department가 있으면 해당 학과 행에서만 팩트를 뽑음.
         """
         parts = []
         async for token in self.generate(
             question, context, student_id, question_focus, lang, matched_terms,
             student_context, context_confidence=context_confidence,
-            question_type=question_type, intent=intent,
+            question_type=question_type, intent=intent, entities=entities,
         ):
             parts.append(token)
         full = "".join(parts)
@@ -578,7 +798,55 @@ class AnswerGenerator:
             # Fallback(CLEAR 없음): thinking 마커만 제거
             full = full.replace("\u23f3 _규정 원문 분석 중..._\n\n", "")
 
-        return full.strip()
+        full = full.strip()
+
+        # 2026-04-11 수정:
+        # Step 2-C: Answer-Context Consistency Verifier (버그 #7)
+        # Step 3:   refusal 응답엔 fill_from_context 건너뛰기 (버그 #5)
+        if lang != "en" and full:
+            try:
+                from app.pipeline.answer_units import (
+                    fill_from_context, verify_answer_against_context,
+                    verify_completeness,
+                )
+                from app.pipeline.response_validator import ResponseValidator
+
+                # Step 3: refusal 응답이면 post-processing 전체 건너뛰기
+                # 이유: "관련 정보를 찾을 수 없습니다" 같은 본문에 "[참고] 시간: 10:00" 같은
+                # 컨텍스트 잔재가 주입되면 사용자가 혼란. 환각 검증도 의미 없음.
+                _validator = ResponseValidator()
+                if _validator._is_no_context_response(full):
+                    return full
+
+                # Step 2-C: 답변의 값(URL/금액/성적)이 컨텍스트에 존재하는지 검증
+                # 환각 감지 시 refusal fallback으로 대체 (사용자에 잘못된 정보 전달 방지).
+                ok, reason = verify_answer_against_context(full, context)
+                if not ok:
+                    logger.warning("answer-context mismatch detected: %s", reason)
+                    return (
+                        "제공된 자료에서 해당 내용을 정확히 확인하지 못했습니다. "
+                        "학사지원팀(051-509-5182)에 문의하시기 바랍니다."
+                    )
+
+                # Phase 3 Step 3 (2026-04-12): 답변 완전성 가드 (g04 bi-value).
+                # "복수전공 최소 이수학점" 같이 질문이 두 값(주/제2)을 요구하는 경우
+                # 답변이 한 값만 담고 있으면 fill_from_context로 누락 값을 보완.
+                if not verify_completeness(question, full, context):
+                    logger.debug(
+                        "verify_completeness failed (bi-value partial), "
+                        "fill_from_context로 보완 시도"
+                    )
+                    # fill_from_context가 credit 누락분을 context에서 찾아 주입
+
+                # Fix D: 누락 단위 감지 & 주입 (refusal이 아니고 검증 통과한 경우만)
+                target_entity = (entities or {}).get("department") if entities else None
+                full = fill_from_context(
+                    question, full, context, target_entity=target_entity,
+                )
+            except Exception as e:
+                logger.debug("post-processing 실패, 원본 유지: %s", e)
+
+        return full
 
     async def health_check(self) -> bool:
         """Ollama 서버 상태를 확인합니다."""

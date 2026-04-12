@@ -252,6 +252,8 @@ class QueryAnalyzer:
             "방법1", "방법2", "방법3",
             "이수방법1", "이수방법2", "이수방법3",
             "주전공+복수전공", "복수전공 이수학점",
+            # 버그 #4 수정 (2026-04-11): "전공 변경" 질문도 MAJOR_CHANGE로 명시 매칭
+            "전공 변경", "전공변경", "전공을 변경", "전공 바꾸", "학과 변경",
         ],
         Intent.ALTERNATIVE: [
             "대체", "동일과목", "폐지", "대신",
@@ -263,6 +265,10 @@ class QueryAnalyzer:
             "등록금 지원", "교내장학금", "근로장학금",
             "국가장학금", "외부장학금", "민간장학금",
             "성적우수장학금", "생활비지원", "한국장학재단",
+            # Phase 2 Step C (2026-04-12): TA장학 / 교육조교 장학 류 추가.
+            # sc03 "TA장학생 선발 기준"이 GENERAL intent로 오분류되어
+            # retrieval 단계에서 notice_attachment 필터 미적용되는 문제 해결.
+            "TA장학", "TA장학금", "TA장학생", "교육조교",
         ],
         Intent.TRANSCRIPT: [
             "내 성적", "내 학점", "내 평점", "성적표",
@@ -342,7 +348,10 @@ class QueryAnalyzer:
             Intent.SCHOLARSHIP, Intent.LEAVE_OF_ABSENCE,
             Intent.TRANSCRIPT, Intent.GENERAL,
         )
-        requires_vector = intent not in (Intent.SCHEDULE, Intent.ALTERNATIVE)
+        # ALTERNATIVE(대체/동일과목 등 정의형 질문)도 벡터 검색 필요.
+        # 학사안내 PDF p.9에 "대체과목/동일과목 확인하여 재수강" 원문이 있고
+        # 그래프 FAQ는 보조적. 벡터를 제외하면 q054 같은 정의 질문을 못 맞춤.
+        requires_vector = intent not in (Intent.SCHEDULE,)
 
         # SCHEDULE이어도 그래프에 없는 정보는 벡터 검색 필요
         _TIMETABLE_KW = ("교시", "야간수업", "시간표", "강의시간")
@@ -606,6 +615,15 @@ class QueryAnalyzer:
     # 한도/수치 관련 키워드
     _LIMIT_KW  = ("최대", "얼마", "몇 학점", "한도", "제한", "이수 가능", "신청 가능", "수강 가능")
 
+    # Phase 2 Step B (2026-04-12): URL·사이트 답변을 기대하는 질문 감지 키워드.
+    # 매칭 시 `entities["asks_url"] = True` → reranker가 URL 포함 청크에 가산점 부여.
+    # 대상 문항: c01 (sugang.bufs.ac.kr), sc01 (kosaf.go.kr), l01 (학생포털 URL) 등.
+    # 단순 substring 기반: BUFS 챗봇 도메인에서 "어디서/어디에서"는 거의 항상
+    # 사이트·URL·기관 질문이므로 과분류 위험이 낮다. 하드코딩이 아니라 단일 테이블.
+    _URL_SEEKING_KWS = ("어디서", "어디에서", "어느 사이트", "어느 페이지", "어느 홈페이지",
+                        "홈페이지 주소", "어느 기관", "신청 기관", "신청기관", "신청사이트",
+                        "신청 사이트", "접속 주소")
+
     def _classify_intent(self, text: str) -> Intent:
         # 조기졸업은 매우 구체적인 복합어 → glossary 정규화 후에도 남아있으면 우선 처리
         # (SCHEDULE "기간"+"언제" 등에 밀리지 않도록 조기 리턴)
@@ -813,6 +831,22 @@ class QueryAnalyzer:
             entities["question_focus"] = "location"
         elif any(kw in text for kw in _ELIGIBILITY_KW):
             entities["question_focus"] = "eligibility"
+
+        # 버그 #4 수정 (2026-04-11): 학기 구분자(전기/후기) 추출
+        # s04 "2025학년도 **전기** 학위수여식" 같은 질문에서 구별자 entity 생성.
+        # 다운스트림(direct_answer aligns Keyword Anchor Gate)에서 활용됨.
+        if "전기" in text:
+            entities["semester_half"] = "전기"
+        elif "후기" in text:
+            entities["semester_half"] = "후기"
+
+        # Phase 2 Step B (2026-04-12): URL-aware boost 신호.
+        # "어디서/어디에서/어느 사이트/신청 기관" 등 URL·사이트 답변을 기대하는 질문은
+        # retrieved 청크 중 URL을 포함한 것에 가산점을 부여해
+        # c01(sugang URL), sc01(kosaf URL) 같은 문항을 복구.
+        # reranker에서 analysis.entities.get("asks_url")을 확인해 활용.
+        if any(kw in text for kw in self._URL_SEEKING_KWS):
+            entities["asks_url"] = True
 
         return entities
 

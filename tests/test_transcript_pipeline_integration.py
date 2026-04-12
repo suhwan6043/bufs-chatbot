@@ -1016,13 +1016,18 @@ class TestPersonalQuickFeatures:
     """_build_personal_quick_features()가 프로필에 따라 동적으로 버튼을 생성하는지."""
 
     def test_none_transcript_returns_base_features(self):
-        """성적표 없음 → 기본 개인화 버튼 4개."""
+        """성적표 없음 → 기본 개인화 버튼 4개.
+
+        QUICK_FEATURES_PERSONAL_BASE 상수가 i18n 전환 과정에서 _get_personal_base()
+        함수로 교체됨. 테스트는 함수 결과와 직접 비교하여 동적 변경에 견딘다.
+        """
         from app.ui.chat_app import (
             _build_personal_quick_features,
-            QUICK_FEATURES_PERSONAL_BASE,
+            _get_personal_base,
         )
         features = _build_personal_quick_features(None)
-        assert features == QUICK_FEATURES_PERSONAL_BASE
+        base = _get_personal_base()
+        assert features == base
         assert len(features) == 4
 
     @pytest.mark.parametrize("seed", [1, 42, 100])

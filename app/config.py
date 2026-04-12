@@ -21,15 +21,22 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 
 
+# .env가 OLLAMA_* 네임스페이스를 쓸 수도 있고 LLM_* 네임스페이스를 쓸 수도 있음.
+# SSOT를 통일하기 위해 LLM_* 우선 → 없으면 OLLAMA_*로 폴백 → 그래도 없으면 기본값.
+# 원칙 4(하드코딩 금지): 모델명·URL은 환경변수 기반으로만 결정.
+def _env_llm(primary: str, fallback: str, default: str) -> str:
+    return os.getenv(primary) or os.getenv(fallback) or default
+
+
 @dataclass
 class LLMConfig:
-    base_url: str = os.getenv("LLM_BASE_URL", "http://localhost:1234")
-    model: str = os.getenv("LLM_MODEL", "qwen/qwen3.5-9b")
-    max_tokens: int = int(os.getenv("LLM_MAX_TOKENS", "2048"))
-    temperature: float = float(os.getenv("LLM_TEMPERATURE", "0.1"))
-    top_p: float = float(os.getenv("LLM_TOP_P", "0.9"))
-    repeat_penalty: float = float(os.getenv("LLM_REPEAT_PENALTY", "1.0"))
-    timeout: int = int(os.getenv("LLM_TIMEOUT", "60"))
+    base_url: str = _env_llm("LLM_BASE_URL", "OLLAMA_BASE_URL", "http://localhost:11434")
+    model: str = _env_llm("LLM_MODEL", "OLLAMA_MODEL", "exaone3.5:7.8b")
+    max_tokens: int = int(_env_llm("LLM_MAX_TOKENS", "OLLAMA_NUM_CTX", "2048"))
+    temperature: float = float(_env_llm("LLM_TEMPERATURE", "OLLAMA_TEMPERATURE", "0.1"))
+    top_p: float = float(_env_llm("LLM_TOP_P", "OLLAMA_TOP_P", "0.9"))
+    repeat_penalty: float = float(_env_llm("LLM_REPEAT_PENALTY", "OLLAMA_REPEAT_PENALTY", "1.0"))
+    timeout: int = int(_env_llm("LLM_TIMEOUT", "OLLAMA_TIMEOUT", "60"))
 
 
 @dataclass
@@ -45,7 +52,7 @@ class RerankerConfig:
     model_name: str = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
     device: str = os.getenv("RERANKER_DEVICE", "cpu")
     enabled: bool = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
-    top_k: int = int(os.getenv("RERANKER_TOP_K", "7"))
+    top_k: int = int(os.getenv("RERANKER_TOP_K", "10"))
     candidate_k: int = int(os.getenv("RERANKER_CANDIDATE_K", "30"))
 
 

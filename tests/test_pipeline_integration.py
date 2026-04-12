@@ -113,18 +113,27 @@ class TestQueryAnalyzerRouting:
         assert result.intent == Intent.SCHEDULE
         assert result.requires_vector is True
 
-    def test_alternative_requires_graph_not_vector(self):
-        """대체과목 질문 → requires_graph=True, requires_vector=False"""
+    def test_alternative_uses_both_channels(self):
+        """대체과목 질문 → requires_graph=True + requires_vector=True.
+
+        query_analyzer.py: ALTERNATIVE 인텐트는 그래프 FAQ + 벡터 PDF 본문을 함께 사용한다.
+        이전에는 requires_vector=False였으나 q054(대체/동일과목 정의) 회귀 때문에 활성화.
+        학사안내 PDF p.9의 원문이 벡터 검색에서 필요.
+        """
         result = self.analyzer.analyze("대체과목이 있나요?")
         assert result.intent == Intent.ALTERNATIVE
         assert result.requires_graph is True
-        assert result.requires_vector is False
+        assert result.requires_vector is True
 
-    def test_general_requires_only_vector(self):
-        """일반 질문 → requires_graph=False, requires_vector=True"""
+    def test_general_uses_both_channels(self):
+        """일반 질문 → requires_graph=True (FAQ 직접 답변 경로), requires_vector=True.
+
+        query_analyzer.py L337-344 주석 참조: GENERAL에서도 FAQ direct_answer를
+        활용하려면 그래프 경로가 필요하므로, GENERAL은 벡터+그래프 모두 사용한다.
+        """
         result = self.analyzer.analyze("학교 도서관은 어디에 있나요?")
         assert result.intent == Intent.GENERAL
-        assert result.requires_graph is False
+        assert result.requires_graph is True
         assert result.requires_vector is True
 
     def test_two_digit_student_id_converted(self):

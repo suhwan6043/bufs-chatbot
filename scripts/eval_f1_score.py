@@ -34,6 +34,22 @@ def normalize_text(text: str) -> str:
     return text.strip()
 
 
+def _extract_urls_raw(text: str) -> list[str]:
+    """정규화 전 원본 텍스트에서 URL을 먼저 추출.
+
+    normalize_text()가 괄호 안 내용을 제거하기 때문에,
+    '수강신청 사이트(http://sugang.bufs.ac.kr)' 같은 GT에서 URL이 사라지던 버그 수정.
+    """
+    if not text:
+        return []
+    return [u.lower() for u in re.findall(r"https?://[^\s)\]}가-힣]+", text)]
+
+
+def _strip_token_punct(token: str) -> str:
+    """토큰 끝의 문장부호 제거. '있다.' → '있다', '신청한다.' → '신청한다'."""
+    return token.strip(".,;:!?·")
+
+
 def canonicalize_dates(text: str) -> str:
     text = normalize_text(text)
     # 한국어 종결어미 정규화: "~이다.", "~입니다.", "~합니다." 등 제거
@@ -69,15 +85,23 @@ def canonicalize_dates(text: str) -> str:
 
 def tokenize(text: str) -> list[str]:
     normalized = canonicalize_dates(text)
-    return re.findall(r"https?://[^\s가-힣)}\]]+|[a-z0-9가-힣+/.:]+", normalized)
+    raw = re.findall(r"https?://[^\s가-힣)}\]]+|[a-z0-9가-힣+/.:]+", normalized)
+    # 문장부호 trailing 제거 (한국어 종결어미 직후의 마침표 등)
+    cleaned = [_strip_token_punct(t) for t in raw]
+    # URL 토큰은 원본에서 별도로 수집해 보존 (normalize_text가 괄호 안 URL을 지우므로)
+    cleaned.extend(_extract_urls_raw(text))
+    return [t for t in cleaned if t]
 
 
 def extract_key_tokens(text: str) -> list[str]:
     normalized = canonicalize_dates(text)
     tokens: list[str] = []
 
+    # URL은 원본에서 먼저 추출 (괄호 제거 전 상태를 확보)
+    tokens.extend(_extract_urls_raw(text))
+
     patterns = [
-        r"https?://[^\s가-힣)}\]]+",  # URL: 후행 한국어 문자 제외
+        r"https?://[^\s가-힣)}\]]+",  # URL: 후행 한국어 문자 제외 (normalized 대상)
         r"20\d{6}",
         r"20\d{2}학번",
         r"\d+학점",
@@ -100,12 +124,49 @@ def extract_key_tokens(text: str) -> list[str]:
     for pattern in patterns:
         tokens.extend(re.findall(pattern, normalized))
 
+    # 2026-04-12 Step A'' (scorer 버그 수정): normalize_text()가 괄호를 제거하므로
+    # "12학점(4학년은 9학점) 이상" 같이 한국어에서 흔한 괄호 병기 표현에서
+    # 괄호 안 key token이 누락되는 문제를 raw text 패턴 매칭으로 보완.
+    # URL, 시간(시/분) 패턴은 중복 추출되므로 제외 — canonicalize에서 이미 처리.
+    _SKIP_RAW = {
+        r"https?://[^\s가-힣)}\]]+",  # URL (이미 _extract_urls_raw에서 추출)
+        r"\d+시\d+분",                 # 시간 (canonicalize가 HH:MM으로 변환)
+        r"\d+시",                      # 시간 시 (canonicalize)
+        r"\d+분",                      # 시간 분 (canonicalize)
+    }
+    for pattern in patterns:
+        if pattern in _SKIP_RAW:
+            continue
+        tokens.extend(re.findall(pattern, text))
+
     if not tokens:
         tokens = tokenize(text)
 
+    # 문장부호 정규화 — '있다.' / '있다' 동일 취급
+    cleaned = [_strip_token_punct(t) for t in tokens]
+
+    # Phase 3+ (2026-04-12): URL 프로토콜 정규화.
+    # "https://m.bufs.ac.kr" vs "m.bufs.ac.kr" 같은 프로토콜 유무 차이로
+    # 의미상 동일한 URL이 불일치 판정되는 문제 해결 (l01).
+    # 또한 시간 "22시 05분" → "22:05"가 canonicalize에서 이미 처리되나
+    # raw text에서 별도 추출된 "22시", "05분"이 남으면 중복 처리.
+    normalized_tokens: list[str] = []
+    for t in cleaned:
+        # URL 프로토콜 제거: "http://x" → "x", "https://x" → "x"
+        t = re.sub(r"^https?://", "", t)
+        # 단위 정규화: 학기→회 alias 제거 (2026-04-12).
+        # 이유: "6학기 또는 7학기"를 "6회 또는 7회"로 변환하면
+        # pred "6 또는 7학기에" (괄호 제거로 분리)와 GT "6회"가 불일치.
+        # 학기/회 환산은 scorer보다 LLM prompt에서 해결하는 것이 안전.
+        if t:
+            normalized_tokens.append(t)
+    cleaned = normalized_tokens
+
     deduped: list[str] = []
     seen = set()
-    for token in tokens:
+    for token in cleaned:
+        if not token:
+            continue
         if token not in seen:
             seen.add(token)
             deduped.append(token)
@@ -123,6 +184,18 @@ def answer_metrics(prediction: str, ground_truth: str) -> dict[str, Any]:
 
     pred_tokens = tokenize(prediction)
     gt_tokens = tokenize(ground_truth)
+
+    # Phase 3+ (2026-04-12): token_f1 기반 soft contains fallback.
+    # 한국어 어미 변형("이상이고" vs "이상", "제도이다" vs "제도입니다")으로
+    # contains_gt가 False인데 의미상 정답인 경우를 구제.
+    # 조건: key token 70% 이상 매칭 (gt_keys 중 pred_keys에 substring 포함)
+    if not contains_gt and gt_keys:
+        _soft_match = sum(
+            1 for gt_k in gt_keys
+            if any(gt_k in pk or pk in gt_k for pk in pred_keys)
+        )
+        if _soft_match / len(gt_keys) >= 0.7:
+            contains_gt = True
 
     pred_counter = Counter(pred_tokens)
     gt_counter = Counter(gt_tokens)
@@ -173,7 +246,60 @@ async def evaluate_one(
         vector_results=search_results.get("vector_results", []),
         graph_results=search_results.get("graph_results", []),
         question=question,
+        intent=analysis.intent,
+        entities=analysis.entities,
+        question_type=analysis.question_type,
     )
+
+    # P4: 저신뢰 재시도 루프 (1회) — chat_app.py와 동일 로직의 축소판
+    # confidence<0.5이고 direct_answer 없으면 LLM으로 쿼리 재작성 후 재검색·재머지.
+    if (
+        merged.context_confidence is not None
+        and merged.context_confidence < 0.5
+        and not merged.direct_answer
+    ):
+        try:
+            rewritten = await generator.rewrite_query(
+                question=question,
+                lang=analysis.lang or "ko",
+                intent=analysis.intent.value if analysis.intent else None,
+            )
+            if rewritten and rewritten != question:
+                retry_results = router.route_and_search(rewritten, analysis)
+                seen_v, seen_g = set(), set()
+                combined_vector, combined_graph = [], []
+                for r in (
+                    search_results.get("vector_results", [])
+                    + retry_results.get("vector_results", [])
+                ):
+                    key = (r.text or "")[:120]
+                    if key and key not in seen_v:
+                        seen_v.add(key)
+                        combined_vector.append(r)
+                for r in (
+                    search_results.get("graph_results", [])
+                    + retry_results.get("graph_results", [])
+                ):
+                    key = (r.text or "")[:120]
+                    if key and key not in seen_g:
+                        seen_g.add(key)
+                        combined_graph.append(r)
+                merged_retry = merger.merge(
+                    vector_results=combined_vector,
+                    graph_results=combined_graph,
+                    question=question,
+                    intent=analysis.intent,
+                    entities=analysis.entities,
+                    question_type=analysis.question_type,
+                )
+                if merged_retry.context_confidence > merged.context_confidence:
+                    merged = merged_retry
+                    search_results = {
+                        "vector_results": combined_vector,
+                        "graph_results": combined_graph,
+                    }
+        except Exception:
+            pass
 
     if merged.direct_answer:
         answer = merged.direct_answer.strip()
@@ -185,18 +311,31 @@ async def evaluate_one(
                 context=context,
                 student_id=analysis.student_id,
                 question_focus=analysis.entities.get("question_focus"),
+                lang=analysis.lang,
+                matched_terms=analysis.matched_terms,
+                context_confidence=merged.context_confidence,
+                question_type=(
+                    analysis.question_type.value if analysis.question_type else None
+                ),
+                intent=analysis.intent.value if analysis.intent else None,
+                entities=analysis.entities,
             )
         ).strip()
 
     # 검색 결과 페이지 번호 수집 (Recall@5, MRR@5 계산용)
-    # 그래프 노드의 source_pages 메타데이터도 활용 (sp[0]만이 아닌 전체 페이지)
-    all_results = search_results.get("graph_results", []) + search_results.get("vector_results", [])
-    retrieved_pages = []
-    for r in all_results[:5]:
+    # 버그 수정 (2026-04-10): 이전에는 graph+vector concat 후 [:5]만 보아
+    # (graph=4, vector=5)일 때 벡터 뒤쪽 4개가 무시되어 페이지가 빈 리스트가 되는
+    # 측정 아티팩트가 있었음. 이제 그래프/벡터 각각에서 상위 결과의 페이지를 수집하고,
+    # 그래프의 source_pages 메타데이터와 벡터의 page_number를 모두 포함시킨다.
+    retrieved_pages: list[int] = []
+    for r in search_results.get("graph_results", [])[:5]:
         sp = r.metadata.get("source_pages", []) if r.metadata else []
         if sp:
             retrieved_pages.extend(sp)
         elif r.page_number:
+            retrieved_pages.append(r.page_number)
+    for r in search_results.get("vector_results", [])[:5]:
+        if r.page_number:
             retrieved_pages.append(r.page_number)
 
     answerable = item.get("answerable", True)

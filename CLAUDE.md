@@ -32,7 +32,11 @@
 ## 주요 컴포넌트
 
 - `app/graphdb/academic_graph.py` — 학사 규정 그래프 DB
-- `app/pipeline/` — 검색 파이프라인 (query_router, context_merger, reranker)
+- `app/pipeline/` — 검색·답변 파이프라인
+  - 전처리: `language_detector` · `query_analyzer` · `glossary` · `ko_tokenizer` · `translator`
+  - 검색·병합: `query_router` · `community_selector` · `reranker` · `context_merger`
+  - 생성·검증: `answer_generator` · `response_validator`
 - `app/ui/chat_app.py` — Streamlit UI
 - `data/pdfs/` — 원본 PDF 문서
-- `scripts/ingest_all.py` — 전체 재인제스트 스크립트
+- `scripts/ingest_all.py` — 전체 재인제스트 스크립트 (세부는 `README.md` 참조)
+- `docs/archive/` — 시점성 스냅샷 문서 보관 (진단 리포트 등)

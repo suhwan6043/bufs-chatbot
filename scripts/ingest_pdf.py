@@ -223,8 +223,23 @@ def ingest_pdf(
     doc_type: str,
     semester: str = "",
     save_json: bool = False,
+    store: "ChromaStore" = None,
+    source_rank: int = 2,
+    interactive: bool = True,
 ) -> int:
-    """단일 PDF를 처리하여 ChromaDB에 저장합니다. 저장된 청크 수를 반환합니다."""
+    """단일 PDF를 처리하여 ChromaDB에 저장합니다. 저장된 청크 수를 반환합니다.
+
+    Args:
+        store: 재사용할 ChromaStore 인스턴스. None이면 새로 생성한다.
+               여러 PDF를 연속 인제스트할 때는 외부에서 store를 한 번만
+               만들어 전달해야 한다 — PersistentClient가 반복 open/close되면
+               HNSW 세그먼트가 corrupt될 수 있다 (2026-04-10 P3-b 사고 교훈).
+        source_rank: Tier 1 내 소스 우선순위. 1=최우선(예: 학사안내 PDF),
+               2=일반(예: 신입생 가이드북). 동일 doc_type 내 충돌 시 낮은 숫자 우선.
+               Phase 3 (2026-04-12) 도입.
+        interactive: True면 스캔 PDF 감지 시 Enter 입력 대기. False면 자동 진행
+               (OCR 인제스트 배치 실행용).
+    """
     path = Path(pdf_path)
     if not path.exists():
         logger.error(f"파일을 찾을 수 없습니다: {pdf_path}")
@@ -247,7 +262,8 @@ def ingest_pdf(
             "스캔 PDF 감지. Surya OCR 사용.\n"
             "⚠️  LM Studio가 실행 중이면 종료 후 진행하세요."
         )
-        input("계속하려면 Enter를 누르세요...")
+        if interactive:
+            input("계속하려면 Enter를 누르세요...")
         from app.pdf.ocr_extractor import SuryaOCRExtractor
         extractor = SuryaOCRExtractor()
         pages = extractor.extract(str(path))
@@ -265,13 +281,21 @@ def ingest_pdf(
         logger.warning("생성된 청크가 없습니다.")
         return 0
 
+    # Phase 3 (2026-04-12): source_rank 메타데이터 주입.
+    # Tier 1 내 동일 doc_type에서 청크 경합 시 reranker가 tiebreak로 사용.
+    # 학사안내 = rank 1 (우선), 신입생 가이드북 = rank 2.
+    # 기본값 2로 하위호환: 기존 인제스트 청크는 기본 rank 2로 간주.
+    for c in chunks:
+        c.metadata["source_rank"] = source_rank
+
     # 4. (선택) JSON 저장
     if save_json:
         _save_json(path, pdf_type, pages, chunks, doc_type, semester)
 
-    # 5. 임베딩 + ChromaDB 저장
-    embedder = Embedder()
-    store = ChromaStore(embedder=embedder)
+    # 5. 임베딩 + ChromaDB 저장 — store 재사용 가능
+    if store is None:
+        embedder = Embedder()
+        store = ChromaStore(embedder=embedder)
 
     # 기존에 같은 파일이 있으면 skip (chunk_id 기반 중복 방지)
     store.add_chunks(chunks)
@@ -314,6 +338,18 @@ def main():
         "--save-json", action="store_true",
         help="추출 결과를 data/extracted/{파일명}.json 으로 저장 (디버깅/재사용용)",
     )
+    parser.add_argument(
+        "--source-rank", type=int, default=2,
+        help=(
+            "Tier 1 내 소스 우선순위 (1=최우선, 2=일반). "
+            "동일 doc_type 내 청크 경합 시 reranker가 낮은 숫자를 선호. "
+            "예: 학사안내=1, 신입생 가이드북=2. 기본값 2."
+        ),
+    )
+    parser.add_argument(
+        "--non-interactive", action="store_true",
+        help="스캔 PDF 감지 시 Enter 대기 없이 자동 진행 (배치 실행용)",
+    )
     parser.add_argument("--status", action="store_true", help="DB 상태 확인")
     args = parser.parse_args()
 
@@ -340,6 +376,10 @@ def main():
             print(f"PDF 파일을 {settings.pdf.pdf_dir} 에 넣고 다시 실행하세요.")
             return
 
+    # 단일 ChromaStore를 생성해 루프 전체에서 재사용 — HNSW 세그먼트 corruption 방지
+    shared_embedder = Embedder()
+    shared_store = ChromaStore(embedder=shared_embedder)
+
     total = 0
     for pdf_path in pdf_files:
         count = ingest_pdf(
@@ -348,6 +388,9 @@ def main():
             args.doc_type,
             args.semester,
             save_json=args.save_json,
+            store=shared_store,
+            source_rank=args.source_rank,
+            interactive=not args.non_interactive,
         )
         total += count
 

@@ -1610,6 +1610,51 @@ async def generate_response(question: str) -> str:
         question_type=analysis.question_type,
     )
 
+    # P4: 저신뢰 재시도 (비스트리밍 경로, 1회)
+    if (
+        merged.context_confidence is not None
+        and merged.context_confidence < 0.5
+        and not merged.direct_answer
+        and not transcript_context
+    ):
+        try:
+            rewritten = await generator.rewrite_query(
+                question=question,
+                lang=analysis.lang or "ko",
+                intent=analysis.intent.value if analysis.intent else None,
+            )
+            if rewritten and rewritten != question:
+                retry_results = router.route_and_search(rewritten, analysis)
+                seen_v, seen_g = set(), set()
+                combined_vector, combined_graph = [], []
+                for r in search_results["vector_results"] + retry_results["vector_results"]:
+                    key = (r.text or "")[:120]
+                    if key and key not in seen_v:
+                        seen_v.add(key)
+                        combined_vector.append(r)
+                for r in search_results["graph_results"] + retry_results["graph_results"]:
+                    key = (r.text or "")[:120]
+                    if key and key not in seen_g:
+                        seen_g.add(key)
+                        combined_graph.append(r)
+                merged_retry = merger.merge(
+                    vector_results=combined_vector,
+                    graph_results=combined_graph,
+                    question=question,
+                    intent=analysis.intent,
+                    entities=analysis.entities,
+                    transcript_context=transcript_context,
+                    question_type=analysis.question_type,
+                )
+                if merged_retry.context_confidence > merged.context_confidence:
+                    merged = merged_retry
+                    search_results = {
+                        "vector_results": combined_vector,
+                        "graph_results": combined_graph,
+                    }
+        except Exception as e:
+            logger.warning("P4 retry (non-stream) 실패: %s", e)
+
     if not merged.formatted_context.strip():
         if analysis.lang == "en":
             return (
@@ -1637,6 +1682,7 @@ async def generate_response(question: str) -> str:
         context_confidence=merged.context_confidence,
         question_type=analysis.question_type.value if analysis.question_type else None,
         intent=analysis.intent.value,
+        entities=analysis.entities,
     )
 
     all_results = search_results["vector_results"] + search_results["graph_results"]
@@ -1703,6 +1749,68 @@ async def generate_response_stream(question: str, placeholder) -> str:
         question_type=analysis.question_type,
     )
     _ms_merge = int((time.monotonic() - _t_merge) * 1000)
+
+    # P4: 저신뢰 재시도 루프 (1회)
+    # confidence < 0.5이고 direct_answer 없고 성적표 없는 경우,
+    # LLM으로 쿼리를 재작성해 1회 재검색·재머지한다.
+    # 비용: +1 LLM 호출 (≤5s) + 1 검색. 재머지 결과가 더 나은 경우에만 채택.
+    _ms_retry = 0
+    if (
+        merged.context_confidence is not None
+        and merged.context_confidence < 0.5
+        and not merged.direct_answer
+        and not transcript_context
+    ):
+        _t_retry = time.monotonic()
+        try:
+            rewritten = await generator.rewrite_query(
+                question=question,
+                lang=analysis.lang or "ko",
+                intent=analysis.intent.value if analysis.intent else None,
+            )
+            if rewritten and rewritten != question:
+                retry_results = router.route_and_search(rewritten, analysis)
+                # 기존 결과와 병합 (중복 제거)
+                seen = set()
+                combined_vector = []
+                for r in search_results["vector_results"] + retry_results["vector_results"]:
+                    key = (r.text or "")[:120]
+                    if key and key not in seen:
+                        seen.add(key)
+                        combined_vector.append(r)
+                combined_graph = []
+                seen_g = set()
+                for r in search_results["graph_results"] + retry_results["graph_results"]:
+                    key = (r.text or "")[:120]
+                    if key and key not in seen_g:
+                        seen_g.add(key)
+                        combined_graph.append(r)
+
+                merged_retry = merger.merge(
+                    vector_results=combined_vector,
+                    graph_results=combined_graph,
+                    question=question,
+                    intent=analysis.intent,
+                    entities=analysis.entities,
+                    transcript_context=transcript_context,
+                    question_type=analysis.question_type,
+                )
+                # 재머지 confidence가 더 높을 때만 교체
+                if merged_retry.context_confidence > merged.context_confidence:
+                    logger.info(
+                        "P4 retry 채택: confidence %.2f → %.2f (rewritten='%s')",
+                        merged.context_confidence,
+                        merged_retry.context_confidence,
+                        rewritten[:60],
+                    )
+                    merged = merged_retry
+                    search_results = {
+                        "vector_results": combined_vector,
+                        "graph_results": combined_graph,
+                    }
+        except Exception as e:
+            logger.warning("P4 retry 실패, 원본 유지: %s", e)
+        _ms_retry = int((time.monotonic() - _t_retry) * 1000)
 
     def _log(answer: str) -> None:
         """Q&A 쌍을 로그 파일에 기록 (실패해도 메인 기능에 영향 없음)"""
@@ -1796,9 +1904,9 @@ async def generate_response_stream(question: str, placeholder) -> str:
     _ms_total = int((time.monotonic() - _t0) * 1000)
     logger.info(
         "PIPELINE_TIMING total=%dms analyze=%dms search=%dms merge=%dms "
-        "generate=%dms validate=%dms intent=%s qt=%s",
+        "retry=%dms generate=%dms validate=%dms intent=%s qt=%s",
         _ms_total, _ms_analyze, _ms_search, _ms_merge,
-        _ms_gen, _ms_val, analysis.intent.value,
+        _ms_retry, _ms_gen, _ms_val, analysis.intent.value,
         analysis.question_type.value if analysis.question_type else "?",
     )
 

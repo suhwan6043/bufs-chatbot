@@ -143,9 +143,14 @@ def main():
                             graph_result.G.number_of_nodes(), graph_result.G.number_of_edges())
 
     # ── 1. PDF 인제스트 (ChromaDB) ───────────────────────────
+    # Phase 3 (2026-04-12): 학사안내 PDF는 source_rank=1 (최우선).
+    # 동일 doc_type 내 신입생 가이드북(rank=2)과 충돌 시 학사안내 우선 적용.
     if Path(pdf_path).exists():
-        logger.info("=== PDF 인제스트: %s ===", pdf_path)
-        ingest_pdf(pdf_path=pdf_path, student_id="2024", doc_type="domestic")
+        logger.info("=== PDF 인제스트: %s (rank=1) ===", pdf_path)
+        ingest_pdf(
+            pdf_path=pdf_path, student_id="2024",
+            doc_type="domestic", source_rank=1,
+        )
     else:
         logger.warning("PDF 없음: %s", pdf_path)
 
@@ -157,6 +162,19 @@ def main():
     else:
         logger.warning("PDF 없음: %s", timetable_path)
 
+    # ── 1-3. 신입생 가이드북 인제스트 (Phase 3, 2026-04-12) ──
+    # 스캔 PDF이므로 Surya OCR 경로 자동 활성화.
+    # source_rank=2 (학사안내보다 후순위). interactive=False로 배치 실행.
+    guide_book_path = ROOT / "data" / "pdfs" / "2025_신입생_가이드북.pdf"
+    if guide_book_path.exists():
+        logger.info("=== PDF 인제스트: %s (rank=2, OCR) ===", guide_book_path)
+        ingest_pdf(
+            pdf_path=str(guide_book_path), student_id="2024",
+            doc_type="domestic", source_rank=2, interactive=False,
+        )
+    else:
+        logger.info("신입생 가이드북 없음 (스킵): %s", guide_book_path)
+
     # ── 1b. 포털 PDF 인제스트 (학생포털시스템 캡처 PDF) ────────
     portal_dir = ROOT / "data" / "pdfs" / "portal"
     if portal_dir.exists():
@@ -165,7 +183,11 @@ def main():
             logger.info("=== 포털 PDF 인제스트: %d개 ===", len(portal_pdfs))
             for pdf_file in portal_pdfs:
                 logger.info("  → %s", pdf_file.name)
-                ingest_pdf(pdf_path=str(pdf_file), student_id="2024", doc_type="domestic")
+                # 포털 캡처도 기본 rank=2 (학사안내 PDF보다 후순위)
+                ingest_pdf(
+                    pdf_path=str(pdf_file), student_id="2024",
+                    doc_type="domestic", source_rank=2,
+                )
 
     # ── 2. 정적 페이지 전체 크롤링 ──────────────────────────
     with CONFIG_PATH.open(encoding="utf-8") as f:

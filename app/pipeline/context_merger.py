@@ -10,6 +10,7 @@ import re
 from typing import List, Optional
 
 from app.models import SearchResult, MergedContext, Intent, QuestionType
+from app.pipeline.answer_units import aligns as _answer_unit_aligns
 
 logger = logging.getLogger(__name__)
 
@@ -19,20 +20,30 @@ _DEFAULT_CONTEXT_TOKENS = 1200
 
 # ── 원칙 2: 인텐트별 적응형 설정 ────────────────────────────────
 # (graph_weight, vector_weight) — Tier 1 (domestic+guide 벡터) 우선 정책 반영
-# 벡터에 Tier 1 공식 자료가 포함되므로 벡터 가중치를 그래프와 동등 이상으로 설정
+#
+# 가중치 재조정 근거 (2026-04-10 정보부족 진단):
+# - 그래프 핸들러 결과의 score는 고정값(1.0~1.3)이라 실제 관련성 신호가 아님.
+#   RRF는 rank 기반이므로 graph_weight가 높으면 제네릭 FAQ가 벡터의 정답 청크를 밀어냄.
+# - 벡터에 Tier 1(domestic/guide) 공식 PDF가 포함되므로 학번별 표·다조건 규정 질문
+#   (q019, q022, q044, q050 등)은 벡터 우선이 정답률에 유리.
+# - SCHEDULE만 예외: 그래프의 학사일정 노드가 실제 정답을 보유.
 _INTENT_WEIGHTS = {
-    Intent.SCHEDULE:         (2.0, 0.8),   # 그래프(학사일정) 우선, 벡터도 참고
-    Intent.ALTERNATIVE:      (1.2, 1.2),   # FAQ·PDF 동등
-    Intent.GRADUATION_REQ:   (1.5, 1.2),
-    Intent.REGISTRATION:     (1.2, 1.5),   # Tier 1 벡터(PDF) 우선
-    Intent.EARLY_GRADUATION: (1.5, 1.2),
-    Intent.MAJOR_CHANGE:     (1.2, 1.2),
-    Intent.SCHOLARSHIP:      (1.0, 1.2),   # 벡터(크롤링 공지) 우선
-    Intent.LEAVE_OF_ABSENCE: (1.2, 1.2),   # PDF 가이드와 그래프 동등
-    Intent.COURSE_INFO:      (0.8, 1.5),   # 벡터(시간표 청크) 우선
+    Intent.SCHEDULE:         (2.0, 0.8),   # 유지: 그래프(학사일정) 직접 답변
+    Intent.ALTERNATIVE:      (1.2, 1.2),   # 유지: FAQ·PDF 동등
+    # GRADUATION_REQ: 그래프에 `2022학번 내국인 졸업요건`(졸업학점 130) 같은
+    # 학번별 구조화 노드가 있으므로 그래프를 다시 동등 이상으로 둠.
+    # q042 회귀 교훈: 벡터 우선으로 바꿨더니 그래프의 정답 노드가 밀려났음.
+    Intent.GRADUATION_REQ:   (1.4, 1.3),   # 그래프 우선, 벡터 보조
+    Intent.REGISTRATION:     (1.0, 1.5),   # 그래프 편향 완화 유지
+    # EARLY_GRADUATION도 그래프에 학번별 졸업요건 노드 사용 — 그래프 우선
+    Intent.EARLY_GRADUATION: (1.4, 1.3),
+    Intent.MAJOR_CHANGE:     (1.0, 1.5),   # 학번별 표 분산 대응 (벡터 우선 유지)
+    Intent.SCHOLARSHIP:      (0.8, 1.5),   # 그래프에 장학 노드 없음
+    Intent.LEAVE_OF_ABSENCE: (1.0, 1.5),   # 벡터 PDF 우선
+    Intent.COURSE_INFO:      (0.8, 1.5),   # 시간표 벡터 청크 우선
     Intent.GENERAL:          (0.8, 1.5),   # Tier 1 벡터 우선
 }
-_DEFAULT_WEIGHTS = (1.2, 1.2)
+_DEFAULT_WEIGHTS = (1.2, 1.2)  # Intent 미지정 시 기본: 동등 경쟁
 
 # ── 원칙 2: QuestionType별 가중치 변조 (graph_mod, vector_mod) ──
 # 토픽 Intent 가중치에 곱하여 질문 유형에 따라 vector/graph 밸런스를 동적 조정
@@ -45,21 +56,75 @@ _QT_WEIGHT_MODIFIERS = {
 _DEFAULT_QT_MOD = (1.0, 1.0)
 
 # 인텐트별 컨텍스트 토큰 예산 — 단답형은 작게, 복합형은 크게
+# 2026-04-10 q042 회귀 조사 결과: GRADUATION_REQ/MAJOR_CHANGE/REGISTRATION은
+# 벡터(변경사항 표) + 그래프(학번별 구조화 노드) 양쪽을 모두 담아야
+# LLM이 학번별 정답을 올바르게 합성할 수 있음. 따라서 예산을 여유있게 상향.
 _INTENT_BUDGET = {
     Intent.SCHEDULE:       1000,
     Intent.ALTERNATIVE:    800,
-    Intent.GRADUATION_REQ: 1400,
-    Intent.REGISTRATION:   1200,
+    Intent.GRADUATION_REQ: 1800,   # 1400 → 1800: 그래프 + 벡터 병행 수용
+    Intent.REGISTRATION:   1500,   # 1200 → 1500
     Intent.COURSE_INFO:    1200,
-    Intent.SCHOLARSHIP:    1000,
-    Intent.LEAVE_OF_ABSENCE: 1000,
-    Intent.EARLY_GRADUATION: 1200,
-    Intent.MAJOR_CHANGE:   1200,
+    Intent.SCHOLARSHIP:    1200,   # 1000 → 1200
+    Intent.LEAVE_OF_ABSENCE: 1200, # 1000 → 1200
+    Intent.EARLY_GRADUATION: 1600, # 1200 → 1600
+    Intent.MAJOR_CHANGE:   1600,   # 1200 → 1600: 다년도 표 수용
     Intent.TRANSCRIPT:     1600,
 }
 
 # RRF 상수
 _RRF_K = 10
+
+# Adaptive Score-Gap Thresholding 파라미터 (2026-04-10 medium 실패 진단)
+# RRF 병합 결과에서 1등 대비 아래 비율 미만으로 떨어진 청크는 "노이즈"로 간주해 컷.
+# 실측 분포 기준(q040/q057/q058):
+#   vector→graph 전환 지점에서 비율이 0.73→0.51로 급락 (gap 명확)
+# 정답 유지 문항(q042)은 상위 5개가 0.786 이상으로 이 cutoff를 통과.
+_ADAPTIVE_CUT_RATIO = 0.70
+_ADAPTIVE_MIN_KEEP = 3
+
+
+def _adaptive_cutoff(
+    results: List[SearchResult],
+    ratio: float = _ADAPTIVE_CUT_RATIO,
+    min_keep: int = _ADAPTIVE_MIN_KEEP,
+) -> List[SearchResult]:
+    """상위 점수 대비 일정 비율 미만 청크를 컷.
+
+    원칙 2(비용·지연 최적화): 노이즈 청크가 토큰 예산을 먹는 것을 방지.
+    원칙 1(유연한 스키마): 하드 "페이지당 N개" 제한 대신 데이터 분포 기반.
+
+    - min_keep개는 무조건 보존 (reranker와 동일 원칙)
+    - 1등 점수가 0 이하이면 cutoff 비활성 (안전)
+    - transcript 청크(score≈10.0)처럼 인위적으로 부스트된 결과는 ratio 기준에서
+      제외: 첫 번째 "일반 RRF 점수" 청크를 기준으로 삼는다.
+    """
+    if len(results) <= min_keep:
+        return results
+
+    # transcript 등 부스트된 선두 청크 건너뛰기 (score ≥ 1.0은 RRF 정상값보다 훨씬 큼)
+    # 일반 RRF 점수는 1/(K+rank) * weight 수준이라 보통 < 0.2
+    ref_idx = 0
+    for i, r in enumerate(results):
+        s = getattr(r, "score", 0.0) or 0.0
+        if s < 1.0:
+            ref_idx = i
+            break
+    else:
+        # 모두 부스트된 경우(이상 케이스) 비활성
+        return results
+
+    ref_score = getattr(results[ref_idx], "score", 0.0) or 0.0
+    if ref_score <= 0:
+        return results
+
+    # min_keep은 ref_idx 이후 기준으로 보장
+    effective_min = max(min_keep, ref_idx + min_keep)
+    for i in range(effective_min, len(results)):
+        s = getattr(results[i], "score", 0.0) or 0.0
+        if (s / ref_score) < ratio:
+            return results[:i]
+    return results
 
 
 def _rrf_merge(
@@ -172,6 +237,12 @@ class ContextMerger:
 
         # RRF로 그래프·벡터 결과 병합 (rank 기반, 인텐트별 가중치 적용)
         all_results = _rrf_merge(graph_results, vector_results, gw, vw)
+        _pre_cutoff_count = len(all_results)
+
+        # Adaptive Score-Gap Thresholding — 1등 대비 ratio 미만은 노이즈로 컷
+        # (medium 실패 진단: q040/q057/q058은 vector→graph 전환점에서 급락)
+        all_results = _adaptive_cutoff(all_results)
+        _post_cutoff_count = len(all_results)
 
         # 원칙 2: 엔티티 기반 필터 — 단일 토픽 쿼리에서 무관 청크 차단
         all_results = self._filter_by_entity(all_results, entities)
@@ -224,24 +295,55 @@ class ContextMerger:
         # 그래프·FAQ direct_answer를 동등하게 경쟁시킴 (RRF 순위 기반)
         # all_results는 이미 RRF 점수순으로 정렬되어 있으므로,
         # 가장 높은 RRF 점수를 받은 direct_answer를 채택한다.
+        #
+        # [Fix A: Semantic Gate] 2026-04-11 병목 진단.
+        # 그래프 노드의 direct_answer는 "노드 토픽 하나당 한 문장"으로 베이크되어
+        # 있어서, 같은 토픽의 다른 질문이 들어오면 엉뚱한 답을 내놓는다.
+        #   예) 토픽 "OCU 초과학점" direct_answer = "~ 초과 신청이 가능합니다"
+        #       - 질문이 "가능?" → OK
+        #       - 질문이 "금액?" → 오답 (won 단위 없음)
+        #       - 질문이 "최대?" → 오답 (credit 단위 없음)
+        # AnswerUnit.aligns()는 질문의 기대 단위(credit/won/date/...)와 답변의
+        # 실제 제공 단위가 일치하는지 검증한다. 불일치면 skip → 다음 후보 or
+        # _try_extract_direct_answer 폴백 or LLM 경로.
         for result in all_results:
             if not result.metadata.get("direct_answer"):
                 continue
             if _is_redirect_faq(result):
                 continue
-            direct_answer = result.metadata["direct_answer"]
+            candidate = result.metadata["direct_answer"]
+            if not _answer_unit_aligns(question, candidate):
+                logger.debug(
+                    "direct_answer rejected by AnswerUnit gate: q=%r da=%r",
+                    (question or "")[:60], candidate[:60],
+                )
+                continue
+            direct_answer = candidate
             break
 
         # OCU 섹션 트리밍 플래그 (질문에 OCU 미언급 시 활성화)
         _trim_ocu = bool(entities and not entities.get("ocu"))
+
+        # 단일 청크가 예산을 독점하지 못하도록 상한 설정.
+        # 상위 Rank 결과가 예산을 전부 먹어서 Rank 3~5의 정답 청크가
+        # 들어가지 못하는 CAT_B/CAT_C 실패 패턴 방어.
+        per_chunk_max = int(max_chars * 0.6)
+
+        # 중복 청크 감지용 — 같은 PDF가 여러 소스 파일로 인제스트된 경우
+        # (예: "2026학년도1학기학사안내.pdf" + "2026학년도 1학기 학사 안내_0123.pdf")
+        # 동일 본문이 중복 선택되어 예산을 낭비하는 q042 회귀 사례 방어.
+        _seen_text_prefixes: set[str] = set()
 
         for result in all_results:
             if not result.text:
                 continue
 
             # FAQ direct_answer가 없을 때만 다른 소스의 direct_answer 수락
+            # (동일 semantic gate 적용)
             if not direct_answer and result.metadata.get("direct_answer"):
-                direct_answer = result.metadata["direct_answer"]
+                candidate = result.metadata["direct_answer"]
+                if _answer_unit_aligns(question, candidate):
+                    direct_answer = candidate
 
             # 원칙 2: OCU 미언급 쿼리에서 혼합 청크의 OCU 섹션 동적 트리밍
             if _trim_ocu and result.metadata.get("source_type") != "graph":
@@ -252,17 +354,29 @@ class ContextMerger:
             if not result_text or not result_text.strip():
                 continue
 
+            # 중복 감지: 앞 120자로 서명. 같은 본문은 한 번만 수용.
+            # (같은 페이지 번호의 유사 청크 여러 개가 들어오는 경우도 포함)
+            _sig = result_text.strip()[:120]
+            if _sig in _seen_text_prefixes:
+                continue
+            _seen_text_prefixes.add(_sig)
+
             text_len = len(result_text)
             remaining = max_chars - total_chars
 
-            if remaining <= 80:
-                break
+            # 예산 거의 소진 — 이 청크는 skip하되 loop는 계속 (더 작은 청크가
+            # 들어올 여지를 남김). 기존 break 제거.
+            if remaining < 80:
+                continue
 
-            if text_len > remaining:
-                # 남은 공간에 맞게 자르기 — skip 대신 truncate 후 continue
-                truncated = result_text[:remaining] + "..."
+            # 단일 청크 상한 적용 — 다양성 보장을 위해 첫 청크가 독점 못 하게.
+            chunk_budget = min(remaining, per_chunk_max)
+
+            if text_len > chunk_budget:
+                # 남은 공간(또는 단일 상한)에 맞게 자르기
+                truncated = result_text[:chunk_budget] + "..."
                 context_parts.append(self._format_result(result, truncated))
-                total_chars += remaining
+                total_chars += chunk_budget
                 result.metadata["in_context"] = True
                 if result.metadata.get("source_type") == "graph":
                     selected_graph.append(result)
@@ -287,17 +401,36 @@ class ContextMerger:
 
         # direct_answer가 없으면 컨텍스트에서 팩트 자동 추출 시도
         if not direct_answer and formatted and question:
-            extracted = self._try_extract_direct_answer(question, formatted)
+            extracted = self._try_extract_direct_answer(question, formatted, entities)
             if extracted:
                 direct_answer = extracted
 
-        # 원칙 2: 하이브리드 시스템 자체 신호로 context 관련성 신뢰도 산출
-        # RRF 이전의 원래 점수를 사용 (RRF 점수는 절대 관련성을 표현하지 않음)
+        # [Fix A final gate] 어느 경로로 설정됐든 direct_answer는 최종적으로
+        # AnswerUnit.aligns()를 통과해야 한다. 불일치면 폐기 → LLM 경로로 위임.
+        # 이 게이트는 graph metadata / main loop / _try_extract_direct_answer 모두
+        # 커버한다. 새로운 direct_answer 세팅 경로가 추가돼도 이 한 줄로 안전.
+        if direct_answer and question and not _answer_unit_aligns(question, direct_answer):
+            logger.info(
+                "direct_answer final-gate rejected: q=%r da=%r",
+                (question or "")[:60], direct_answer[:80],
+            )
+            direct_answer = ""
+
+        # 원칙 2: context_confidence = 카운트 + 실제 점수 결합 신호 (0.0~1.0)
         #
-        # 주의: 그래프 핸들러 결과는 score ≥ 1.0 (기본값)이나 관련성 신호가 아님.
-        # FAQ 정규화 점수(0~1)와 벡터 점수만 실제 관련성을 반영함.
-        # 원칙 2: context_confidence = 컨텍스트 충분성 신뢰도 (0.0~1.0)
-        # direct_answer 있으면 1.0, 선택된 결과 수 기반 산출
+        # 이전 버전은 단순 카운트 기반(n_selected)이었으나, 3건의 무관한 청크가
+        # 0.8을 받고 LLM이 틀린 답을 생성하는 CAT_C 패턴이 재현됨.
+        # 실제 관련성은 `_pre_rrf_vector_top` (리랭커 활성 시 BGE-Reranker logit,
+        # 비활성 시 cosine 유사도)에 반영되어 있으므로 보정 신호로 사용.
+        #
+        # 로직:
+        #   1) direct_answer 있으면 1.0 (변경 없음)
+        #   2) 카운트 기반 baseline (3+=0.8 / 2=0.6 / 1=0.4)
+        #   3) 벡터 top score로 상/하한 조정:
+        #      - logit < 0 (명백한 무관) → 최대 0.3
+        #      - logit > 2 (명백한 관련) → 최소 0.8
+        #      - 그 외 중간값 → baseline 유지
+        #   4) 그래프 점수는 핸들러 고정값이라 신호로 사용하지 않음
         if direct_answer:
             confidence = 1.0
         elif selected_vector or selected_graph:
@@ -308,6 +441,21 @@ class ContextMerger:
                 confidence = 0.6
             else:
                 confidence = 0.4
+
+            # 벡터 점수 기반 보정 (원본 리스트가 비어있지 않을 때만)
+            if vector_results:
+                if _pre_rrf_vector_top < 0:
+                    # BGE-Reranker logit 음수 = 확실히 무관 → 상한 제한
+                    confidence = min(confidence, 0.3)
+                elif _pre_rrf_vector_top > 2.0:
+                    # BGE-Reranker logit > 2 = 확실히 관련 → 하한 보장
+                    confidence = max(confidence, 0.8)
+
+            # Adaptive cutoff가 결과를 크게 줄였다면 → 쿼리 중의성이 의심되는
+            # 상황. P4 재시도 루프(confidence<0.5 트리거)가 동작하도록 클램프.
+            # 실측 기준: q040/q057/q058은 RRF 8-14개 중 4-5개만 남음 (≈50% 이하).
+            if _pre_cutoff_count >= 5 and _post_cutoff_count <= _pre_cutoff_count * 0.6:
+                confidence = min(confidence, 0.4)
         else:
             confidence = 0.0
 
@@ -322,15 +470,30 @@ class ContextMerger:
         )
 
     @staticmethod
-    def _try_extract_direct_answer(question: str, context: str) -> str:
+    def _try_extract_direct_answer(
+        question: str,
+        context: str,
+        entities: Optional[dict] = None,
+    ) -> str:
         """
         질문 유형에 따라 컨텍스트에서 핵심 팩트를 정규식으로 직접 추출.
         추출 성공 시 LLM을 우회하여 정확도 향상 + 지연 시간 절감.
         추출 실패 시 빈 문자열 → 기존 LLM 경로 유지.
 
         주의: 오탐 방지를 위해 질문+컨텍스트 동시 매칭만 수행.
+        entities에 department가 있으면 해당 학과 행에서 전화/호실 직접 추출.
+
+        2026-04-11 수정 (버그 #3): 모든 rule 결과를 `_answer_unit_aligns()`로
+        최종 검증한다. rule의 느슨한 regex가 잘못된 값을 반환하면 aligns가 거부.
         """
         q = re.sub(r"\s+", "", question.lower())
+        entities = entities or {}
+
+        def _checked(candidate: str) -> str:
+            """rule이 반환하려는 후보를 aligns()로 검증. 통과만 반환, 실패는 빈 문자열."""
+            if candidate and _answer_unit_aligns(question, candidate):
+                return candidate
+            return ""
 
         # ── 1) URL 추출: "사이트", "주소", "홈페이지" ──
         if any(kw in q for kw in ("사이트", "주소", "홈페이지", "url")):
@@ -349,13 +512,16 @@ class ContextMerger:
                 return f"{m.group(1)}입니다."
 
         # ── 3) 재수강 가능 성적 기준 ──
-        if "재수강" in q and ("가능" in q or "기준" in q or "몇" in q):
+        # 버그 #3 수정: 질문이 "제한/한도"를 묻는 경우(r05)엔 이 rule을 건너뛴다.
+        # "재수강 가능 성적"을 추출하는데 질문이 "재수강 학점 제한"인 상황을 방어.
+        _asks_limit_not_ability = any(kw in q for kw in ("제한", "한도", "최대")) and "가능" not in q
+        if "재수강" in q and ("가능" in q or ("기준" in q and not _asks_limit_not_ability) or "몇" in q):
             m = re.search(r"재수강기준성적[:\s]*([A-Da-d][+]?이하)", context)
             if m:
-                return f"{m.group(1)} 과목만 재수강 가능합니다."
+                return _checked(f"{m.group(1)} 과목만 재수강 가능합니다.")
             m = re.search(r"([A-Da-d][+]?)\s*이하.*?(?:과목|가능|재수강)", context)
             if m:
-                return f"{m.group(1)} 이하의 과목만 가능합니다."
+                return _checked(f"{m.group(1)} 이하의 과목만 가능합니다.")
 
         # ── 4) 출석 요건 (분수/비율) ──
         if "출석" in q and any(kw in q for kw in ("요건", "조건", "기준")):
@@ -417,6 +583,30 @@ class ContextMerger:
             m = re.search(r"초과[^:]*?(\d{1,3}(?:,\d{3})*)\s*원", context)
             if m:
                 return f"초과 수강료는 {m.group(1)}원입니다."
+
+        # ── 12) 학과 엔티티 + 연락처/사무실 질문 ──
+        # Fix C (2026-04-11): q059/q060처럼 학과명이 명확하고 질문이
+        # 연락처/사무실인 경우, 컨텍스트의 해당 학과 행에서 phone/room을 직접 뽑는다.
+        # LLM이 표의 다른 학과 행과 혼동해서 1자리 숫자를 틀리는 회귀 방어.
+        dept = entities.get("department")
+        if dept and any(kw in q for kw in ("전화", "연락처", "번호", "사무실", "어디")):
+            from app.pipeline.answer_units import _extract_phone_in_entity_line
+            phone = _extract_phone_in_entity_line(context, dept)
+            room_match = None
+            for line in context.split("\n"):
+                if dept not in line:
+                    continue
+                rm = re.search(r"\b([A-Z]\d{3}(?:-\d+)?)\b", line)
+                if rm:
+                    room_match = rm.group(1)
+                    break
+            parts: list[str] = []
+            if phone:
+                parts.append(f"051-509-{phone}")
+            if room_match:
+                parts.append(f"사무실 {room_match}")
+            if parts:
+                return f"{dept}의 " + ", ".join(parts) + "입니다."
 
         return ""
 

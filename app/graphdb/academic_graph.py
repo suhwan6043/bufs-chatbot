@@ -653,6 +653,8 @@ class AcademicGraph:
 
         원칙 1(스키마 진화): FAQ는 벡터 전용이 아닌 그래프 1급 시민으로 편입.
         direct_answer 플래그로 검색 시 RRF 부스트를 받아 범용 청크에 밀리지 않음.
+        원칙 3(지식 생애주기): 역인덱스와 stems 캐시를 증분 갱신하여
+        add_faq_node 이후 search_faq가 즉시 결과를 반환하도록 보장.
         """
         node_key = self._sanitize_node_key(faq_id)
         node_id = f"faq_{node_key}"
@@ -668,6 +670,20 @@ class AcademicGraph:
         attrs = self._merge(base, {})
         self.G.add_node(node_id, **attrs)
         self._index_add(node_id, "FAQ")
+
+        # 증분 인덱스 갱신 — 생성자 이후 추가된 FAQ도 search_faq로 즉시 검색 가능
+        # 카테고리 루트 노드는 검색 대상이 아님
+        if not attrs.get("is_category_root"):
+            from app.pipeline.ko_tokenizer import stems, expand_tokens, FAQ_STOPWORDS
+            q_st = set(stems(question or ""))
+            a_st = set(stems(answer or ""))
+            self._faq_stems_cache[node_id] = (q_st, a_st)
+            all_tokens = expand_tokens(q_st | a_st, FAQ_STOPWORDS)
+            for tok in all_tokens:
+                self._faq_token_index.setdefault(tok, set()).add(node_id)
+            # IDF 캐시는 코퍼스 변동 시 무효화 (다음 호출에 재계산)
+            self._faq_idf_cache = None
+
         return node_id
 
     def _get_faq_idf(self) -> dict[str, float]:

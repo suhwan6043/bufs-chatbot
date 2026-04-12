@@ -38,20 +38,36 @@ class TestUploadValidator:
         assert "빈 파일" in err
 
     def test_wrong_extension(self):
-        ok, err = UploadValidator.validate(b"\xd0\xcf\x11\xe0" + b"\x00" * 100, "test.pdf")
+        """진짜 허용되지 않는 확장자(.exe 등)는 거부.
+
+        주의: .pdf, .docx 등은 다중 포맷 지원 이후 허용 확장자가 되었으므로
+        거부 케이스 테스트에 부적합. `_ALLOWED_EXTENSIONS` 참조.
+        """
+        ok, err = UploadValidator.validate(b"\xd0\xcf\x11\xe0" + b"\x00" * 100, "test.exe")
         assert not ok
-        assert ".xls" in err
+        assert "지원하지 않는" in err or "지원" in err
 
     def test_oversized_file(self):
-        big = b"\xd0\xcf\x11\xe0" + b"\x00" * (6 * 1024 * 1024)
+        """MAX_SIZE_MB 초과 파일은 거부. MAX_SIZE_MB=200 기준 201MB 테스트."""
+        # 매우 큰 파일 생성은 메모리 낭비. 검증 로직 자체는 크기 계산만 하므로
+        # bytearray로 최소 비용 생성.
+        from app.transcript.security import UploadValidator as UV
+        max_mb = UV.MAX_SIZE_MB
+        big_size = int((max_mb + 1) * 1024 * 1024)
+        big = b"\xd0\xcf\x11\xe0" + b"\x00" * (big_size - 4)
         ok, err = UploadValidator.validate(big, "test.xls")
         assert not ok
         assert "초과" in err
 
     def test_wrong_magic(self):
-        ok, err = UploadValidator.validate(b"PK\x03\x04" + b"\x00" * 100, "test.xls")
+        """매직 바이트가 허용된 포맷 중 어느 것도 아니면 거부.
+
+        주의: ZIP(PK\\x03\\x04)은 .docx/.pptx 지원으로 허용되므로 사용 불가.
+        OLE2/PDF/PNG/JPEG/GIF/BMP/ZIP/HTML 전부에 걸리지 않는 무의미한 바이트 사용.
+        """
+        ok, err = UploadValidator.validate(b"\x00\x01\x02\x03" + b"\x00" * 100, "test.xls")
         assert not ok
-        assert "유효한 XLS" in err
+        assert "유효한" in err or "XLS" in err
 
     def test_valid_magic(self):
         ok, err = UploadValidator.validate(b"\xd0\xcf\x11\xe0" + b"\x00" * 100, "test.xls")
@@ -71,10 +87,14 @@ class TestUploadValidator:
         assert ok, f"BOM+HTML-in-XLS가 거부됨: {err}"
 
     def test_rejects_non_html_non_ole2(self):
-        """OLE2도 HTML도 아니면 여전히 거부 (회귀 방지)."""
-        ok, err = UploadValidator.validate(b"PK\x03\x04" + b"\x00" * 100, "test.xls")
+        """OLE2/HTML/PDF/PNG/JPEG/GIF/BMP/ZIP 중 어느 것도 아니면 거부 (회귀 방지).
+
+        ZIP(PK\\x03\\x04)은 .docx/.pptx 지원으로 허용되었으므로 사용 불가.
+        어떤 매직에도 걸리지 않는 바이트 시퀀스로 테스트.
+        """
+        ok, err = UploadValidator.validate(b"\x00\x01\x02\x03" + b"\x00" * 100, "test.xls")
         assert not ok
-        assert "유효한 XLS" in err
+        assert "유효한" in err or "XLS" in err
 
 
 # ══════════════════════════════════════════════════════
