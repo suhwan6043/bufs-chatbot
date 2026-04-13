@@ -285,6 +285,21 @@ class AnswerGenerator:
                     "List ALL conditions from the context without omitting any. "
                     "Present each condition as a separate bullet point.\n"
                 )
+            elif question_focus == "method":
+                parts.append(
+                    "[Note] This question asks how to do something (procedure or method). "
+                    "List the steps in order. Do not omit any required documents or actions.\n"
+                )
+            elif question_focus == "location":
+                parts.append(
+                    "[Note] This question asks about a location or office. "
+                    "State the specific building, room, website, or contact point directly.\n"
+                )
+            elif question_focus == "eligibility":
+                parts.append(
+                    "[Note] This question asks about eligibility or qualification. "
+                    "State clearly who qualifies and who does not, including all conditions.\n"
+                )
 
             # Gap 1-d: OCU contamination warning
             _ctx_lower = context.lower()

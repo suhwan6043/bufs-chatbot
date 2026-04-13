@@ -180,6 +180,75 @@ class QueryAnalyzer:
     _EN_LOCATION_KW = ("where", "which office", "which building", "which department", "which place")
     _EN_ELIGIBILITY_KW = ("eligible", "qualify", "qualified", "can i", "am i able", "is it possible", "allowed to")
 
+    # ── High #1: URL·사이트 기대 질문 키워드 ─────────────────────────────────
+    _EN_URL_SEEKING_KW = (
+        "where can i", "where do i", "which website", "what website", "what site",
+        "what is the website", "what is the url", "what is the link",
+        "online portal", "apply online", "register online", "access online",
+        "which portal", "where to apply", "where to register",
+    )
+
+    # ── High #2: 학기 구분 (전기/후기) ──────────────────────────────────────
+    _EN_SEMESTER_HALF_FIRST = (
+        "first semester", "spring semester", "1st semester",
+        "first-semester", "semester 1",
+    )
+    _EN_SEMESTER_HALF_SECOND = (
+        "second semester", "fall semester", "autumn semester",
+        "2nd semester", "second-semester", "semester 2",
+    )
+
+    # ── High #3: 성적선택제 (P/NP) — requires_graph=False ──────────────────
+    _EN_GRADE_SEL_KW = (
+        "pass/fail", "pass or fail", "p/np", "pass/np",
+        "pass non-pass", "non-pass", "np grade",
+        "grade option", "grade selection", "grade waiver",
+        "grade mode", "satisfactory", "s/u grade",
+    )
+
+    # ── Medium #4: 수강취소 마감 ────────────────────────────────────────────
+    _EN_CANCEL_KW = ("cancel", "drop", "withdraw", "unenroll", "un-enroll")
+    _EN_DEADLINE_SUFFIX_KW = (
+        "by when", "deadline", "last day", "cutoff", "until when",
+        "how long", "last date",
+    )
+
+    # ── Medium #5: 교양영역 ──────────────────────────────────────────────────
+    _EN_LIBERAL_ARTS_MAP = {
+        "인성체험교양": (
+            "chapel", "psc seminar", "social service", "volunteer",
+            "community service", "character education",
+        ),
+        "기초교양": (
+            "academic writing", "writing course", "reading and discussion",
+            "basic liberal arts", "writing class",
+        ),
+        "균형교양": (
+            "general education", "liberal arts", "humanities course",
+            "balanced liberal arts", "cultural studies",
+        ),
+        "글로벌소통역량": (
+            "global communication", "college english", "ai plus",
+            "global literacy", "english communication",
+        ),
+    }
+
+    # ── Low #11: table_lookup / rule_list question_focus ────────────────────
+    _EN_TABLE_KW = (
+        "table", "chart", "by year", "by cohort", "comparison",
+        "credits required per", "breakdown",
+    )
+    _EN_RULE_LIST_KW = (
+        "requirements", "qualifications", "conditions", "criteria",
+        "what are the requirements", "what do i need", "rules for",
+    )
+
+    # ── Low #9: 2자리 코호트 ("22 cohort" → 2022) ───────────────────────────
+    EN_COHORT_SHORT_PATTERN = re.compile(
+        r"\b([12]\d)\s+(?:cohort|enrollment|admission year|class)\b",
+        re.IGNORECASE,
+    )
+
     COURSE_NUMBER_PATTERN = re.compile(r"[A-Z]{2,4}\d{3,4}")
 
     # 과목명 추출 패턴: "미적분학 대체과목", "영어회화 과목 정보" 등
@@ -420,14 +489,20 @@ class QueryAnalyzer:
         ko_text = " ".join(ko_terms) if ko_terms else ""
         intent = self._classify_intent(ko_text) if ko_text else Intent.GENERAL
 
-        # EN 학번 추출 ("class of 2020" / "2020 student" 등)
+        # ── 학번 추출 ─────────────────────────────────────────────────────────
         student_id = None
+        # 4자리: "class of 2020" / "2020 student|cohort|enrollment|year"
         m = self.EN_COHORT_PATTERN.search(question)
         if m:
-            student_id = m.group(1) or m.group(2)  # 두 패턴 중 매칭된 그룹
+            student_id = m.group(1) or m.group(2)
+        # Low #9: 2자리 코호트 ("22 cohort" → 2022)
+        if student_id is None:
+            m_short = self.EN_COHORT_SHORT_PATTERN.search(question)
+            if m_short:
+                student_id = self._short_to_full_year(m_short.group(1))
 
-        # Gap 3: EN 학생유형 추출
-        student_type = None
+        # ── 학생유형 추출 (Medium #6: 미매칭 시 "내국인" 기본값) ───────────────
+        student_type = "내국인"
         for stype, pat in self.EN_STUDENT_TYPE_PATTERNS.items():
             if pat.search(question):
                 student_type = stype
@@ -457,19 +532,21 @@ class QueryAnalyzer:
         if any(kw in q_lower for kw in self._EN_2ND_MAJOR_CREDITS_KW):
             entities["second_major_credits"] = True
 
-        # ── 졸업인증 자격 (TOPIK 등) ─────────────────────────────────────────
+        # ── 졸업인증 자격 (TOPIK / TOEIC / TOEFL / IELTS) ────────────────────
         for cert_kw in self._EN_GRAD_CERT_KW:
             if cert_kw in q_lower:
-                entities["graduation_cert"] = cert_kw.upper() if cert_kw in ("topik", "toeic", "toefl", "ielts") else cert_kw
+                entities["graduation_cert"] = (
+                    cert_kw.upper()
+                    if cert_kw in ("topik", "toeic", "toefl", "ielts")
+                    else cert_kw
+                )
                 break
 
         # ── 전공이수방법 (방법1/2/3) ─────────────────────────────────────────
-        # "method N": 전공이수 맥락 불필요 (충분히 구체적)
         for en_kw, ko_val in self._EN_MAJOR_METHOD.items():
             if en_kw in q_lower:
                 entities["major_method"] = ko_val
                 break
-        # "option N" / "track N": 전공이수 맥락 키워드 동반 시에만 인식 (오탐 방지)
         if "major_method" not in entities:
             has_major_ctx = any(kw in q_lower for kw in self._EN_MAJOR_METHOD_CONTEXT_KW)
             if has_major_ctx:
@@ -485,8 +562,43 @@ class QueryAnalyzer:
         if dept_terms:
             entities["department"] = dept_terms[0]
 
-        # ── question_focus (period → limit → method → location → eligibility) ─
-        if any(kw in q_lower for kw in self._EN_PERIOD_KW):
+        # ── Low #10: 과목 코드 추출 (영문 코드 형식 그대로 사용) ──────────────
+        m_course = self.COURSE_NUMBER_PATTERN.search(question)
+        if m_course:
+            entities["course_number"] = m_course.group()
+
+        # ── High #1: URL·사이트 기대 질문 → reranker URL boost ───────────────
+        if any(kw in q_lower for kw in self._EN_URL_SEEKING_KW):
+            entities["asks_url"] = True
+
+        # ── High #2: 학기 구분 (전기/후기) ──────────────────────────────────
+        if any(kw in q_lower for kw in self._EN_SEMESTER_HALF_FIRST):
+            entities["semester_half"] = "전기"
+        elif any(kw in q_lower for kw in self._EN_SEMESTER_HALF_SECOND):
+            entities["semester_half"] = "후기"
+
+        # ── Medium #4: 수강취소 마감 ─────────────────────────────────────────
+        if (
+            any(kw in q_lower for kw in self._EN_CANCEL_KW)
+            and any(kw in q_lower for kw in self._EN_DEADLINE_SUFFIX_KW)
+        ):
+            entities["registration_deadline"] = True
+
+        # ── Medium #5: 교양영역 ──────────────────────────────────────────────
+        for area, kws in self._EN_LIBERAL_ARTS_MAP.items():
+            if any(kw in q_lower for kw in kws):
+                entities["liberal_arts_area"] = area
+                break
+
+        # ── question_focus ────────────────────────────────────────────────────
+        # Low #11: table_lookup / rule_list 우선 (구체적 슬롯)
+        _has_table = any(kw in q_lower for kw in self._EN_TABLE_KW)
+        _has_year  = any(kw in q_lower for kw in ("cohort", "enrollment year", "year of admission"))
+        if _has_table and _has_year:
+            entities["question_focus"] = "table_lookup"
+        elif any(kw in q_lower for kw in self._EN_RULE_LIST_KW):
+            entities["question_focus"] = "rule_list"
+        elif any(kw in q_lower for kw in self._EN_PERIOD_KW):
             entities["question_focus"] = "period"
         elif any(kw in q_lower for kw in self._EN_LIMIT_KW):
             entities["question_focus"] = "limit"
@@ -497,23 +609,37 @@ class QueryAnalyzer:
         elif any(kw in q_lower for kw in self._EN_ELIGIBILITY_KW):
             entities["question_focus"] = "eligibility"
 
+        # ── requires_graph 결정 ───────────────────────────────────────────────
         requires_graph = intent in (
             Intent.GRADUATION_REQ, Intent.EARLY_GRADUATION,
             Intent.ALTERNATIVE, Intent.SCHEDULE,
             Intent.COURSE_INFO, Intent.MAJOR_CHANGE, Intent.REGISTRATION,
             Intent.SCHOLARSHIP, Intent.LEAVE_OF_ABSENCE,
+            Intent.TRANSCRIPT,  # Low #12: TRANSCRIPT 추가
             Intent.GENERAL,
         )
+        # High #3: 성적선택제(P/NP) → 그래프 스키마에 없음, 그래프 OFF
+        if any(kw in q_lower for kw in self._EN_GRADE_SEL_KW):
+            requires_graph = False
+
         # EN은 항상 vector 검색 (BGE-M3 크로스링구얼)
         requires_vector = True
+
+        # Medium #7: missing_info — 학번 필요 intent에서 student_id 없으면 표시
+        missing_info = []
+        if not student_id and intent in (
+            Intent.GRADUATION_REQ, Intent.MAJOR_CHANGE, Intent.REGISTRATION
+        ):
+            missing_info.append("student_id")
 
         # EN 쿼리도 QuestionType 분류 (KO 용어 기반)
         qt_text = ko_text if ko_text else question
         question_type = self._classify_question_type(qt_text)
 
         logger.debug(
-            "EN query analyzed: intent=%s, qt=%s, matched=%s",
-            intent.value, question_type.value, [t["ko"] for t in matched_terms],
+            "EN query analyzed: intent=%s, qt=%s, student_type=%s, matched=%s",
+            intent.value, question_type.value, student_type,
+            [t["ko"] for t in matched_terms],
         )
 
         return QueryAnalysis(
@@ -523,7 +649,7 @@ class QueryAnalyzer:
             entities=entities,
             requires_graph=requires_graph,
             requires_vector=requires_vector,
-            missing_info=[],
+            missing_info=missing_info,
             lang="en",
             question_type=question_type,
             matched_terms=matched_terms,

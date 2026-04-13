@@ -398,3 +398,118 @@ def test_en_glossary_enrollment_certificate(analyzer):
     result = analyzer.analyze("how do I get a certificate of enrollment?")
     ko_terms = [t["ko"] for t in result.matched_terms]
     assert "재학증명서" in ko_terms
+
+
+# ── High 격차 해소 검증 ────────────────────────────────────────────────────────
+
+def test_en_asks_url_entity(analyzer):
+    """High #1: 'where can i apply' → entities['asks_url']=True"""
+    result = analyzer.analyze("where can i apply for a leave of absence?")
+    assert result.entities.get("asks_url") is True
+
+
+def test_en_asks_url_which_website(analyzer):
+    """High #1: 'which website' → entities['asks_url']=True"""
+    result = analyzer.analyze("which website do I use to register for courses?")
+    assert result.entities.get("asks_url") is True
+
+
+def test_en_semester_half_first(analyzer):
+    """High #2: 'first semester' → entities['semester_half']='전기'"""
+    result = analyzer.analyze("when is the first semester graduation ceremony?")
+    assert result.entities.get("semester_half") == "전기"
+
+
+def test_en_semester_half_second(analyzer):
+    """High #2: 'second semester' → entities['semester_half']='후기'"""
+    result = analyzer.analyze("when is the second semester commencement?")
+    assert result.entities.get("semester_half") == "후기"
+
+
+def test_en_grade_sel_requires_graph_false(analyzer):
+    """High #3: 'pass/fail' 질문 → requires_graph=False"""
+    result = analyzer.analyze("how do I apply for pass/fail grading?")
+    assert result.requires_graph is False
+    assert result.requires_vector is True
+
+
+def test_en_grade_sel_pnp(analyzer):
+    """High #3: 'p/np' → requires_graph=False"""
+    result = analyzer.analyze("can I change my course to p/np grading?")
+    assert result.requires_graph is False
+
+
+# ── Medium 격차 해소 검증 ─────────────────────────────────────────────────────
+
+def test_en_registration_deadline_entity(analyzer):
+    """Medium #4: 'cancel + deadline' → entities['registration_deadline']=True"""
+    result = analyzer.analyze("what is the deadline to cancel a course?")
+    assert result.entities.get("registration_deadline") is True
+
+
+def test_en_registration_deadline_drop(analyzer):
+    """Medium #4: 'drop + last day' → entities['registration_deadline']=True"""
+    result = analyzer.analyze("what is the last day to drop a class?")
+    assert result.entities.get("registration_deadline") is True
+
+
+def test_en_liberal_arts_chapel(analyzer):
+    """Medium #5: 'chapel' → entities['liberal_arts_area']='인성체험교양'"""
+    result = analyzer.analyze("is chapel required for graduation?")
+    assert result.entities.get("liberal_arts_area") == "인성체험교양"
+
+
+def test_en_liberal_arts_global_communication(analyzer):
+    """Medium #5: 'global communication' → entities['liberal_arts_area']='글로벌소통역량'"""
+    result = analyzer.analyze("how many global communication credits do I need?")
+    assert result.entities.get("liberal_arts_area") == "글로벌소통역량"
+
+
+def test_en_student_type_default_domestic(analyzer):
+    """Medium #6: 학생유형 미매칭 시 기본값='내국인'"""
+    result = analyzer.analyze("what are the graduation requirements?")
+    assert result.student_type == "내국인"
+
+
+def test_en_missing_info_student_id(analyzer):
+    """Medium #7: 졸업요건 질문 + student_id 없음 → missing_info=['student_id']"""
+    result = analyzer.analyze("what are the graduation requirements?")
+    assert "student_id" in result.missing_info
+
+
+def test_en_missing_info_empty_when_id_present(analyzer):
+    """Medium #7: student_id 있으면 missing_info 비어 있음"""
+    result = analyzer.analyze("what are the graduation requirements for class of 2022 students?")
+    assert "student_id" not in result.missing_info
+
+
+# ── Low 격차 해소 검증 ────────────────────────────────────────────────────────
+
+def test_en_cohort_short_pattern(analyzer):
+    """Low #9: '22 cohort' → student_id='2022'"""
+    result = analyzer.analyze("what rules apply to the 22 cohort?")
+    assert result.student_id == "2022"
+
+
+def test_en_course_number_extraction(analyzer):
+    """Low #10: 영문 과목 코드 추출"""
+    result = analyzer.analyze("can I retake ENG1234 if I failed?")
+    assert result.entities.get("course_number") == "ENG1234"
+
+
+def test_en_transcript_requires_graph(analyzer):
+    """Low #12: TRANSCRIPT intent → requires_graph=True"""
+    result = analyzer.analyze("show me my transcript and GPA")
+    assert result.requires_graph is True
+
+
+def test_en_question_focus_table_lookup(analyzer):
+    """Low #11: 'table' + 'cohort' → question_focus='table_lookup'"""
+    result = analyzer.analyze("show me the credits table by cohort")
+    assert result.entities.get("question_focus") == "table_lookup"
+
+
+def test_en_question_focus_rule_list(analyzer):
+    """Low #11: 'requirements' → question_focus='rule_list'"""
+    result = analyzer.analyze("what are the requirements for early graduation?")
+    assert result.entities.get("question_focus") == "rule_list"
