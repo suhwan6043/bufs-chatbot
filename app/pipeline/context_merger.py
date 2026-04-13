@@ -83,6 +83,15 @@ _RRF_K = 10
 _ADAPTIVE_CUT_RATIO = 0.70
 _ADAPTIVE_MIN_KEEP = 3
 
+# Phase 4 (2026-04-12): Intent별 adaptive cutoff 완화.
+# EARLY_GRADUATION / MAJOR_CHANGE는 관련 청크가 적어 0.70 cutoff에서 잘리는 경우가 있음.
+# 0.60으로 완화 → 더 많은 청크가 context budget에 진입 가능.
+# 기타 intent는 기존 0.70 유지 (precision 보호).
+_INTENT_CUTOFF_RATIO: dict = {
+    Intent.EARLY_GRADUATION: 0.60,
+    Intent.MAJOR_CHANGE:     0.60,
+}
+
 
 def _adaptive_cutoff(
     results: List[SearchResult],
@@ -241,7 +250,9 @@ class ContextMerger:
 
         # Adaptive Score-Gap Thresholding — 1등 대비 ratio 미만은 노이즈로 컷
         # (medium 실패 진단: q040/q057/q058은 vector→graph 전환점에서 급락)
-        all_results = _adaptive_cutoff(all_results)
+        # Phase 4: intent별 완화 비율 적용 (EARLY_GRADUATION/MAJOR_CHANGE → 0.60)
+        _cutoff_ratio = _INTENT_CUTOFF_RATIO.get(intent, _ADAPTIVE_CUT_RATIO)
+        all_results = _adaptive_cutoff(all_results, ratio=_cutoff_ratio)
         _post_cutoff_count = len(all_results)
 
         # 원칙 2: 엔티티 기반 필터 — 단일 토픽 쿼리에서 무관 청크 차단
@@ -282,6 +293,27 @@ class ContextMerger:
                     # FAQ 포함 모든 결과: RRF 순서 유지 (하이브리드 점수 신뢰)
                     rest.append(r)
             all_results = promoted_faq + rest + redirect_faq
+
+        # Phase 4 (2026-04-12): Intent keyword focus sort.
+        # context budget 소비 루프(for result in all_results)는 순서대로 토큰을 소비.
+        # 핵심 키워드를 포함한 청크를 앞으로 재배치 → 예산 내에 반드시 포함되도록 보장.
+        # FAQ promotion 이후 적용 → promoted_faq 선두 보존.
+        _INTENT_FOCUS_KWS: dict = {
+            Intent.EARLY_GRADUATION: ("조기졸업",),
+            Intent.MAJOR_CHANGE:     ("전과", "자유전공"),
+            Intent.LEAVE_OF_ABSENCE: ("휴학",),
+            Intent.SCHOLARSHIP:      ("장학", "TA"),
+            Intent.ALTERNATIVE:      ("대체과목", "동일과목"),
+        }
+        _focus_kws = _INTENT_FOCUS_KWS.get(intent)
+        if _focus_kws and all_results and len(all_results) > 3:
+            _hits = [r for r in all_results if any(kw in (r.text or "") for kw in _focus_kws)]
+            _miss = [r for r in all_results if r not in _hits]
+            all_results = _hits + _miss
+            logger.debug(
+                "intent focus sort: intent=%s hits=%d/%d",
+                intent, len(_hits), len(all_results),
+            )
 
         # 토큰 제한 내에서 컨텍스트 구성
         context_parts = []

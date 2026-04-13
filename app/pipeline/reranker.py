@@ -20,6 +20,41 @@ _URL_IN_CHUNK_PATTERN = re.compile(
 )
 
 
+# Phase 4 (2026-04-12): Near-deduplication — 앞 100자가 동일한 중복 청크 제거.
+# 같은 PDF 페이지를 다른 chunk_size로 split할 때 발생하는 중복 대응.
+# 최고 점수 청크(이미 sorted)를 우선 보존 → recall 영향 없음.
+def _dedup_near_similar(scored_list: list, prefix_len: int = 100) -> list:
+    """앞 prefix_len자가 동일한 중복 청크 제거 (같은 PDF 페이지 split 대응)."""
+    seen, deduped = set(), []
+    for score, result in scored_list:
+        prefix = (result.text or "")[:prefix_len].strip()
+        if prefix not in seen:
+            seen.add(prefix)
+            deduped.append((score, result))
+    return deduped
+
+
+# Phase 4 (2026-04-12): Score Gap Pruning (knee detection).
+# 연속 점수 간 최대 상대 낙폭 >= 25% 지점에서 절단.
+# score_range < 1.0이면 분포가 좁으므로 컷 안 함 (recall 보호).
+# 예) [3.2, 2.9, 0.4, 0.3]: range=2.9, gap 2.9→0.4=2.5 → 86% → index 2 반환.
+def _find_knee_cut(scored_list: list, min_keep: int = 3) -> int:
+    """연속 점수 간 최대 상대 낙폭 >= 25% 지점에서 절단. 안전 컷 없으면 len 반환."""
+    if len(scored_list) <= min_keep:
+        return len(scored_list)
+    scores = [s for s, _ in scored_list]
+    score_range = scores[0] - scores[-1]
+    if score_range < 1.0:
+        # 분포가 좁음 → 노이즈/정답 구분 불가 → 컷 안 함
+        return len(scored_list)
+    best_gap, cut_at = 0.0, len(scored_list)
+    for i in range(min_keep, len(scored_list)):
+        rel = (scores[i - 1] - scores[i]) / score_range
+        if rel > best_gap and rel > 0.25:
+            best_gap, cut_at = rel, i
+    return cut_at
+
+
 class Reranker:
     """
     [역할] Vector 검색 후보를 Cross-Encoder로 재순위화
@@ -148,11 +183,17 @@ class Reranker:
 
         scored = sorted(boosted_scored, key=lambda x: x[0], reverse=True)
 
+        # Phase 4 (2026-04-12): 리랭커 레벨 near-dedup 제거.
+        # context_merger가 이미 120자 prefix 기반 dedup을 수행하므로 reranker 수준 dedup은
+        # 불필요하고 오히려 rank 7~10의 relevant 청크를 제거할 위험.
+        # (g01 GRADUATION_REQ 졸업학점 청크 회귀 사례 확인 후 제외)
+        # scored = _dedup_near_similar(scored)  # 보류
+
         # 이중 컷오프: 동적 + 절대 하한
         reranked = []
         top_score = scored[0][0] if scored else 0.0
         relative_threshold = top_score * 0.5 if top_score > 0 else -float("inf")
-        absolute_floor = -3.0  # bge-reranker-v2-m3 logit 기준 매우 낮은 관련성
+        absolute_floor = -3.0  # 기존 유지: -2.5로 올리면 g01 graduation chunk 회귀 발생
         effective_threshold = max(relative_threshold, absolute_floor)
 
         for score, result in scored[:top_k]:

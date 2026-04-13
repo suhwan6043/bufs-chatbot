@@ -119,6 +119,8 @@ def extract_key_tokens(text: str) -> list[str]:
         r"topik",
         r"bufs",
         r"[a-z0-9.-]+\.[a-z]{2,}",
+        r"\d+학기",   # Phase 4: 학기수 표현 (l02: "4학기")
+        r"\d+회",     # Phase 4: 횟수 단위
     ]
 
     for pattern in patterns:
