@@ -322,13 +322,13 @@ class QueryRouter:
                 logger.debug("student_id 없음 - 그래프 탐색 스킵")
                 return []
 
-        # EN 쿼리: 그래프 내부 키워드 매칭이 한국어 기반이므로
-        # matched_terms에서 변환된 ko_query를 사용해야 올바른 노드가 탐색됨
-        graph_question = (
-            analysis.ko_query
-            if analysis.lang == "en" and analysis.ko_query
-            else query
-        )
+        # EN 쿼리: 그래프 내부 키워드 매칭이 한국어 기반이므로 ko_query 사용.
+        # 하지만 EN 특정 키워드(total credits, how many 등)도 handler가 감지할 수 있도록
+        # 원본 EN 쿼리도 함께 concat (ko 용어 매칭 + EN 키워드 매칭 모두 가능).
+        if analysis.lang == "en" and analysis.ko_query:
+            graph_question = f"{analysis.ko_query} {query}"
+        else:
+            graph_question = query
         return self.academic_graph.query_to_search_results(
             student_id=analysis.student_id or "2023",
             intent=analysis.intent.value,

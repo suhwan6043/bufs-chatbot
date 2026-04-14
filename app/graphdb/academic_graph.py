@@ -1167,16 +1167,18 @@ class AcademicGraph:
     def _localize_results_en(self, results: List[SearchResult]) -> List[SearchResult]:
         """그래프 결과의 direct_answer를 영어로 변환합니다.
 
-        일정/날짜 패턴이 포함된 direct_answer만 변환 (구조화된 데이터 → 정확도 높음).
-        복잡한 자연어 답변은 변환하지 않고 skip-translate가 처리하도록 남겨둠.
+        날짜/학점/숫자 기반 구조화 답변 변환 (정확도 높음).
+        복잡한 자연어 답변은 skip-translate가 처리하도록 남겨둠.
         """
         for r in results:
             da = r.metadata.get("direct_answer")
             if not da:
                 continue
-            # 날짜 패턴이 포함된 답변만 EN 변환 (일정/기간 답변)
+            # 변환 대상: 날짜 / 학점(졸업학점, 최대 학점) / 초과수강료
             has_date = bool(re.search(r"\d{4}년\s*\d{1,2}월\s*\d{1,2}일|\d{1,2}월\s*\d{1,2}일", da))
-            if has_date:
+            has_credits = "학점" in da and bool(re.search(r"\d+학점", da))
+            has_fee = "수강료" in da or "사용료" in da
+            if has_date or has_credits or has_fee:
                 r.metadata["direct_answer"] = self._ko_answer_to_en(da)
         return results
 
@@ -1233,6 +1235,7 @@ class AcademicGraph:
 
         # 5. 핵심 일정 용어 치환 (구조 패턴 전에 — "신청기간"을 통째로 치환)
         _schedule_terms = {
+            # 일정 관련
             "중간고사": "midterm exam", "기말고사": "final exam",
             "수강신청 취소": "course withdrawal",
             "수강신청": "course registration",
@@ -1243,6 +1246,24 @@ class AcademicGraph:
             "전기": "spring", "후기": "fall",
             "신청기간": "application period",
             "신청방법": "Application method",
+            # 졸업 관련 (en_grad_002 대응)
+            "학번 학생의 총 졸업학점은": "cohort student's total graduation credits are",
+            "학번 학생의 총 졸업학점": "cohort student's total graduation credits",
+            "학번": "cohort",
+            # OCU 관련 (q035, q040 대응)
+            "정규학기에 수강할 수 있는 최대 학점은": "the maximum credits per regular semester is",
+            "정규학기": "regular semester",
+            "초과 수강료는": "the excess tuition fee is",
+            "초과수강료는": "the excess tuition fee is",
+            "초과 수강료": "excess tuition fee",
+            "초과수강료": "excess tuition fee",
+            "시스템사용료": "system usage fee",
+            # 학점 단위
+            "학점입니다": "credits.",
+            "학점": "credits",
+            "과목": "course(s)",
+            "원입니다": "KRW.",
+            "원": "KRW",
         }
         for ko, en in sorted(_schedule_terms.items(), key=lambda x: -len(x[0])):
             result = result.replace(ko, en)
@@ -1270,7 +1291,11 @@ class AcademicGraph:
         result = result.replace("가능합니다", "is available")
         result = result.replace("입니다.", ".").replace("입니다", "")
 
-        # 7. 정리
+        # 7. 정리 + 숫자·영어 경계 공백 보정
+        # "2022cohort" → "2022 cohort", "130credits" → "130 credits"
+        result = re.sub(r"(\d)([a-zA-Z])", r"\1 \2", result)
+        result = re.sub(r"([a-zA-Z])(\d)", r"\1 \2", result)
+        result = re.sub(r"\.+", ".", result)          # ".." → "."
         result = re.sub(r"\s{2,}", " ", result).strip()
         return result
 
@@ -1578,6 +1603,36 @@ class AcademicGraph:
             dept_results = self._query_dept_grad_exam(question, dept_kw)
             if dept_results:
                 results = dept_results + results   # 학과 졸업시험을 앞에 배치
+                return results
+
+        # 총 졸업학점 질문 → direct_answer (en_grad_002, 학번/학생유형별 혼동 방지)
+        q_lower_grad = (question or "").lower()
+        _asks_total_credits = (
+            ("졸업학점" in question and any(kw in question for kw in ("몇", "얼마", "총", "어느")))
+            or any(kw in q_lower_grad for kw in (
+                "total credits", "how many credits", "credits required to graduate",
+                "graduation credits", "minimum credits"
+            ))
+        )
+        if _asks_total_credits and not department:
+            data_main = self.get_graduation_req(student_id, student_type)
+            if data_main and data_main.get("졸업학점"):
+                total = data_main["졸업학점"]
+                stype_label = student_type if student_type != "내국인" else ""
+                answer = (
+                    f"{student_id}학번 {stype_label} 학생의 총 졸업학점은 {total}학점입니다."
+                    if stype_label else
+                    f"{student_id}학번 학생의 총 졸업학점은 {total}학점입니다."
+                )
+                context = (
+                    f"[{student_id}학번 {student_type} 졸업요건]\n"
+                    f"- 총 졸업학점: {total}학점\n"
+                    f"- 교양이수학점: {data_main.get('교양이수학점', '-')}\n"
+                    f"- 주전공이수학점: {data_main.get('주전공이수학점', '-')}"
+                )
+                results.append(
+                    self._make_direct_result(context, answer, score=1.35, node_data=data_main)
+                )
                 return results
 
         # 요청 학생유형 우선, 없으면 내국인 (중복 방지)
@@ -1934,6 +1989,31 @@ class AcademicGraph:
                         f"- OCU 정규학기 최대: {ocu_data.get('정규학기_최대학점', '')}학점({ocu_data.get('정규학기_최대과목', '')}과목)"
                     )
                     return [self._make_direct_result(context, answer, score=1.3, node_data=ocu_data)]
+
+                # 정규학기 최대 학점 전용 (q035 대응) — "최대 학점"·"몇 학점" 질문
+                # 컨텍스트의 "21(초과)" 표 수치 혼동 방지: 직접 "6학점" direct_answer
+                q_lower_inner = question.lower()
+                _asks_max = any(
+                    kw in question for kw in ("최대", "몇 학점", "몇학점")
+                ) or any(
+                    kw in q_lower_inner for kw in ("maximum", "limit", "how many credits")
+                )
+                _is_regular = "정규학기" in question or "정규" in question or "regular" in q_lower_inner
+                if _asks_max and (_is_regular or not _asks_price):
+                    max_credits = ocu_data.get("정규학기_최대학점", "")
+                    max_courses = ocu_data.get("정규학기_최대과목", "")
+                    if max_credits:
+                        answer = (
+                            f"OCU 정규학기에 수강할 수 있는 최대 학점은 "
+                            f"{max_credits}학점({max_courses}과목)입니다. "
+                            f"단, 졸업 시까지 최대 8과목(24학점) 이내로 제한됩니다."
+                        )
+                        context = (
+                            f"[OCU 정규학기 최대 수강학점]\n"
+                            f"- 정규학기: {max_credits}학점({max_courses}과목) 이내\n"
+                            f"- 졸업 시까지 누적: 8과목(24학점) 이내"
+                        )
+                        return [self._make_direct_result(context, answer, score=1.3, node_data=ocu_data)]
 
                 # 출석요건 전용
                 if "출석" in question:
