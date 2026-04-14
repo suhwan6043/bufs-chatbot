@@ -64,11 +64,24 @@ def make_chunks(
     - 텍스트는 문단/줄 단위로 분리 후 CHUNK_SIZE 내에서 합침
     - 테이블은 페이지당 1개 청크로 통째로 유지 (분리 금지)
     - 청크 간 CHUNK_OVERLAP 글자를 겹쳐 문맥 연속성 확보
+    - section_path 메타데이터: 디지털 PDF에서 폰트 크기 기반 섹션 추적
     """
     chunks: List[Chunk] = []
 
+    # 섹션 경로 매핑 (디지털 PDF에만 적용, 스캔 PDF는 skip)
+    page_to_section: dict = {}
+    if pages and pages[0].source_file:
+        try:
+            from app.pdf.section_tracker import build_page_to_section_map
+            page_to_section = build_page_to_section_map(str(pages[0].source_file))
+            if page_to_section and any(page_to_section.values()):
+                logger.info("섹션 경로 추출: %d개 페이지 매핑", len(page_to_section))
+        except Exception as e:
+            logger.debug("섹션 추출 실패 (skip): %s", e)
+
     for page in pages:
         source_file = str(page.source_file)
+        section_path = page_to_section.get(page.page_number, "") if page_to_section else ""
 
         # 1. 테이블 청크 (페이지당, 분리하지 않음)
         raw_tables = page.raw_tables or []
@@ -95,6 +108,8 @@ def make_chunks(
                             f"table_{t_idx}_grp_{g_idx}", g_text,
                         )
                         c_from, c_to = detect_cohort(g_text)
+                        if section_path:
+                            g_meta["section_path"] = section_path
                         chunks.append(Chunk(
                             chunk_id=chunk_id,
                             text=g_text,
@@ -117,6 +132,8 @@ def make_chunks(
 
             chunk_id = _make_id(source_file, page.page_number, f"table_{t_idx}", table_md)
             c_from, c_to = detect_cohort(table_md)
+            if section_path:
+                meta["section_path"] = section_path
             chunks.append(Chunk(
                 chunk_id=chunk_id,
                 text=chunk_text,
@@ -141,6 +158,9 @@ def make_chunks(
                     continue
                 chunk_id = _make_id(source_file, page.page_number, f"text_{i}", text)
                 c_from, c_to = detect_cohort(text)
+                text_meta = {"content_type": "text", "chunk_index": i}
+                if section_path:
+                    text_meta["section_path"] = section_path
                 chunks.append(Chunk(
                     chunk_id=chunk_id,
                     text=text,
@@ -151,7 +171,7 @@ def make_chunks(
                     cohort_from=c_from,
                     cohort_to=c_to,
                     semester=semester,
-                    metadata={"content_type": "text", "chunk_index": i},
+                    metadata=text_meta,
                 ))
 
     logger.info(f"청킹 완료: {len(pages)}페이지 → {len(chunks)}개 청크")
