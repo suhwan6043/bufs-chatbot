@@ -87,6 +87,7 @@ def create_chunk(item: dict, source_file: str) -> Chunk | None:
     meta: dict = {
         "category": category,
         "faq_id": faq_id,
+        "content_type": "faq",
     }
     # answer_type (선택) — "redirect" / "data" — 리다이렉트 휴리스틱 override용
     answer_type = item.get("answer_type")

@@ -183,7 +183,20 @@ class QueryRouter:
             ]
 
         # 원칙 2: 임베딩 1회만 수행 → Phase 1/2/2.5 모두에 재사용
-        _q_emb = self.chroma_store.embedder.embed_query(query)
+        # EN 쿼리 검색 전략:
+        #   - ko_query 길이 >= 7자: 구체적 학술 용어(예: "성적평가 선택제도") →
+        #     KO만 사용 (EN 문장이 KO 용어를 희석하는 것을 방지)
+        #   - ko_query 길이 < 7자: 너무 일반적 용어(예: "재수강") →
+        #     ko_query + EN 원문 결합 (문맥 정보 보존)
+        #   - ko_query 없음: BGE-M3 cross-lingual로 EN 원문 사용
+        if analysis.lang == "en" and analysis.ko_query:
+            if len(analysis.ko_query) >= 7:
+                search_query = analysis.ko_query
+            else:
+                search_query = f"{analysis.ko_query} {query}"
+        else:
+            search_query = query
+        _q_emb = self.chroma_store.embedder.embed_query(search_query)
 
         # 원칙 2(비용·지연 최적화): BM25를 Phase 1과 동시 시작
         # BM25는 Phase 1 결과에 의존하지 않으므로 사전 실행 가능
@@ -202,7 +215,7 @@ class QueryRouter:
 
         # Phase 1: 우선 doc_type으로 검색 (Tier 1 우선)
         candidates = self.chroma_store.search(
-            query=query,
+            query=search_query,
             n_results=n_candidates,
             student_id=analysis.student_id,
             doc_type=preferred_types,
@@ -217,7 +230,7 @@ class QueryRouter:
                 len(candidates), self._MIN_PHASE1_RESULTS,
             )
             all_candidates = self.chroma_store.search(
-                query=query,
+                query=search_query,
                 n_results=n_candidates,
                 student_id=analysis.student_id,
                 department=department,
@@ -238,7 +251,7 @@ class QueryRouter:
             faq_count = sum(1 for c in candidates if c.metadata.get("doc_type") == "faq")
             if faq_count < 2:
                 faq_only = self.chroma_store.search(
-                    query=query,
+                    query=search_query,
                     n_results=5,
                     student_id=analysis.student_id,
                     doc_type=["faq"],
@@ -309,13 +322,13 @@ class QueryRouter:
                 logger.debug("student_id 없음 - 그래프 탐색 스킵")
                 return []
 
-        # EN 쿼리: 그래프 내부 키워드 매칭이 한국어 기반이므로
-        # matched_terms에서 변환된 ko_query를 사용해야 올바른 노드가 탐색됨
-        graph_question = (
-            analysis.ko_query
-            if analysis.lang == "en" and analysis.ko_query
-            else query
-        )
+        # EN 쿼리: 그래프 내부 키워드 매칭이 한국어 기반이므로 ko_query 사용.
+        # 하지만 EN 특정 키워드(total credits, how many 등)도 handler가 감지할 수 있도록
+        # 원본 EN 쿼리도 함께 concat (ko 용어 매칭 + EN 키워드 매칭 모두 가능).
+        if analysis.lang == "en" and analysis.ko_query:
+            graph_question = f"{analysis.ko_query} {query}"
+        else:
+            graph_question = query
         return self.academic_graph.query_to_search_results(
             student_id=analysis.student_id or "2023",
             intent=analysis.intent.value,
@@ -323,4 +336,5 @@ class QueryRouter:
             student_type=analysis.student_type or "내국인",
             question=graph_question,
             question_type=analysis.question_type.value if analysis.question_type else "",
+            lang=analysis.lang or "ko",
         )

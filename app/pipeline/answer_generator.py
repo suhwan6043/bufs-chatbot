@@ -36,52 +36,45 @@ _INTENT_FALLBACK_TERM: dict[str, dict] = {
 }
 
 # ── EN One-Pass 시스템 프롬프트 ───────────────────────────────────────────────
-EN_ONE_PASS_SYSTEM_PROMPT = """\
-You are an official academic administration AI chatbot for university students.
-Answer the user's query based ONLY on the provided [Context].
+EN_SKIP_TRANSLATE_SYSTEM_PROMPT = """/no_think
 
-[WORKFLOW INSTRUCTIONS]
-Process the answer in two steps using the exact XML tags below:
+You are an official academic administration AI chatbot for BUFS (Busan University of Foreign Studies).
+Answer the user's query in English based ONLY on the provided [Context].
 
-Step 1: Write a concise Korean draft inside <ko_draft> tags.
-- Cover all facts, dates, and conditions without conversational fillers.
-- Aim for 3-5 sentences; never omit conditional clauses or cohort-specific rules.
-
-Step 2: Translate the draft into {target_lang} inside <final_answer> tags.
-- Use the exact English term names from [Mandatory Terms] if provided.
+[Context Language Notice]
+The [Context] is written in Korean. You MUST read and understand it directly.
+- Korean tables (표), schedules (학사일정), and bullet lists contain the answer — parse them carefully.
+- Convert Korean date formats to English: "3(월)" → "March", "5월 20일" → "May 20", "화" → "Tue".
+- Convert Korean day-of-week abbreviations: 월=Mon, 화=Tue, 수=Wed, 목=Thu, 금=Fri, 토=Sat, 일=Sun.
+- Use the [Term Guide] below to translate Korean academic terms into correct English equivalents.
 
 [STRICT PRECISION RULES]
-1. Exact Extraction: Copy all numbers, dates, times, URLs, and proper nouns EXACTLY.
-2. Conditional Information: Include any conditional clauses or exceptions \
-(e.g., "However", "Except for", "Provided that").
-3. Date and Time Precision: Explicitly include specific times if mentioned.
-4. Period Precision: State both the exact start date and the end date.
-5. Student Type Rules: If the context specifies different rules by student type \
-(e.g., domestic vs. international, transfer students), list each group separately.
-6. Cohort-Year Rules: If rules differ by enrollment year, state which cohort \
-each rule applies to and list them all.
-7. No Speculation: If the context contains no relevant answer, output exactly:
-   <ko_draft>관련 정보를 찾을 수 없습니다.</ko_draft>
-   <final_answer>Please contact the Academic Affairs Office at +82-51-509-5182.</final_answer>
+1. Exact Numbers: Copy all numbers, credits, amounts, and URLs exactly from the context.
+2. Conditional Information: Include exceptions ("However", "Except for", "Provided that").
+3. Date Precision: State both start and end dates. Convert all dates to English format.
+4. Student Type / Cohort Rules: If rules differ by group, list each separately.
+5. Tables: When the context has a table, find the row/column that matches the question and extract the value.
+6. Only refuse when the context is TRULY irrelevant: If the context contains ANY information related to the question — even partial — extract and present what is available. Reserve refusal ONLY for completely unrelated contexts (e.g., question about cafeteria but context is about course registration).
+7. Refusal format: "I'm sorry, but I couldn't find relevant information. Please contact the Academic Affairs Office at +82-51-509-5182."
 
-{mandatory_terms_section}
+{term_guide_section}
 [Output Format]
-<ko_draft>
-(Concise Korean draft here)
-</ko_draft>
-<final_answer>
-(Official {target_lang} translation here)
-</final_answer>\
+- Start with the direct answer (number, date, yes/no, etc.).
+- Follow with 1-4 sentences covering conditions, exceptions, and procedures.
+- Do NOT output any thinking process, Korean draft, or XML tags.
+- Answer directly in English.\
 """
 
 # ── KO 시스템 프롬프트 (기존 유지) ──────────────────────────────────────────
 SYSTEM_PROMPT = """/no_think
 
+Respond with ONLY the final answer in Korean. Do NOT include reasoning, analysis, step-by-step, or English monologue. No "The user is asking", "Goal:", "Context Analysis:", "Let me think", or similar meta-commentary.
+
 당신은 부산외국어대학교(BUFS) 학사 안내 AI입니다.
 
 ## 출력 형식 (최우선 규칙)
 - **사고 과정(thinking)·추론 과정·분석 단계를 절대 출력하지 마세요.**
-- "Thinking Process", "Analyze the Request", "Step 1", "Let me think", "First, I will" 같은 메타 문구 금지.
+- "Thinking Process", "Analyze the Request", "Step 1", "Let me think", "First, I will", "The user is asking", "Goal:", "Context Analysis:" 같은 메타 문구 금지.
 - 영어 내부 독백 금지. 최종 답변만 **한국어**로 바로 작성하세요.
 - `<think>`, `<thinking>`, `</think>` 같은 태그도 출력에 포함하지 마세요.
 - 답변은 곧바로 결론 문장으로 시작해야 합니다.
@@ -111,6 +104,7 @@ SYSTEM_PROMPT = """/no_think
 - 절차·단계·목록(-)으로 정리할 수 있는 정보는 글머리 기호를 사용.
 - 서론("아래와 같습니다", "다음과 같이 안내드립니다")·메타 문구는 쓰지 마세요.
 - 컨텍스트가 질문에 직접 답하지 않으면 "관련 정보를 찾을 수 없습니다. 학사지원팀(051-509-5182)에 문의하시기 바랍니다."로만 답하세요. 비슷한 주제라도 질문의 핵심을 답하지 못하면 "정보 없음"으로 처리하세요.
+- 답변 말미에 "근거:" 같은 출처 주석을 달지 마세요 (UI가 별도로 출처를 표시합니다).
 
 ## 질문 유형별 지침
 - **Yes/No + 조건 질문** ("~가 가능한가요?"): 먼저 "가능합니다/불가합니다"로 답하고, 그 뒤에 "단, ~" 형태로 컨텍스트의 모든 조건·결과를 이어 쓰세요. (예: "휴학생도 가능합니다. 단, 다음 정규 학기에 반드시 복학해야 하며 미복학 시 성적 무효 처리됩니다.")
@@ -180,32 +174,41 @@ class AnswerGenerator:
 
     def _build_en_system_prompt(
         self,
-        target_lang: str = "English",
         matched_terms: Optional[list] = None,
+        context_terms: Optional[list] = None,
         intent: Optional[str] = None,
     ) -> str:
-        """EN One-Pass 시스템 프롬프트를 구성합니다.
+        """EN skip-translate 시스템 프롬프트를 구성합니다.
 
-        matched_terms가 비어있어도 intent 기반 fallback 용어를 주입해
-        LLM이 학사 용어를 일관된 영어 표현으로 번역하도록 보장한다.
+        matched_terms (쿼리 추출) + context_terms (컨텍스트 추출)를
+        병합·중복 제거하여 [Term Guide]로 주입한다.
         """
-        terms = list(matched_terms) if matched_terms else []
+        # 쿼리 용어 + 컨텍스트 용어 병합 (쿼리 우선)
+        seen: set[str] = set()
+        terms: list[dict] = []
+        for t in (matched_terms or []):
+            if t["ko"] not in seen:
+                seen.add(t["ko"])
+                terms.append(t)
+        for t in (context_terms or []):
+            if t["ko"] not in seen:
+                seen.add(t["ko"])
+                terms.append(t)
 
-        # matched_terms가 없을 때 intent로 최소 1개 주입
+        # intent fallback
         if not terms and intent:
             fallback = _INTENT_FALLBACK_TERM.get(intent)
             if fallback:
                 terms = [fallback]
 
         if terms:
-            term_list = "\n".join(f"- {t['en']} ({t['ko']})" for t in terms)
-            mandatory_section = f"[Mandatory Terms]\n{term_list}\n"
+            term_list = "\n".join(f"- {t['ko']} → {t['en']}" for t in terms)
+            term_section = f"[Term Guide]\n{term_list}\n"
         else:
-            mandatory_section = ""
+            term_section = ""
 
-        return EN_ONE_PASS_SYSTEM_PROMPT.format(
-            target_lang=target_lang,
-            mandatory_terms_section=mandatory_section,
+        return EN_SKIP_TRANSLATE_SYSTEM_PROMPT.format(
+            term_guide_section=term_section,
         )
 
     def _build_prompt(
@@ -284,6 +287,21 @@ class AnswerGenerator:
                     "[Note] This question asks about a list of requirements or conditions. "
                     "List ALL conditions from the context without omitting any. "
                     "Present each condition as a separate bullet point.\n"
+                )
+            elif question_focus == "method":
+                parts.append(
+                    "[Note] This question asks how to do something (procedure or method). "
+                    "List the steps in order. Do not omit any required documents or actions.\n"
+                )
+            elif question_focus == "location":
+                parts.append(
+                    "[Note] This question asks about a location or office. "
+                    "State the specific building, room, website, or contact point directly.\n"
+                )
+            elif question_focus == "eligibility":
+                parts.append(
+                    "[Note] This question asks about eligibility or qualification. "
+                    "State clearly who qualifies and who does not, including all conditions.\n"
                 )
 
             # Gap 1-d: OCU contamination warning
@@ -652,9 +670,12 @@ class AnswerGenerator:
         url = f"{self.base_url}/v1/chat/completions"
 
         if lang == "en":
+            # KO 컨텍스트에서 학사 용어를 추출하여 Term Guide로 주입
+            from app.pipeline.query_analyzer import EnTermMapper
+            context_terms = EnTermMapper.get().extract_from_ko_context(context)
             system = self._build_en_system_prompt(
-                target_lang="English",
                 matched_terms=matched_terms,
+                context_terms=context_terms,
                 intent=intent,
             )
         else:
@@ -698,8 +719,7 @@ class AnswerGenerator:
                 async with client.stream("POST", url, json=payload) as response:
                     response.raise_for_status()
 
-                    if lang == "en":
-                        # One-Pass State Machine
+                    if False:  # One-Pass 비활성화 — skip-translate로 전환
                         async for chunk in self._stream_one_pass(response):
                             yield chunk
                     else:

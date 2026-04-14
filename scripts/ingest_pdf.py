@@ -64,11 +64,24 @@ def make_chunks(
     - 텍스트는 문단/줄 단위로 분리 후 CHUNK_SIZE 내에서 합침
     - 테이블은 페이지당 1개 청크로 통째로 유지 (분리 금지)
     - 청크 간 CHUNK_OVERLAP 글자를 겹쳐 문맥 연속성 확보
+    - section_path 메타데이터: 디지털 PDF에서 폰트 크기 기반 섹션 추적
     """
     chunks: List[Chunk] = []
 
+    # 섹션 경로 매핑 (디지털 PDF에만 적용, 스캔 PDF는 skip)
+    page_to_section: dict = {}
+    if pages and pages[0].source_file:
+        try:
+            from app.pdf.section_tracker import build_page_to_section_map
+            page_to_section = build_page_to_section_map(str(pages[0].source_file))
+            if page_to_section and any(page_to_section.values()):
+                logger.info("섹션 경로 추출: %d개 페이지 매핑", len(page_to_section))
+        except Exception as e:
+            logger.debug("섹션 추출 실패 (skip): %s", e)
+
     for page in pages:
         source_file = str(page.source_file)
+        section_path = page_to_section.get(page.page_number, "") if page_to_section else ""
 
         # 1. 테이블 청크 (페이지당, 분리하지 않음)
         raw_tables = page.raw_tables or []
@@ -78,21 +91,49 @@ def make_chunks(
 
             raw = raw_tables[t_idx] if t_idx < len(raw_tables) else []
 
-            # ── 수업시간표 전용 처리 ──────────────────────────
+            # ── 수업시간표 전용 처리: (학과, 이수구분, 학년) 그룹별 청크 ───────
+            # 실패한 접근: row-level 분할 — "[수업시간표]" prefix 폴루션으로 course_info 회귀
+            # 현재 접근: 이수구분·학년별 그룹화 — prefix를 "[{학과} {이수구분} 강의]"로 구체화
             if doc_type == "timetable" and raw and timetable_parser.is_timetable_table(raw):
                 dept = timetable_parser.extract_department_from_context(
                     page.headers, page.text
                 )
-                chunk_text = timetable_parser.timetable_table_to_text(raw, dept)
+                group_chunks = timetable_parser.timetable_table_to_groups(raw, dept)
+                if group_chunks:
+                    for g_idx, (g_text, g_meta) in enumerate(group_chunks):
+                        if len(g_text.strip()) < MIN_CHUNK_LEN:
+                            continue
+                        chunk_id = _make_id(
+                            source_file, page.page_number,
+                            f"table_{t_idx}_grp_{g_idx}", g_text,
+                        )
+                        c_from, c_to = detect_cohort(g_text)
+                        if section_path:
+                            g_meta["section_path"] = section_path
+                        chunks.append(Chunk(
+                            chunk_id=chunk_id,
+                            text=g_text,
+                            page_number=page.page_number,
+                            source_file=source_file,
+                            student_id=student_id,
+                            doc_type=doc_type,
+                            cohort_from=c_from,
+                            cohort_to=c_to,
+                            semester=semester,
+                            metadata=g_meta,
+                        ))
+                    continue  # 다음 테이블로
+                # 파싱 실패 시 fallback
+                chunk_text = f"[수업시간표]\n{table_md}"
                 meta = timetable_parser.extract_timetable_meta(raw, dept)
-                if not chunk_text.strip():
-                    chunk_text = f"[수업시간표]\n{table_md}"  # 파싱 실패 시 fallback
             else:
                 chunk_text = f"[표]\n{table_md}"
                 meta = {"content_type": "table"}
 
             chunk_id = _make_id(source_file, page.page_number, f"table_{t_idx}", table_md)
             c_from, c_to = detect_cohort(table_md)
+            if section_path:
+                meta["section_path"] = section_path
             chunks.append(Chunk(
                 chunk_id=chunk_id,
                 text=chunk_text,
@@ -117,6 +158,9 @@ def make_chunks(
                     continue
                 chunk_id = _make_id(source_file, page.page_number, f"text_{i}", text)
                 c_from, c_to = detect_cohort(text)
+                text_meta = {"content_type": "text", "chunk_index": i}
+                if section_path:
+                    text_meta["section_path"] = section_path
                 chunks.append(Chunk(
                     chunk_id=chunk_id,
                     text=text,
@@ -127,7 +171,7 @@ def make_chunks(
                     cohort_from=c_from,
                     cohort_to=c_to,
                     semester=semester,
-                    metadata={"content_type": "text", "chunk_index": i},
+                    metadata=text_meta,
                 ))
 
     logger.info(f"청킹 완료: {len(pages)}페이지 → {len(chunks)}개 청크")

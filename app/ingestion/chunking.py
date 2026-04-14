@@ -35,7 +35,7 @@ def _detect_info_type(text: str) -> str:
     if re.search(r"신청|절차|방법|제출|서류", text):
         return "procedure"
     return "general"
-MIN_CHUNK_LEN = 50     # 이 이하 청크는 버림
+MIN_CHUNK_LEN = 150    # 이 이하 청크는 버림 (50→150: 깨진 표/고립된 조각 제거)
 
 # ── 학번 범위 감지 ─────────────────────────────────────────────
 _COHORT_MIN = 2016

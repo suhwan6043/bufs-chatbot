@@ -101,9 +101,24 @@ triggers:
     exclude: []
     weight: 1.0
 
-  - event_keywords: ["학위수여식"]
+  # 전기 학위수여식 (2월) — 후기보다 weight 높게 설정해 "전기" 명시 시 우선 선택
+  - event_keywords: ["2025학년도 전기 학위수여식"]
+    match_all: ["전기", "학위수여"]
+    match_any: ["학위수여식", "졸업식", "언제"]
+    exclude: ["후기"]
+    weight: 2.0
+
+  # 후기 학위수여식 (8월)
+  - event_keywords: ["2025학년도 후기 학위수여식"]
+    match_all: ["후기", "학위수여"]
+    match_any: ["학위수여식", "졸업식", "언제"]
+    exclude: ["전기"]
+    weight: 2.0
+
+  # 전기/후기 미지정 — 두 노드 모두 반환
+  - event_keywords: ["2025학년도 전기 학위수여식", "2025학년도 후기 학위수여식"]
     match_any: ["학위수여", "졸업식"]
-    exclude: []
+    exclude: ["전기", "후기"]
     weight: 1.0
 
   - event_keywords: ["학사학위취득유예"]

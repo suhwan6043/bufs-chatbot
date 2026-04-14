@@ -1020,6 +1020,7 @@ class AcademicGraph:
         student_type: str = "내국인",
         question: str = "",
         question_type: str = "",
+        lang: str = "ko",
     ) -> List[SearchResult]:
         """
         의도 + 엔티티에 따라 그래프를 탐색하고 SearchResult 리스트로 반환.
@@ -1030,6 +1031,7 @@ class AcademicGraph:
         """
         entities = entities or {}
         results = []
+        _lang = lang  # 후처리에 사용
 
         # 원칙 2: config 기반 커뮤니티 선택 (fallback: 빈 리스트 → 하드 분기만 동작)
         # question을 함께 넘겨서 keyword_boosts가 교차 토픽(예: MAJOR_CHANGE + "교직")을 보정하도록 한다.
@@ -1072,7 +1074,7 @@ class AcademicGraph:
                 results.extend(self._query_major_methods(student_id))
 
         elif intent == "EARLY_GRADUATION":
-            results.extend(self._query_early_graduation(student_id, question))
+            results.extend(self._query_early_graduation(student_id, question, entities=entities))
 
         elif intent == "ALTERNATIVE":
             results.extend(
@@ -1156,20 +1158,168 @@ class AcademicGraph:
             if max_notices > 0:
                 results.extend(notice_results[:max_notices])
 
+        # ── EN 후처리: direct_answer를 영어로 변환 ──
+        if _lang == "en":
+            results = self._localize_results_en(results)
+
         return results
+
+    def _localize_results_en(self, results: List[SearchResult]) -> List[SearchResult]:
+        """그래프 결과의 direct_answer를 영어로 변환합니다.
+
+        날짜/학점/숫자 기반 구조화 답변 변환 (정확도 높음).
+        복잡한 자연어 답변은 skip-translate가 처리하도록 남겨둠.
+        """
+        for r in results:
+            da = r.metadata.get("direct_answer")
+            if not da:
+                continue
+            # 변환 대상: 날짜 / 학점(졸업학점, 최대 학점) / 초과수강료
+            has_date = bool(re.search(r"\d{4}년\s*\d{1,2}월\s*\d{1,2}일|\d{1,2}월\s*\d{1,2}일", da))
+            has_credits = "학점" in da and bool(re.search(r"\d+학점", da))
+            has_fee = "수강료" in da or "사용료" in da
+            if has_date or has_credits or has_fee:
+                r.metadata["direct_answer"] = self._ko_answer_to_en(da)
+        return results
+
+    # direct_answer 번역용 학사 용어 매핑 (그래프 답변에 등장하는 핵심 용어)
+    _KO_EN_TERMS = {
+        "중간고사": "midterm exam", "기말고사": "final exam",
+        "개강": "semester start", "수업시작일": "first day of classes",
+        "종강": "last day of classes",
+        "하계방학": "summer break", "동계방학": "winter break",
+        "수강신청": "course registration", "수강정정": "course correction",
+        "수강신청 취소": "course withdrawal", "수강취소": "course withdrawal",
+        "장바구니": "course wishlist",
+        "학위수여식": "commencement ceremony", "학위수여": "commencement",
+        "조기졸업": "early graduation", "졸업": "graduation",
+        "휴학": "leave of absence", "복학": "reinstatement",
+        "성적평가 선택제": "pass/fail conversion",
+        "전부(과)": "department transfer", "전공변경": "major change",
+        "학사일정": "academic calendar",
+        "학기": "semester", "학년도": "academic year",
+        "1학기": "spring semester", "2학기": "fall semester",
+        "전기": "spring", "후기": "fall",
+        "신청기간": "application period", "신청방법": "Application method",
+        "편입생": "transfer students", "신청 불가": "not eligible",
+        "신청대상": "Eligible applicants",
+        "학점": "credits", "평점": "GPA", "평점평균": "cumulative GPA",
+        "이상": "or above", "이하": "or below",
+        "이수학점": "completed credits", "기준학점": "required credits",
+        "재학생": "enrolled students", "학번": "admission year",
+    }
+
+    def _ko_answer_to_en(self, text: str) -> str:
+        """KO 일정/날짜 direct_answer를 EN으로 변환.
+
+        일정 답변은 구조가 정형화되어 있어 패턴 기반 변환으로 충분.
+        """
+        result = text
+
+        # 1. 날짜: "2026년 5월 20일" → "May 20, 2026"
+        def _date_full(m):
+            y, mo, d = m.group(1), int(m.group(2)), int(m.group(3))
+            return f"{self._EN_MONTHS.get(mo, str(mo))} {d}, {y}"
+        result = re.sub(r"(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일", _date_full, result)
+
+        # 2. 월일만: "5월 26일" → "May 26"
+        def _date_noyr(m):
+            return f"{self._EN_MONTHS.get(int(m.group(1)), m.group(1))} {int(m.group(2))}"
+        result = re.sub(r"(\d{1,2})월\s*(\d{1,2})일", _date_noyr, result)
+
+        # 3. 시간: "16시" → "16:00"
+        result = re.sub(r"(\d{1,2})시", r"\1:00", result)
+
+        # 4. "X학년도" → "X"
+        result = re.sub(r"(\d{4})학년도\s*", r"\1 ", result)
+
+        # 5. 핵심 일정 용어 치환 (구조 패턴 전에 — "신청기간"을 통째로 치환)
+        _schedule_terms = {
+            # 일정 관련
+            "중간고사": "midterm exam", "기말고사": "final exam",
+            "수강신청 취소": "course withdrawal",
+            "수강신청": "course registration",
+            "조기졸업": "early graduation",
+            "학위수여식": "commencement ceremony",
+            "하계방학": "summer break", "동계방학": "winter break",
+            "1학기": "spring semester", "2학기": "fall semester",
+            "전기": "spring", "후기": "fall",
+            "신청기간": "application period",
+            "신청방법": "Application method",
+            # 졸업 관련 (en_grad_002 대응)
+            "학번 학생의 총 졸업학점은": "cohort student's total graduation credits are",
+            "학번 학생의 총 졸업학점": "cohort student's total graduation credits",
+            "학번": "cohort",
+            # OCU 관련 (q035, q040 대응)
+            "정규학기에 수강할 수 있는 최대 학점은": "the maximum credits per regular semester is",
+            "정규학기": "regular semester",
+            "초과 수강료는": "the excess tuition fee is",
+            "초과수강료는": "the excess tuition fee is",
+            "초과 수강료": "excess tuition fee",
+            "초과수강료": "excess tuition fee",
+            "시스템사용료": "system usage fee",
+            # 학점 단위
+            "학점입니다": "credits.",
+            "학점": "credits",
+            "과목": "course(s)",
+            "원입니다": "KRW.",
+            "원": "KRW",
+        }
+        for ko, en in sorted(_schedule_terms.items(), key=lambda x: -len(x[0])):
+            result = result.replace(ko, en)
+
+        # 5.5. 영어 단어 뒤 한국어 조사 제거: "period은" → "period"
+        result = re.sub(r"([a-zA-Z])은\b", r"\1", result)
+        result = re.sub(r"([a-zA-Z])는\b", r"\1", result)
+        result = re.sub(r"([a-zA-Z])이\b", r"\1", result)
+        result = re.sub(r"([a-zA-Z])를\b", r"\1", result)
+        result = re.sub(r"([a-zA-Z])을\b", r"\1", result)
+
+        # 6. 구조 패턴 (용어 치환 후)
+        # "X 기간은 A부터 B까지입니다" (KO 잔여) 또는 "X period A부터 B까지" (EN 치환 후)
+        result = re.sub(
+            r"(.+?)\s*(?:기간은|period)\s+(.+?)부터\s+(.+?)까지입니다\.?",
+            r"The \1 period is from \2 to \3.", result)
+        result = re.sub(
+            r"(.+?)[은는]\s+(.+?)입니다\.?",
+            r"\1 is \2.", result)
+        # "X까지 가능합니다" → "is available until X"
+        result = re.sub(
+            r"(.+?)\s+(.+?)\s+is available",
+            r"\1 is available until \2", result)
+        result = result.replace("부터 ", "from ").replace("까지", "")
+        result = result.replace("가능합니다", "is available")
+        result = result.replace("입니다.", ".").replace("입니다", "")
+
+        # 7. 정리 + 숫자·영어 경계 공백 보정
+        # "2022cohort" → "2022 cohort", "130credits" → "130 credits"
+        result = re.sub(r"(\d)([a-zA-Z])", r"\1 \2", result)
+        result = re.sub(r"([a-zA-Z])(\d)", r"\1 \2", result)
+        result = re.sub(r"\.+", ".", result)          # ".." → "."
+        result = re.sub(r"\s{2,}", " ", result).strip()
+        return result
 
     @staticmethod
     def _normalize_text(text: str) -> str:
         return re.sub(r"[\s\-\.,:()\[\]/~·]", "", text or "").lower()
 
+    _EN_MONTHS = {
+        1: "January", 2: "February", 3: "March", 4: "April",
+        5: "May", 6: "June", 7: "July", 8: "August",
+        9: "September", 10: "October", 11: "November", 12: "December",
+    }
+
     @staticmethod
-    def _format_date(date_str: str) -> str:
+    def _format_date(date_str: str, lang: str = "ko") -> str:
         if not date_str:
             return ""
         match = re.match(r"(\d{4})-(\d{2})-(\d{2})", date_str)
         if not match:
             return date_str
         year, month, day = match.groups()
+        if lang == "en":
+            month_name = AcademicGraph._EN_MONTHS.get(int(month), month)
+            return f"{month_name} {int(day)}, {year}"
         return f"{int(year)}년 {int(month)}월 {int(day)}일"
 
     @staticmethod
@@ -1177,13 +1327,19 @@ class AcademicGraph:
         """Markdown 취소선(~~) 방지: 반각 ~ → 전각 〜"""
         return text.replace("~", "\u301C") if text else text
 
-    def _format_period(self, start: str, end: str) -> str:
+    def _format_period(self, start: str, end: str, lang: str = "ko") -> str:
         if not start:
             return ""
         if not end or start == end:
-            return self._format_date(start)
+            return self._format_date(start, lang)
         if len(end) >= 10 and end[4] == "-" and end[7] == "-":
+            if lang == "en":
+                s = self._format_date(start, "en")
+                month_name = self._EN_MONTHS.get(int(end[5:7]), end[5:7])
+                return f"{s} to {month_name} {int(end[8:10])}"
             return f"{self._format_date(start)}부터 {int(end[5:7])}월 {int(end[8:10])}일까지"
+        if lang == "en":
+            return f"{self._format_date(start, 'en')} to {end}"
         return f"{self._format_date(start)}부터 {end}까지"
 
     def _make_graph_result(
@@ -1447,6 +1603,36 @@ class AcademicGraph:
             dept_results = self._query_dept_grad_exam(question, dept_kw)
             if dept_results:
                 results = dept_results + results   # 학과 졸업시험을 앞에 배치
+                return results
+
+        # 총 졸업학점 질문 → direct_answer (en_grad_002, 학번/학생유형별 혼동 방지)
+        q_lower_grad = (question or "").lower()
+        _asks_total_credits = (
+            ("졸업학점" in question and any(kw in question for kw in ("몇", "얼마", "총", "어느")))
+            or any(kw in q_lower_grad for kw in (
+                "total credits", "how many credits", "credits required to graduate",
+                "graduation credits", "minimum credits"
+            ))
+        )
+        if _asks_total_credits and not department:
+            data_main = self.get_graduation_req(student_id, student_type)
+            if data_main and data_main.get("졸업학점"):
+                total = data_main["졸업학점"]
+                stype_label = student_type if student_type != "내국인" else ""
+                answer = (
+                    f"{student_id}학번 {stype_label} 학생의 총 졸업학점은 {total}학점입니다."
+                    if stype_label else
+                    f"{student_id}학번 학생의 총 졸업학점은 {total}학점입니다."
+                )
+                context = (
+                    f"[{student_id}학번 {student_type} 졸업요건]\n"
+                    f"- 총 졸업학점: {total}학점\n"
+                    f"- 교양이수학점: {data_main.get('교양이수학점', '-')}\n"
+                    f"- 주전공이수학점: {data_main.get('주전공이수학점', '-')}"
+                )
+                results.append(
+                    self._make_direct_result(context, answer, score=1.35, node_data=data_main)
+                )
                 return results
 
         # 요청 학생유형 우선, 없으면 내국인 (중복 방지)
@@ -1787,8 +1973,14 @@ class AcademicGraph:
                         context = f"[OCU 납부기간]\n- 납부기간: {start}~{end}"
                         return [self._make_direct_result(context, answer, score=1.3, node_data=ocu_data)]
 
-                # 초과학점 예외 전용
-                if "초과" in question or ("예외" in question and "학점" in question):
+                # 초과학점 예외 전용 — "초과수강료"·"시스템사용료" 묻는 질문은 제외
+                # (이들은 벡터 검색으로 p.20 "초과수강료 120,000원" 청크 우선 필요)
+                _asks_price = any(kw in question for kw in ("수강료", "사용료", "얼마", "금액", "원", "120"))
+                _is_excess_allow = (
+                    not _asks_price
+                    and ("초과" in question or ("예외" in question and "학점" in question))
+                )
+                if _is_excess_allow:
                     ocu_excess = rule.get("OCU초과학점", "")
                     answer = "OCU 수강 신청자는 최대 신청학점에서 3학점(1과목) 초과 신청이 가능합니다."
                     context = (
@@ -1797,6 +1989,31 @@ class AcademicGraph:
                         f"- OCU 정규학기 최대: {ocu_data.get('정규학기_최대학점', '')}학점({ocu_data.get('정규학기_최대과목', '')}과목)"
                     )
                     return [self._make_direct_result(context, answer, score=1.3, node_data=ocu_data)]
+
+                # 정규학기 최대 학점 전용 (q035 대응) — "최대 학점"·"몇 학점" 질문
+                # 컨텍스트의 "21(초과)" 표 수치 혼동 방지: 직접 "6학점" direct_answer
+                q_lower_inner = question.lower()
+                _asks_max = any(
+                    kw in question for kw in ("최대", "몇 학점", "몇학점")
+                ) or any(
+                    kw in q_lower_inner for kw in ("maximum", "limit", "how many credits")
+                )
+                _is_regular = "정규학기" in question or "정규" in question or "regular" in q_lower_inner
+                if _asks_max and (_is_regular or not _asks_price):
+                    max_credits = ocu_data.get("정규학기_최대학점", "")
+                    max_courses = ocu_data.get("정규학기_최대과목", "")
+                    if max_credits:
+                        answer = (
+                            f"OCU 정규학기에 수강할 수 있는 최대 학점은 "
+                            f"{max_credits}학점({max_courses}과목)입니다. "
+                            f"단, 졸업 시까지 최대 8과목(24학점) 이내로 제한됩니다."
+                        )
+                        context = (
+                            f"[OCU 정규학기 최대 수강학점]\n"
+                            f"- 정규학기: {max_credits}학점({max_courses}과목) 이내\n"
+                            f"- 졸업 시까지 누적: 8과목(24학점) 이내"
+                        )
+                        return [self._make_direct_result(context, answer, score=1.3, node_data=ocu_data)]
 
                 # 출석요건 전용
                 if "출석" in question:
@@ -1868,6 +2085,33 @@ class AcademicGraph:
         self, question: str = "", entities: dict = None
     ) -> List[SearchResult]:
         entities = entities or {}
+        q_lower = (question or "").lower()
+
+        # OCU 수강신청 기간 = 본교 1차 수강신청 기간 (학년별 첫날~수강정정 직전)
+        # 본교 수강신청이 학년별로 분산되어 있어 최저~최고 범위로 계산.
+        # 계절학기/전학년 추가신청(3월)/OCU 별도 이벤트 제외.
+        if "ocu" in q_lower and "수강신청" in (question or ""):
+            schedules = self.get_schedules()
+            # 정규학기 1차 수강신청만 포함 (학년별 이벤트: 수강신청_1학년, 2학년, 3,4학년)
+            grade_events = [
+                s for s in schedules
+                if "수강신청_" in s.get("이벤트명", "")  # 학년별
+                and "학년" in s.get("이벤트명", "")
+                and "전학년" not in s.get("이벤트명", "")  # 전학년(정정 후 추가) 제외
+                and "계절" not in s.get("이벤트명", "")
+            ]
+            if grade_events:
+                starts = sorted([s.get("시작일", "") for s in grade_events if s.get("시작일")])
+                ends = sorted([s.get("종료일", "") for s in grade_events if s.get("종료일")])
+                if starts and ends:
+                    period = self._format_period(starts[0], ends[-1])
+                    answer = f"OCU 수강신청 기간은 본교 수강신청 기간과 동일한 {period}입니다."
+                    context = (
+                        f"[OCU 수강신청 기간]\n"
+                        f"- OCU 수강신청은 본교 수강신청 사이트에서 진행\n"
+                        f"- 기간: {period} (본교 학년별 1차 수강신청 기간과 동일)"
+                    )
+                    return [self._make_direct_result(context, answer, score=1.3, node_data=grade_events[0])]
 
         # 수강신청 취소 질문 → 수강취소마감일시 직접 반환
         if "취소" in (question or "") and "수강" in (question or ""):
@@ -2179,18 +2423,25 @@ class AcademicGraph:
         ]
 
     def _query_early_graduation(
-        self, student_id: str, question: str = ""
+        self, student_id: str, question: str = "", entities: dict = None
     ) -> List[SearchResult]:
         """
         조기졸업 관련 그래프 탐색.
         - 신청기간 질문 → 학사일정 우선
         - 학번 있으면 해당 학번 기준학점 우선, 없으면 전 그룹 반환
+
+        question_focus="period" 또는 KO/EN 기간 키워드로 신청기간 감지.
+        EN 쿼리는 analyzer가 ko_query로 변환해 전달하므로 본문에 "기간"이 없을 수 있음 →
+        entities["question_focus"] 기반 감지가 더 안정적.
         """
+        entities = entities or {}
         results: List[SearchResult] = []
         question_norm = self._normalize_text(question)
-        is_period_q = any(
-            kw in question_norm
-            for kw in ("기간", "언제", "일정", "마감", "신청")
+        q_lower = (question or "").lower()
+        is_period_q = (
+            entities.get("question_focus") == "period"
+            or any(kw in question_norm for kw in ("기간", "언제", "일정", "마감", "신청"))
+            or any(kw in q_lower for kw in ("period", "when", "schedule", "apply", "application"))
         )
 
         # ① 신청기간 (학사일정 노드 활용)
@@ -2202,6 +2453,30 @@ class AcademicGraph:
                     if "조기졸업" in data.get("이벤트명", ""):
                         matches.append({"id": nid, **data})
             if matches:
+                # 학기 필터링: 질문/entities에서 대상 학기 감지.
+                # 2025-2학기와 2026-1학기 등 여러 조기졸업 일정이 있을 때 올바른 학기 선택.
+                target_semester = None
+                import re
+                year_m = re.search(r"(20\d{2})학년도\s*(1|2)학기", question or "")
+                if year_m:
+                    target_semester = f"{year_m.group(1)}-{year_m.group(2)}"
+                elif entities.get("semester_half") == "전기":
+                    target_semester = "-1"
+                elif entities.get("semester_half") == "후기":
+                    target_semester = "-2"
+                elif "1학기" in (question or "") or "spring" in q_lower:
+                    target_semester = "-1"
+                elif "2학기" in (question or "") or "fall" in q_lower:
+                    target_semester = "-2"
+
+                if target_semester:
+                    filtered = [
+                        m for m in matches
+                        if target_semester in m.get("학기", "") or target_semester[-2:] in m.get("학기", "")
+                    ]
+                    if filtered:
+                        matches = filtered
+
                 first = matches[0]
                 period = self._format_period(
                     first.get("시작일", ""), first.get("종료일", "")
@@ -2695,8 +2970,10 @@ class AcademicGraph:
         for key in (
             "졸업학점", "교양이수학점", "글로벌소통역량학점",
             "취업커뮤니티요건", "NOMAD비교과지수",
-            "졸업시험여부", "졸업인증", "복수전공이수학점",
-            "융합전공이수학점", "마이크로전공이수학점", "부전공이수학점",
+            "졸업시험여부", "졸업인증",
+            "주전공이수학점",
+            "복수전공이수학점", "융합전공이수학점",
+            "마이크로전공이수학점", "부전공이수학점",
         ):
             val = data.get(key)
             if val is None:
@@ -2835,8 +3112,7 @@ class AcademicGraph:
             lines.append(f"- 글로벌미래융합학부: {data['글로벌미래융합학부']}")
         return "\n".join(lines)
 
-    @staticmethod
-    def _fmt_early_graduation_criteria(data: dict) -> str:
+    def _fmt_early_graduation_criteria(self, data: dict) -> str:
         """조기졸업 졸업기준 노드 포맷팅 (학번별)."""
         lines = [f"조기졸업 졸업기준 ({data.get('적용대상', '')})"]
         if data.get("기준학점"):

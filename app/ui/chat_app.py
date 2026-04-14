@@ -1469,7 +1469,14 @@ def _render_source_panel(results: list) -> None:
             if kind == "pdf":
                 page_img = _render_pdf_page(r.source, r.page_number, r.text)
                 fname = Path(r.source).name
-                st.caption(f"📑 **{fname}** — {t('source.page', n=r.page_number)}")
+                section_path = r.metadata.get("section_path", "")
+                if section_path:
+                    st.caption(
+                        f"📑 **{fname}** — {t('source.page', n=r.page_number)}  \n"
+                        f"&nbsp;&nbsp;&nbsp;↳ {section_path}"
+                    )
+                else:
+                    st.caption(f"📑 **{fname}** — {t('source.page', n=r.page_number)}")
                 if page_img:
                     st.image(page_img, use_container_width=True)
                 else:
