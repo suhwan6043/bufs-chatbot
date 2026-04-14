@@ -2005,6 +2005,33 @@ class AcademicGraph:
         self, question: str = "", entities: dict = None
     ) -> List[SearchResult]:
         entities = entities or {}
+        q_lower = (question or "").lower()
+
+        # OCU 수강신청 기간 = 본교 1차 수강신청 기간 (학년별 첫날~수강정정 직전)
+        # 본교 수강신청이 학년별로 분산되어 있어 최저~최고 범위로 계산.
+        # 계절학기/전학년 추가신청(3월)/OCU 별도 이벤트 제외.
+        if "ocu" in q_lower and "수강신청" in (question or ""):
+            schedules = self.get_schedules()
+            # 정규학기 1차 수강신청만 포함 (학년별 이벤트: 수강신청_1학년, 2학년, 3,4학년)
+            grade_events = [
+                s for s in schedules
+                if "수강신청_" in s.get("이벤트명", "")  # 학년별
+                and "학년" in s.get("이벤트명", "")
+                and "전학년" not in s.get("이벤트명", "")  # 전학년(정정 후 추가) 제외
+                and "계절" not in s.get("이벤트명", "")
+            ]
+            if grade_events:
+                starts = sorted([s.get("시작일", "") for s in grade_events if s.get("시작일")])
+                ends = sorted([s.get("종료일", "") for s in grade_events if s.get("종료일")])
+                if starts and ends:
+                    period = self._format_period(starts[0], ends[-1])
+                    answer = f"OCU 수강신청 기간은 본교 수강신청 기간과 동일한 {period}입니다."
+                    context = (
+                        f"[OCU 수강신청 기간]\n"
+                        f"- OCU 수강신청은 본교 수강신청 사이트에서 진행\n"
+                        f"- 기간: {period} (본교 학년별 1차 수강신청 기간과 동일)"
+                    )
+                    return [self._make_direct_result(context, answer, score=1.3, node_data=grade_events[0])]
 
         # 수강신청 취소 질문 → 수강취소마감일시 직접 반환
         if "취소" in (question or "") and "수강" in (question or ""):
