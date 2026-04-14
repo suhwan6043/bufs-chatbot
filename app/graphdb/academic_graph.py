@@ -1074,7 +1074,7 @@ class AcademicGraph:
                 results.extend(self._query_major_methods(student_id))
 
         elif intent == "EARLY_GRADUATION":
-            results.extend(self._query_early_graduation(student_id, question))
+            results.extend(self._query_early_graduation(student_id, question, entities=entities))
 
         elif intent == "ALTERNATIVE":
             results.extend(
@@ -2343,18 +2343,25 @@ class AcademicGraph:
         ]
 
     def _query_early_graduation(
-        self, student_id: str, question: str = ""
+        self, student_id: str, question: str = "", entities: dict = None
     ) -> List[SearchResult]:
         """
         조기졸업 관련 그래프 탐색.
         - 신청기간 질문 → 학사일정 우선
         - 학번 있으면 해당 학번 기준학점 우선, 없으면 전 그룹 반환
+
+        question_focus="period" 또는 KO/EN 기간 키워드로 신청기간 감지.
+        EN 쿼리는 analyzer가 ko_query로 변환해 전달하므로 본문에 "기간"이 없을 수 있음 →
+        entities["question_focus"] 기반 감지가 더 안정적.
         """
+        entities = entities or {}
         results: List[SearchResult] = []
         question_norm = self._normalize_text(question)
-        is_period_q = any(
-            kw in question_norm
-            for kw in ("기간", "언제", "일정", "마감", "신청")
+        q_lower = (question or "").lower()
+        is_period_q = (
+            entities.get("question_focus") == "period"
+            or any(kw in question_norm for kw in ("기간", "언제", "일정", "마감", "신청"))
+            or any(kw in q_lower for kw in ("period", "when", "schedule", "apply", "application"))
         )
 
         # ① 신청기간 (학사일정 노드 활용)
@@ -2366,6 +2373,30 @@ class AcademicGraph:
                     if "조기졸업" in data.get("이벤트명", ""):
                         matches.append({"id": nid, **data})
             if matches:
+                # 학기 필터링: 질문/entities에서 대상 학기 감지.
+                # 2025-2학기와 2026-1학기 등 여러 조기졸업 일정이 있을 때 올바른 학기 선택.
+                target_semester = None
+                import re
+                year_m = re.search(r"(20\d{2})학년도\s*(1|2)학기", question or "")
+                if year_m:
+                    target_semester = f"{year_m.group(1)}-{year_m.group(2)}"
+                elif entities.get("semester_half") == "전기":
+                    target_semester = "-1"
+                elif entities.get("semester_half") == "후기":
+                    target_semester = "-2"
+                elif "1학기" in (question or "") or "spring" in q_lower:
+                    target_semester = "-1"
+                elif "2학기" in (question or "") or "fall" in q_lower:
+                    target_semester = "-2"
+
+                if target_semester:
+                    filtered = [
+                        m for m in matches
+                        if target_semester in m.get("학기", "") or target_semester[-2:] in m.get("학기", "")
+                    ]
+                    if filtered:
+                        matches = filtered
+
                 first = matches[0]
                 period = self._format_period(
                     first.get("시작일", ""), first.get("종료일", "")
