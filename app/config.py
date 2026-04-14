@@ -31,7 +31,7 @@ def _env_llm(primary: str, fallback: str, default: str) -> str:
 @dataclass
 class LLMConfig:
     base_url: str = _env_llm("LLM_BASE_URL", "OLLAMA_BASE_URL", "http://localhost:11434")
-    model: str = _env_llm("LLM_MODEL", "OLLAMA_MODEL", "exaone3.5:7.8b")
+    model: str = _env_llm("LLM_MODEL", "OLLAMA_MODEL", "gemma4:26b")
     max_tokens: int = int(_env_llm("LLM_MAX_TOKENS", "OLLAMA_NUM_CTX", "2048"))
     temperature: float = float(_env_llm("LLM_TEMPERATURE", "OLLAMA_TEMPERATURE", "0.1"))
     top_p: float = float(_env_llm("LLM_TOP_P", "OLLAMA_TOP_P", "0.9"))

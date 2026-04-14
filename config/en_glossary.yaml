@@ -231,13 +231,16 @@ terms:
 
   - ko: 성적평가 선택제도
     en: Pass/Fail Conversion System
-    aliases_ko: [성적선택제, P/NP 선택]
-    aliases_en: [pass/fail option, grade conversion system, P/NP selection]
+    aliases_ko: [성적선택제, 성적평가 선택제, P/NP 선택]
+    aliases_en: [pass/fail option, grade conversion system, P/NP selection,
+                 pass/fail conversion, pass/fail system, pass/fail grade,
+                 pass/fail, P/NP, pass or fail]
 
   - ko: 부분적 성적포기 제도
     en: Partial Grade Waiver System
-    aliases_ko: [성적포기, 부분적 성적 포기]
-    aliases_en: [grade waiver, partial grade removal, grade forgiveness]
+    aliases_ko: [성적포기, 부분적 성적 포기, 부분적 성적포기]
+    aliases_en: [grade waiver, partial grade removal, grade forgiveness,
+                 partial grade waiver, partial waiver]
 
   - ko: 학사경고
     en: Academic Probation

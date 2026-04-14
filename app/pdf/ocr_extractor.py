@@ -34,10 +34,8 @@ class SuryaOCRExtractor:
         os.environ["RECOGNITION_BATCH_SIZE"] = str(self.batch_size)
 
         try:
+            # surya-ocr 0.4.x API
             from surya.ocr import run_ocr
-            # 2026-04-12 Phase 3: surya-ocr 0.4.15 API 경로로 갱신.
-            # 구버전 (0.3 이하)에서는 `surya.model.detection.segformer`였으나
-            # 0.4.x부터 `surya.model.detection.model`로 이동. 모델 클래스명은 동일.
             from surya.model.detection.model import (
                 load_model as load_det_model,
                 load_processor as load_det_processor,
@@ -51,11 +49,11 @@ class SuryaOCRExtractor:
         except ImportError:
             logger.error(
                 "Surya OCR이 설치되지 않았습니다. "
-                "'pip install surya-ocr'로 설치하세요."
+                "'pip install surya-ocr==0.4.15'로 설치하세요."
             )
             raise
 
-        logger.info(f"Surya OCR 모델 로드 중... (VRAM ~2.5GB 사용)")
+        logger.info("Surya OCR 모델 로드 중... (VRAM ~2.5GB 사용)")
         det_model = load_det_model()
         det_processor = load_det_processor()
         rec_model = load_rec_model()

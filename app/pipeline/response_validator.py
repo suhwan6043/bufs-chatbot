@@ -28,6 +28,7 @@ class ResponseValidator:
     #   중간 단어가 끼어든 변형 매칭
     # - "문의하시기 바랍니다" — 거절 응답의 꼬리말 표준 패턴
     NO_CONTEXT_PHRASES = [
+        # KO 거절 패턴
         "확인되지 않는 정보",
         "제공된 컨텍스트에 없",
         "관련 정보를 찾을 수 없",
@@ -35,6 +36,13 @@ class ResponseValidator:
         "찾을 수 없습니다",           # 일반 거절 표현
         "찾지 못했습니다",             # "정확히 확인하지 못했습니다"
         "문의하시기 바랍니다",         # refusal 꼬리말
+        # EN 거절 패턴
+        "couldn't find relevant",
+        "could not find relevant",
+        "no relevant information",
+        "not available in the provided",
+        "please contact the academic affairs",
+        "+82-51-509-5182",
     ]
 
     def validate(

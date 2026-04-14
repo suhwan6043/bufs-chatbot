@@ -65,6 +65,7 @@ class EnTermMapper:
 
     def __init__(self) -> None:
         self._processor = KeywordProcessor(case_sensitive=False)
+        self._ko_processor = KeywordProcessor(case_sensitive=False)
         self._ko_to_en: dict[str, str] = {}  # ko → canonical en
         self._load_terms()
 
@@ -87,8 +88,14 @@ class EnTermMapper:
             for alias in term.get("aliases_en", []):
                 if alias:
                     self._processor.add_keyword(alias, ko)
+            # KO 용어 + aliases_ko → KO 컨텍스트 스캔용
+            self._ko_processor.add_keyword(ko, ko)
+            for alias in term.get("aliases_ko", []):
+                if alias:
+                    self._ko_processor.add_keyword(alias, ko)
 
-        logger.debug("EnTermMapper: %d keywords loaded", len(self._processor))
+        logger.debug("EnTermMapper: %d EN + %d KO keywords loaded",
+                     len(self._processor), len(self._ko_processor))
 
     def extract(self, text: str) -> list[dict]:
         """
@@ -104,6 +111,23 @@ class EnTermMapper:
             if ko not in seen:
                 seen.add(ko)
                 result.append({"ko": ko, "en": self._ko_to_en.get(ko, ko)})
+        return result
+
+    def extract_from_ko_context(self, ko_text: str, max_terms: int = 30) -> list[dict]:
+        """KO 컨텍스트에서 학사 용어를 추출하고 EN 매핑을 반환합니다.
+
+        Returns:
+            [{"ko": "수강신청", "en": "Course Registration"}, ...]
+        """
+        ko_matches: list[str] = self._ko_processor.extract_keywords(ko_text)
+        seen: set[str] = set()
+        result: list[dict] = []
+        for ko in ko_matches:
+            if ko not in seen:
+                seen.add(ko)
+                result.append({"ko": ko, "en": self._ko_to_en.get(ko, ko)})
+                if len(result) >= max_terms:
+                    break
         return result
 
 
@@ -204,6 +228,10 @@ class QueryAnalyzer:
         "pass non-pass", "non-pass", "np grade",
         "grade option", "grade selection", "grade waiver",
         "grade mode", "satisfactory", "s/u grade",
+        "grade conversion", "pass fail conversion",
+        "retake", "retaken", "retaking",
+        "grade cancel", "grade cancellation",
+        "partial grade", "partial waiver",
     )
 
     # ── Medium #4: 수강취소 마감 ────────────────────────────────────────────
@@ -618,8 +646,11 @@ class QueryAnalyzer:
             Intent.TRANSCRIPT,  # Low #12: TRANSCRIPT 추가
             Intent.GENERAL,
         )
-        # High #3: 성적선택제(P/NP) → 그래프 스키마에 없음, 그래프 OFF
+        # High #3: 성적선택제(P/NP) / 성적포기 → REGISTRATION + 그래프 OFF
+        # EN "pass/fail conversion" → 글로서리에서 "성적평가 선택제도" 추출 →
+        # "성적평가"가 GRADUATION_REQ에 먼저 매칭되는 오분류 수정
         if any(kw in q_lower for kw in self._EN_GRADE_SEL_KW):
+            intent = Intent.REGISTRATION
             requires_graph = False
 
         # EN은 항상 vector 검색 (BGE-M3 크로스링구얼)

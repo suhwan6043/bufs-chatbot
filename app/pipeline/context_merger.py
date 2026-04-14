@@ -33,7 +33,9 @@ _INTENT_WEIGHTS = {
     # GRADUATION_REQ: 그래프에 `2022학번 내국인 졸업요건`(졸업학점 130) 같은
     # 학번별 구조화 노드가 있으므로 그래프를 다시 동등 이상으로 둠.
     # q042 회귀 교훈: 벡터 우선으로 바꿨더니 그래프의 정답 노드가 밀려났음.
-    Intent.GRADUATION_REQ:   (1.4, 1.3),   # 그래프 우선, 벡터 보조
+    # gw=2.0으로 상향: tier1 벡터(vw=1.3×1.3 boost=0.0277)보다 높아야
+    # 그래프 노드(0.0328)가 컨텍스트 선두에 들어감 (budget 소진 전 보장)
+    Intent.GRADUATION_REQ:   (2.0, 1.3),   # 그래프 확실 우선, 벡터 보조
     Intent.REGISTRATION:     (1.0, 1.5),   # 그래프 편향 완화 유지
     # EARLY_GRADUATION도 그래프에 학번별 졸업요건 노드 사용 — 그래프 우선
     Intent.EARLY_GRADUATION: (1.4, 1.3),

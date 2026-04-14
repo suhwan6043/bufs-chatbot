@@ -338,5 +338,11 @@ class UploadValidator:
 
     @classmethod
     def sanitize_filename(cls, filename: str) -> str:
-        """파일명 정규화. 경로 구성요소 제거."""
-        return os.path.basename(filename)
+        """파일명 정규화. 경로 구성요소 제거 (Windows · macOS 모두 호환).
+
+        os.path.basename()은 실행 OS 기준만 처리하므로,
+        macOS에서 Windows 경로('C:\\Users\\test.xls')를 넘기면
+        구분자를 인식하지 못함. '/' · '\\' 모두 분리해 마지막 요소만 반환.
+        """
+        parts = re.split(r"[/\\]", filename)
+        return parts[-1] if parts else filename

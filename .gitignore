@@ -39,6 +39,8 @@ unpacked_doc/
 data/eval/eval_results_*.json
 data/eval/BUFS_RAG_Evaluation_Report.docx
 eval_results_*.json
+evaluation/results/
+reports/ragas_eval_*.json
 
 # Environment variables
 .env

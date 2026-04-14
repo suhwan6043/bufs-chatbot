@@ -11,7 +11,8 @@ import json
 import logging
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 from scripts.ingest_pdf import ingest_pdf
 from scripts.pdf_to_graph import build_graph_from_pdf
