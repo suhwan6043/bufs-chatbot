@@ -775,18 +775,26 @@ class ContextMerger:
 
     @staticmethod
     def _format_result(result: SearchResult, text: str = None) -> str:
-        """검색 결과를 포맷팅합니다."""
+        """검색 결과를 포맷팅합니다.
+
+        섹션 경로가 있으면 "p.47 | 섹션경로" 형식으로 병기 —
+        LLM이 답변에 출처를 인용할 수 있도록.
+        """
         text = text or result.text
         source_info = ""
 
         doc_type = result.metadata.get("doc_type", "")
         source_url = result.metadata.get("source_url", "")
+        section_path = result.metadata.get("section_path", "")
 
         if doc_type in ("notice", "notice_attachment") and source_url:
             # 공지사항: URL을 출처로 표시하여 LLM이 참조 가능하게 함
             source_info = f" [{source_url}]"
         elif result.page_number:
-            source_info = f" [p.{result.page_number}]"
+            parts = [f"p.{result.page_number}"]
+            if section_path:
+                parts.append(section_path)
+            source_info = f" [{' | '.join(parts)}]"
         elif result.source:
             source_info = f" [{result.source}]"
 
