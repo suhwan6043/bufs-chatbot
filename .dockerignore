@@ -1,0 +1,37 @@
+# Python
+__pycache__
+*.pyc
+.venv/
+*.egg-info
+
+# Node
+frontend/node_modules/
+frontend/.next/
+
+# Data backups (대용량)
+data/chromadb.bak-*/
+data/chromadb.corrupted-*/
+data/chromadb_backup/
+data/chromadb.pre-*/
+
+# IDE / OS
+.git
+.github
+.vscode
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs (런타임 생성)
+logs/
+
+# Test / Debug 임시 파일
+debug_*.py
+test_*.py
+full_*.py
+run_*.py
+diagnostic_*.py
+
+# Reports (빌드 불필요)
+reports/
+docs/

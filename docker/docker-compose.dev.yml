@@ -1,0 +1,26 @@
+# CAMCHAT 개발용 Docker Compose (핫 리로드)
+# 실행: docker compose -f docker/docker-compose.dev.yml up
+
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    ports:
+      - "8000:8000"
+    env_file: ../.env
+    environment:
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - CORS_ORIGINS=http://localhost:3000,http://localhost
+      - CHROMA_PERSIST_DIR=/app/data/chromadb_new
+    volumes:
+      - ../app:/app/app
+      - ../backend:/app/backend
+      - ../data:/app/data
+      - ../config:/app/config
+    command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--workers", "1"]
+    restart: unless-stopped
+
+  # 프론트엔드는 로컬 npm run dev 사용 권장 (핫 리로드 빠름)
+  # frontend:
+  #   ...

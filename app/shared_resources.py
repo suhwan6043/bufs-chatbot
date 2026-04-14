@@ -30,10 +30,12 @@ _embedder_lock = threading.Lock()
 _chroma_lock = threading.Lock()
 _translator_lock = threading.Lock()
 _bm25_lock = threading.Lock()
+_reranker_lock = threading.Lock()
 _embedder = None
 _chroma_store = None
 _translator = None
 _bm25_index = None
+_reranker_model = None
 
 
 def get_embedder() -> "Embedder":
@@ -91,6 +93,27 @@ def get_bm25_index():
                 _bm25_index.build()
                 logger.info("[shared] BM25Index 초기화 완료 (%d 문서)", _bm25_index.doc_count)
     return _bm25_index
+
+
+def get_reranker_model():
+    """프로세스 전역 CrossEncoder(Reranker) 싱글톤을 반환합니다.
+
+    시작 시 동기 로드하여 첫 요청 시 lazy-load segfault를 방지합니다.
+    segfault 발생 시 프로세스가 종료되며 run_backend.sh가 자동 재시작합니다.
+    """
+    global _reranker_model
+    if _reranker_model is None:
+        with _reranker_lock:
+            if _reranker_model is None:
+                from app.config import settings
+                logger.info("[shared] Reranker CrossEncoder 로드 중: %s", settings.reranker.model_name)
+                from sentence_transformers import CrossEncoder
+                _reranker_model = CrossEncoder(
+                    settings.reranker.model_name,
+                    device=settings.reranker.device,
+                )
+                logger.info("[shared] Reranker CrossEncoder 로드 완료")
+    return _reranker_model
 
 
 def get_chroma_store() -> "ChromaStore":

@@ -11,6 +11,7 @@ KO 쿼리: 기존 단일 생성 흐름 유지
 
 import json
 import logging
+import re
 from typing import AsyncGenerator, Optional
 
 import httpx
@@ -383,6 +384,8 @@ class AnswerGenerator:
                     "[주목] 이 질문은 학점·횟수·금액 등 한도·수치를 묻습니다. "
                     "핵심 숫자 하나로 먼저 답하고, 예외 조건은 간략히만 언급하세요. "
                     "질문에서 묻지 않은 다른 조건까지 나열하지 마세요.\n"
+                    "[필수 형식] 첫 문장에 반드시 핵심 수치를 포함하세요. "
+                    "예: 'XX학점 이상입니다.' 또는 '최대 XX학점입니다.'\n"
                 )
                 if _asks_limit:
                     parts.append(
@@ -403,6 +406,16 @@ class AnswerGenerator:
                     "[주목] 이 질문은 자격 요건/조건 목록을 묻습니다. "
                     "컨텍스트에 있는 조건을 하나도 빠뜨리지 말고 전부 나열하세요. "
                     "요약하지 말고 각 조건을 별도 항목(-)으로 제시하세요.\n"
+                )
+
+            # Phase 5 (2026-04-15): 최소/최대 + 졸업/학점 질문의 숫자 우선 출력 (g02 회귀 수정)
+            _asks_numeric = any(kw in question for kw in ("최소", "최대", "상한", "한도", "몇"))
+            _about_credits = any(kw in question for kw in ("졸업", "이수", "학점", "필요"))
+            if _asks_numeric and _about_credits and question_focus != "limit":
+                parts.append(
+                    "[중요] 이 질문은 학점 수치를 묻습니다. "
+                    "답변의 첫 문장에 반드시 핵심 숫자를 포함하세요. "
+                    "예: '130학점 이상입니다.' 또는 '18학점입니다.'\n"
                 )
 
             # Phase 3 Step 4 (2026-04-12): asks_url 엔티티 기반 URL 강제 힌트 (l01, c01)
@@ -438,9 +451,10 @@ class AnswerGenerator:
             if any(_bi_value_triggers):
                 parts.append(
                     "[완전성] 이 질문은 **주전공과 제2전공(또는 복수·부전공)** 각각의 "
-                    "이수학점을 묻습니다. 답변에 두 값을 **모두** 포함해야 합니다. "
-                    "예: '주전공 36학점, 제2전공 27학점입니다.' "
-                    "한 값만 답하면 불완전한 답변입니다.\n"
+                    "이수학점을 묻습니다. 답변에 두 값을 **모두** 포함해야 합니다.\n"
+                    "[중요] 컨텍스트에서 각 값을 정확히 찾아서 대응시키세요. "
+                    "주전공 이수학점은 제2전공(복수전공)보다 항상 **더 많습니다**. "
+                    "두 값이 같은 숫자이면 잘못된 답변입니다.\n"
                 )
 
             # Phase 3+ 튜닝 (2026-04-12): Intent-aware field selection 힌트.
@@ -494,6 +508,8 @@ class AnswerGenerator:
 
         return "\n".join(parts)
 
+    # ── KO <answer> 태그 기반 스트리밍 파서 ────────────────────────────────────
+
     # ── One-Pass State Machine 스트리밍 파서 ──────────────────────────────────
 
     async def _stream_one_pass(
@@ -524,7 +540,11 @@ class AnswerGenerator:
                 data = json.loads(data_str)
             except json.JSONDecodeError:
                 continue
-            token = data["choices"][0].get("delta", {}).get("content", "")
+            delta = data["choices"][0].get("delta", {})
+            # reasoning_content / thinking 필드 폐기 (Qwen3 / Ollama native)
+            if delta.get("reasoning_content") or delta.get("thinking"):
+                continue
+            token = delta.get("content", "")
             if not token:
                 continue
 
@@ -687,31 +707,21 @@ class AnswerGenerator:
             question_type=question_type, entities=entities, intent=intent,
         )
 
-        # Qwen3 계열 thinking 다층 차단 (2026-04-11 LM Studio thinking 버그 대응):
-        # - Layer 1: system prompt 최상단 "/no_think" + "thinking 출력 금지" 지시 (별도 편집)
-        # - Layer 2a: user prompt 말미에 "/no_think" (Qwen3 공식 trigger)
-        # - Layer 2b: payload에 chat_template_kwargs.enable_thinking=False (LM Studio/vLLM)
-        # - Layer 2c: payload에 reasoning_effort=none (OpenAI 호환 일부 구현)
-        # - Layer 3: 스트림 파싱에서 reasoning_content silent drop (아래 루프)
-        # - Layer 4: content 없이 reasoning만 오면 refusal로 대체 (사용자에게 사고 과정 비노출)
-        user_content = prompt + "\n\n/no_think"
         payload = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system},
-                {"role": "user", "content": user_content},
+                {"role": "user", "content": prompt},
             ],
             "stream": True,
             "max_tokens": settings.llm.max_tokens,
             "temperature": settings.llm.temperature,
             "top_p": settings.llm.top_p,
             "repeat_penalty": settings.llm.repeat_penalty,
-            # Ollama 전용
+            # Ollama: think 비활성화 (속도 우선)
             "think": False,
-            # LM Studio / vLLM (Qwen3 chat template enable_thinking 끄기)
-            "chat_template_kwargs": {"enable_thinking": False},
-            # OpenAI 호환 일부 구현 (LM Studio 최신)
-            "reasoning_effort": "none",
+            # Ollama: 모든 레이어를 GPU에 로드 (CPU 오프로딩 방지)
+            "options": {"num_gpu": 999},
         }
 
         try:
@@ -723,10 +733,9 @@ class AnswerGenerator:
                         async for chunk in self._stream_one_pass(response):
                             yield chunk
                     else:
-                        # KO 기존 흐름
-                        thinking_detected = False
+                        # KO 경로: think=True 이므로 thinking은 별도 필드로 분리됨.
+                        # reasoning_content / thinking 필드만 필터하고 content를 바로 출력.
                         content_started = False
-                        reasoning_len = 0
                         async for line in response.aiter_lines():
                             if not line or not line.startswith("data: "):
                                 continue
@@ -735,40 +744,15 @@ class AnswerGenerator:
                                 break
                             data = json.loads(data_str)
                             delta = data["choices"][0].get("delta", {})
-
-                            # Layer 3: reasoning_content는 완전히 폐기 (사용자에게 노출 X)
-                            # Qwen3 thinking이 새어 나오면 로그만 남기고 토큰은 drop.
-                            rc = delta.get("reasoning_content", "")
-                            if rc:
-                                thinking_detected = True
-                                reasoning_len += len(rc)
-                                # 사용자 측에 "분석 중" 마커도 더 이상 노출하지 않음.
-                                # 이유: LM Studio의 thinking은 수백~수천 자라 latency가 길어져서
-                                # UI에 "분석 중"이 뜨면 오히려 혼란. content가 오기 시작하면 바로 출력.
+                            # thinking/reasoning 필드 → 폐기
+                            if delta.get("reasoning_content") or delta.get("thinking"):
                                 continue
-
                             token = delta.get("content", "")
                             if token:
                                 if not content_started:
                                     content_started = True
                                     yield "\x00CLEAR\x00"
                                 yield token
-
-                        # Layer 4: thinking만 있고 content가 비었으면 refusal로 대체
-                        # (reasoning_buf를 사용자에게 보여주던 이전 fallback은 제거)
-                        if thinking_detected and not content_started:
-                            logger.error(
-                                "LLM thinking-only 응답 감지 — refusal로 대체. "
-                                "reasoning_len=%d. SYSTEM_PROMPT의 /no_think + "
-                                "chat_template_kwargs.enable_thinking=False 다층 차단이 "
-                                "모두 실패한 상황. LM Studio 버전 업데이트나 모델 변경 검토 필요.",
-                                reasoning_len,
-                            )
-                            yield "\x00CLEAR\x00"
-                            yield (
-                                "죄송합니다. 답변 생성 중 문제가 발생했습니다. "
-                                "학사지원팀(051-509-5182)에 문의하시기 바랍니다."
-                            )
 
         except httpx.ConnectError:
             logger.error("Ollama 서버 연결 실패. Ollama를 실행해주세요.")

@@ -3118,7 +3118,7 @@ class AcademicGraph:
         if data.get("기준학점"):
             lines.append(f"- 기준학점: {data['기준학점']}학점 이상")
         if data.get("비고"):
-            lines.append(f"- 비고: {self._safe_tilde(data['비고'])}")
+            lines.append(f"- 비고: {data['비고'].replace('~', '\u301C') if data['비고'] else data['비고']}")
         if data.get("이수조건"):
             lines.append(f"- 이수조건: {data['이수조건']}")
         return "\n".join(lines)

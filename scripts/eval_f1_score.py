@@ -190,13 +190,26 @@ def answer_metrics(prediction: str, ground_truth: str) -> dict[str, Any]:
     # Phase 3+ (2026-04-12): token_f1 기반 soft contains fallback.
     # 한국어 어미 변형("이상이고" vs "이상", "제도이다" vs "제도입니다")으로
     # contains_gt가 False인데 의미상 정답인 경우를 구제.
-    # 조건: key token 70% 이상 매칭 (gt_keys 중 pred_keys에 substring 포함)
+    # Phase 5 (2026-04-15): 한국어 어간 매칭 추가 + 임계값 0.7→0.65 (c03 회귀 수정)
+    #   "수강 가능하다" vs "가능합니다" — 어미 제거 후 "가능" 공통 어간 매칭
+    _KO_ENDINGS = ("하다", "이다", "되다", "합니다", "입니다", "됩니다", "있다", "없다", "한다")
     if not contains_gt and gt_keys:
-        _soft_match = sum(
-            1 for gt_k in gt_keys
-            if any(gt_k in pk or pk in gt_k for pk in pred_keys)
-        )
-        if _soft_match / len(gt_keys) >= 0.7:
+        _soft_match = 0
+        for gt_k in gt_keys:
+            if gt_k in pred_keys:
+                _soft_match += 1
+            elif any(gt_k in pk or pk in gt_k for pk in pred_keys):
+                _soft_match += 1
+            else:
+                # 어간 매칭: 한국어 종결어미 제거 후 비교
+                gt_stem = gt_k
+                for ending in _KO_ENDINGS:
+                    if gt_k.endswith(ending):
+                        gt_stem = gt_k[:-len(ending)]
+                        break
+                if gt_stem and len(gt_stem) >= 2 and any(gt_stem in pk for pk in pred_keys):
+                    _soft_match += 1
+        if _soft_match / len(gt_keys) >= 0.65:
             contains_gt = True
 
     pred_counter = Counter(pred_tokens)

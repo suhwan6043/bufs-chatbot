@@ -54,5 +54,11 @@ langchain-openai>=0.1.0
 langchain-huggingface>=0.0.3
 datasets>=2.14.0
 
+# FastAPI 백엔드 (Step 1: Streamlit → FastAPI 전환)
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.6
+sse-starlette>=1.6.0
+
 # OCR (선택 - 스캔 PDF 처리 시)
 # surya-ocr

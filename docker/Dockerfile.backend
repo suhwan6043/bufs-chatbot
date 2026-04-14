@@ -1,0 +1,37 @@
+# CAMCHAT FastAPI Backend (GPU 지원)
+# 빌드: docker build -f docker/Dockerfile.backend -t camchat-backend .
+# 실행: docker run --gpus all -p 8000:8000 -v ./data:/app/data --env-file .env camchat-backend
+#
+# 주의: --workers 1 필수 (파이프라인 모델 3~4GB, 멀티워커 시 메모리 복제)
+
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# 시스템 의존성 (PyMuPDF, HWP 파싱 등에 필요)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc g++ libffi-dev curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# PyTorch CUDA 설치 (Reranker GPU 가속용)
+# CPU fallback도 지원 — RERANKER_DEVICE=cpu면 CPU 경로 사용
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu124
+
+# Python 의존성 설치 (캐시 활용)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 앱 코드 복사 (파이프라인 + 백엔드 + 인제스트 스크립트)
+COPY app/ app/
+COPY backend/ backend/
+COPY config/ config/
+COPY scripts/ scripts/
+
+# 헬스체크
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD curl -f http://localhost:8000/api/health || exit 1
+
+EXPOSE 8000
+
+# uvicorn 단일 워커 (파이프라인 싱글톤 보호)
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

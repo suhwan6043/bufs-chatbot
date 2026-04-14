@@ -440,13 +440,20 @@ def verify_answer_against_context(answer: str, context: str) -> tuple[bool, Opti
     # Phase 3+ (2026-04-12): 학점(credit) 검증.
     # u08 "대학원 박사과정 3학점" 같은 환각을 방지.
     # 허용 형태: "12학점", "12 학점", "12" (숫자만), "12학점 이상" 등.
-    # 졸업요건·이수학점은 표·조건문에 다양한 형태로 존재하므로 관대하게 검증.
-    ctx_stripped = context.replace(" ", "")  # 공백 제거 버전도 함께 검사
+    # Phase 5 (2026-04-15): 공백/괄호/줄바꿈으로 감싸인 값도 매칭 (r03 회귀 수정)
+    ctx_flat = re.sub(r"\s+", " ", context)
+    ctx_stripped = context.replace(" ", "")
     for credit_val in a_units.get("credit", []):
-        in_normal = (f"{credit_val}학점" in context or credit_val in context)
-        in_stripped = (f"{credit_val}학점" in ctx_stripped or credit_val in ctx_stripped)
-        if not in_normal and not in_stripped:
-            return False, f"credit:{credit_val} not in context"
+        if (
+            f"{credit_val}학점" in context
+            or credit_val in context
+            or f"{credit_val}학점" in ctx_flat
+            or f"{credit_val} 학점" in ctx_flat
+            or f"{credit_val}학점" in ctx_stripped
+            or credit_val in ctx_stripped
+        ):
+            continue
+        return False, f"credit:{credit_val} not in context"
 
     return True, None
 

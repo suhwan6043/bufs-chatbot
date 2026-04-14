@@ -168,11 +168,14 @@ def main():
     # source_rank=2 (학사안내보다 후순위). interactive=False로 배치 실행.
     guide_book_path = ROOT / "data" / "pdfs" / "2025_신입생_가이드북.pdf"
     if guide_book_path.exists():
-        logger.info("=== PDF 인제스트: %s (rank=2, OCR) ===", guide_book_path)
-        ingest_pdf(
-            pdf_path=str(guide_book_path), student_id="2024",
-            doc_type="domestic", source_rank=2, interactive=False,
-        )
+        try:
+            logger.info("=== PDF 인제스트: %s (rank=2, OCR) ===", guide_book_path)
+            ingest_pdf(
+                pdf_path=str(guide_book_path), student_id="2024",
+                doc_type="domestic", source_rank=2, interactive=False,
+            )
+        except Exception as e:
+            logger.warning("신입생 가이드북 인제스트 실패 (OCR 미설치?): %s — 스킵", e)
     else:
         logger.info("신입생 가이드북 없음 (스킵): %s", guide_book_path)
 
@@ -185,10 +188,13 @@ def main():
             for pdf_file in portal_pdfs:
                 logger.info("  → %s", pdf_file.name)
                 # 포털 캡처도 기본 rank=2 (학사안내 PDF보다 후순위)
-                ingest_pdf(
-                    pdf_path=str(pdf_file), student_id="2024",
-                    doc_type="domestic", source_rank=2,
-                )
+                try:
+                    ingest_pdf(
+                        pdf_path=str(pdf_file), student_id="2024",
+                        doc_type="domestic", source_rank=2, interactive=False,
+                    )
+                except Exception as e:
+                    logger.warning("포털 PDF 인제스트 실패 (스캔 PDF 등): %s — 스킵", e)
 
     # ── 2. 정적 페이지 전체 크롤링 ──────────────────────────
     with CONFIG_PATH.open(encoding="utf-8") as f:

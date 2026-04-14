@@ -1,0 +1,33 @@
+# CAMCHAT Next.js Frontend
+# 멀티스테이지 빌드: 빌드 이미지에서 빌드 → standalone 모드 프로덕션 이미지
+# 빌드: docker build -f docker/Dockerfile.frontend -t camchat-frontend .
+
+# ── Stage 1: Build ──
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+COPY frontend/package*.json ./
+RUN npm ci
+
+COPY frontend/ .
+
+# 빌드 시 API URL 설정 (런타임에 Nginx가 프록시하므로 상대 경로)
+ENV NEXT_PUBLIC_API_URL=""
+RUN npm run build
+
+# ── Stage 2: Production ──
+FROM node:20-alpine
+
+WORKDIR /app
+
+# standalone 출력물 복사
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+
+EXPOSE 3000
+
+ENV NODE_ENV=production
+ENV HOSTNAME="0.0.0.0"
+
+CMD ["node", "server.js"]

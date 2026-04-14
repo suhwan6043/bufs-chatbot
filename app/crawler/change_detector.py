@@ -106,8 +106,15 @@ class ChangeDetector:
             # 해시 동일 → 이벤트 없음 (변경 없음)
 
         # DELETED 감지: 이전에 추적하던 항목이 현재 크롤링 결과에 없을 때
+        # 단, 크롤링 대상이 아닌 항목(FAQ 등 다른 도메인)은 삭제 대상에서 제외
+        # 크롤링 결과의 source_id 스킴(http://)과 다른 스킴은 비교 대상이 아님
+        crawled_schemes = {s.split("://")[0] for s in current_ids if "://" in s}
         for source_id, entry in self._hashes.items():
             if source_id not in current_ids:
+                # 크롤링 도메인과 다른 스킴의 항목은 건너뜀 (예: faq:// vs http://)
+                scheme = source_id.split("://")[0] if "://" in source_id else ""
+                if scheme and scheme not in crawled_schemes:
+                    continue
                 events.append(ChangeEvent(
                     source_id=source_id,
                     change_type=ChangeType.DELETED,

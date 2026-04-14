@@ -1,0 +1,65 @@
+# CAMCHAT 프로덕션 Docker Compose
+# 실행: cd docker && docker compose up -d --build
+#
+# 사전 조건:
+#   - LM Studio가 호스트에서 실행 중 (http://localhost:1234)
+#   - .env 파일에 ADMIN_PASSWORD 등 설정
+
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+    ports:
+      - "8000:8000"
+    env_file: ../.env
+    environment:
+      # Docker 내부에서 호스트의 Ollama 접근
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost,http://localhost:80,http://localhost:3000,https://maruvis.co.kr}
+      - QUERY_ROUTER_SEQUENTIAL=1
+      - CHROMA_PERSIST_DIR=/app/data/chromadb_new
+    volumes:
+      # 데이터 영속성 (ChromaDB, 그래프, 로그, PDF, 사용자 DB)
+      - ../data:/app/data
+      - ../config:/app/config
+      # 호스트 모델 캐시 공유 (재다운로드 방지)
+      - ~/.cache/huggingface:/root/.cache/huggingface
+      - ~/.cache/chroma:/root/.cache/chroma
+    # GPU 접근 (Reranker Cross-Encoder)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s  # 모델 로딩 시간 (Embedder + Reranker)
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped

@@ -62,25 +62,15 @@ class Reranker:
     [방식] (query, passage) 쌍을 입력받아 관련도 점수 산출
     """
 
-    def __init__(self):
-        self._model = None
+    def __init__(self, model=None):
+        self._model = model
 
     @property
     def model(self):
         if self._model is None:
-            try:
-                from sentence_transformers import CrossEncoder
-                logger.info(
-                    f"리랭커 모델 로드: {settings.reranker.model_name} "
-                    f"(device={settings.reranker.device})"
-                )
-                self._model = CrossEncoder(
-                    settings.reranker.model_name,
-                    device=settings.reranker.device,
-                )
-            except Exception as e:
-                logger.error(f"리랭커 로드 실패: {e}")
-                raise
+            # shared_resources 싱글톤에서 이미 로드된 모델 사용
+            from app.shared_resources import get_reranker_model
+            self._model = get_reranker_model()
         return self._model
 
     def rerank(

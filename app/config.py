@@ -58,7 +58,7 @@ class RerankerConfig:
 
 @dataclass
 class ChromaConfig:
-    persist_dir: str = str(DATA_DIR / "chromadb")
+    persist_dir: str = os.getenv("CHROMA_PERSIST_DIR", str(DATA_DIR / "chromadb"))
     collection_name: str = os.getenv("CHROMA_COLLECTION", "bufs_academic")
     distance_metric: str = "cosine"
     n_results: int = int(os.getenv("CHROMA_N_RESULTS", "15"))
