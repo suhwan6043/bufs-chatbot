@@ -1918,8 +1918,14 @@ class AcademicGraph:
                         context = f"[OCU 납부기간]\n- 납부기간: {start}~{end}"
                         return [self._make_direct_result(context, answer, score=1.3, node_data=ocu_data)]
 
-                # 초과학점 예외 전용
-                if "초과" in question or ("예외" in question and "학점" in question):
+                # 초과학점 예외 전용 — "초과수강료"·"시스템사용료" 묻는 질문은 제외
+                # (이들은 벡터 검색으로 p.20 "초과수강료 120,000원" 청크 우선 필요)
+                _asks_price = any(kw in question for kw in ("수강료", "사용료", "얼마", "금액", "원", "120"))
+                _is_excess_allow = (
+                    not _asks_price
+                    and ("초과" in question or ("예외" in question and "학점" in question))
+                )
+                if _is_excess_allow:
                     ocu_excess = rule.get("OCU초과학점", "")
                     answer = "OCU 수강 신청자는 최대 신청학점에서 3학점(1과목) 초과 신청이 가능합니다."
                     context = (
