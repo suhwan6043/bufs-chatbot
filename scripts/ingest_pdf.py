@@ -78,15 +78,39 @@ def make_chunks(
 
             raw = raw_tables[t_idx] if t_idx < len(raw_tables) else []
 
-            # ── 수업시간표 전용 처리 ──────────────────────────
+            # ── 수업시간표 전용 처리: (학과, 이수구분, 학년) 그룹별 청크 ───────
+            # 실패한 접근: row-level 분할 — "[수업시간표]" prefix 폴루션으로 course_info 회귀
+            # 현재 접근: 이수구분·학년별 그룹화 — prefix를 "[{학과} {이수구분} 강의]"로 구체화
             if doc_type == "timetable" and raw and timetable_parser.is_timetable_table(raw):
                 dept = timetable_parser.extract_department_from_context(
                     page.headers, page.text
                 )
-                chunk_text = timetable_parser.timetable_table_to_text(raw, dept)
+                group_chunks = timetable_parser.timetable_table_to_groups(raw, dept)
+                if group_chunks:
+                    for g_idx, (g_text, g_meta) in enumerate(group_chunks):
+                        if len(g_text.strip()) < MIN_CHUNK_LEN:
+                            continue
+                        chunk_id = _make_id(
+                            source_file, page.page_number,
+                            f"table_{t_idx}_grp_{g_idx}", g_text,
+                        )
+                        c_from, c_to = detect_cohort(g_text)
+                        chunks.append(Chunk(
+                            chunk_id=chunk_id,
+                            text=g_text,
+                            page_number=page.page_number,
+                            source_file=source_file,
+                            student_id=student_id,
+                            doc_type=doc_type,
+                            cohort_from=c_from,
+                            cohort_to=c_to,
+                            semester=semester,
+                            metadata=g_meta,
+                        ))
+                    continue  # 다음 테이블로
+                # 파싱 실패 시 fallback
+                chunk_text = f"[수업시간표]\n{table_md}"
                 meta = timetable_parser.extract_timetable_meta(raw, dept)
-                if not chunk_text.strip():
-                    chunk_text = f"[수업시간표]\n{table_md}"  # 파싱 실패 시 fallback
             else:
                 chunk_text = f"[표]\n{table_md}"
                 meta = {"content_type": "table"}

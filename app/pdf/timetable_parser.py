@@ -55,8 +55,8 @@ _COL_PATTERNS: dict[str, re.Pattern] = {
     "course_code":      re.compile(r"과목번호|교과목코드|학수번호|학수"),
     # 분반 — "분반" 셀 전용
     "section":          re.compile(r"^분반$"),
-    # 과목명 — "과목번호"에 매핑되지 않도록 `과목번호` 제외
-    "course_name":      re.compile(r"교과목명|과목명|강좌명"),
+    # 과목명 — "과목번호"/"교과목번호"에 매핑되지 않도록 뒤에 (?!번)
+    "course_name":      re.compile(r"(?:교과목|과목|강좌)명?(?!번)"),
     # 학점
     "credits":          re.compile(r"^학점$"),
     # 시수 — 시간(요일·교시)과 분리
@@ -324,16 +324,28 @@ def extract_timetable_meta(table: list, department_hint: str = "") -> dict:
     }
 
 
+def _row_to_text(row_data: dict) -> str:
+    """단일 과목 행 dict를 한 줄 텍스트로 변환합니다."""
+    parts = []
+    for field_name in _DISPLAY_ORDER:
+        val = row_data.get(field_name, "")
+        if not val:
+            continue
+        if field_name == "day_time":
+            decoded = decode_day_time(val)
+            display = f"{decoded} ({val})" if decoded != val else val
+        else:
+            display = val
+        parts.append(f"{_LABELS[field_name]}:{display}")
+    return " | ".join(parts) if parts else ""
+
+
 def timetable_table_to_text(table: list, department: str = "") -> str:
     """
-    수업시간표 표를 임베딩에 유리한 구조적 텍스트로 변환합니다.
+    수업시간표 표를 임베딩에 유리한 구조적 텍스트로 변환합니다 (전체 합본).
     병합 셀(None)은 carry-forward로 복원합니다.
 
-    예시 출력:
-        [수업시간표] 컴퓨터공학부(컴퓨터공학전공)
-        이수구분:전공심화실무 | 학년:4 | 과목번호:COM241 | 분반:01 | 교과목:시스템분석및설계 | 학점:3.0 | 시수:3.0 | 시간:화6,7,8 | 강의실:I312 | 교수:이성진
-        이수구분:전공심화실무 | 학년:4 | 과목번호:COM462 | 분반:01 | 교과목:AI프로그래밍 | 학점:3.0 | 시수:3.0 | 시간:수1,2,목3 | 강의실:I312 | 교수:유영중
-        ...
+    ※ 과목 단위 청크는 `timetable_table_to_rows()`를 사용하세요.
     """
     if not table or len(table) < 2:
         return ""
@@ -346,22 +358,130 @@ def timetable_table_to_text(table: list, department: str = "") -> str:
     lines = [header]
 
     for row_data in _iter_rows_with_carry(table, col_map):
-        parts = []
-        for field_name in _DISPLAY_ORDER:
-            val = row_data.get(field_name, "")
-            if not val:
-                continue
-            # 시간 필드는 교시 → 실제 시각으로 변환 (원본도 병기)
-            if field_name == "day_time":
-                decoded = decode_day_time(val)
-                display = f"{decoded} ({val})" if decoded != val else val
-            else:
-                display = val
-            parts.append(f"{_LABELS[field_name]}:{display}")
-        if parts:
-            lines.append(" | ".join(parts))
+        line = _row_to_text(row_data)
+        if line:
+            lines.append(line)
 
     return "\n".join(lines)
+
+
+def timetable_table_to_groups(
+    table: list,
+    department: str = "",
+    max_rows_per_chunk: int = 8,
+) -> list[tuple[str, dict]]:
+    """
+    수업시간표를 **(학과, 이수구분) 그룹**으로 중간 단위 청크로 변환합니다.
+
+    전체 합본(임베딩 희석)과 row-level 과도 분할(키워드 폴루션)의 중간 전략.
+    - 그룹당 max_rows_per_chunk 행 초과 시 분할
+    - prefix: `[{학과} {이수구분}]` — "수업시간표" 키워드 폴루션 방지
+    - 같은 이수구분 과목끼리 묶어 의미적 응집력 확보
+
+    Returns:
+        [(chunk_text, meta), ...] 그룹별 청크 텍스트와 메타데이터
+    """
+    if not table or len(table) < 2:
+        return []
+
+    col_map = map_columns(table[0])
+    if not col_map:
+        return []
+
+    # (이수구분, 학년) 키로 행 그룹핑
+    from collections import defaultdict
+    groups: dict[tuple, list[dict]] = defaultdict(list)
+    for row_data in _iter_rows_with_carry(table, col_map):
+        key = (row_data.get("course_type", ""), row_data.get("year", ""))
+        groups[key].append(row_data)
+
+    results: list[tuple[str, dict]] = []
+    dept_norm = normalize_dept_keyword(department) if department else ""
+
+    for (course_type, year), rows in groups.items():
+        # 긴 그룹은 max_rows 단위로 분할
+        for chunk_start in range(0, len(rows), max_rows_per_chunk):
+            sub = rows[chunk_start:chunk_start + max_rows_per_chunk]
+            # Prefix: 구체적 분류 정보 (generic "[수업시간표]" 대신)
+            header_parts = []
+            if department:
+                header_parts.append(department)
+            if course_type:
+                header_parts.append(course_type)
+            if year:
+                header_parts.append(f"{year}학년")
+            header = f"[{' '.join(header_parts)} 강의]" if header_parts else "[강의]"
+            lines = [header]
+            course_names_in_chunk = []
+            for row_data in sub:
+                line = _row_to_text(row_data)
+                if line:
+                    lines.append(line)
+                    if row_data.get("course_name"):
+                        course_names_in_chunk.append(row_data["course_name"])
+            if len(lines) < 2:
+                continue
+            chunk_text = "\n".join(lines)
+            meta = {
+                "content_type": "timetable_group",
+                "department": dept_norm,
+                "department_raw": department,
+                "course_type": course_type,
+                "year": year,
+                "course_names": ",".join(course_names_in_chunk[:15]),
+                "row_count": len(sub),
+            }
+            results.append((chunk_text, meta))
+
+    return results
+
+
+def timetable_table_to_rows(table: list, department: str = "") -> list[tuple[str, dict]]:
+    """
+    수업시간표 표를 **과목별 개별 청크** 리스트로 변환합니다.
+
+    원칙: 한 과목(한 분반) = 한 청크. 임베딩 희석 방지.
+
+    Returns:
+        [(chunk_text, row_meta), ...] 각 과목별 청크 텍스트와 메타데이터
+        chunk_text 예시:
+            [수업시간표] 컴퓨터공학부(컴퓨터공학전공)
+            이수구분:전공심화실무 | 학년:4 | 과목번호:COM241 | 분반:01 | 교과목:시스템분석및설계
+            | 학점:3.0 | 시수:3.0 | 시간:화요일 14:00~17:00 (화6,7,8) | 강의실:I312 | 교수:이성진
+        row_meta 예시:
+            {"course_code": "COM241", "course_name": "시스템분석및설계",
+             "professor": "이성진", "course_type": "전공심화실무"}
+    """
+    if not table or len(table) < 2:
+        return []
+
+    col_map = map_columns(table[0])
+    if not col_map:
+        return []
+
+    header = f"[수업시간표] {department}" if department else "[수업시간표]"
+    results: list[tuple[str, dict]] = []
+
+    for row_data in _iter_rows_with_carry(table, col_map):
+        line = _row_to_text(row_data)
+        if not line:
+            continue
+        chunk_text = f"{header}\n{line}"
+        # 메타데이터: 검색/필터용 핵심 필드만 추출
+        meta = {
+            "content_type": "timetable_row",
+            "department": normalize_dept_keyword(department) if department else "",
+            "department_raw": department,
+            "course_code": row_data.get("course_code", ""),
+            "course_name": row_data.get("course_name", ""),
+            "professor": row_data.get("professor", ""),
+            "course_type": row_data.get("course_type", ""),
+            "year": row_data.get("year", ""),
+            "section": row_data.get("section", ""),
+        }
+        results.append((chunk_text, meta))
+
+    return results
 
 
 def extract_department_from_context(headers: list, text: str) -> str:
