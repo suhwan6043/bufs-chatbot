@@ -37,6 +37,8 @@ class LLMConfig:
     top_p: float = float(_env_llm("LLM_TOP_P", "OLLAMA_TOP_P", "0.9"))
     repeat_penalty: float = float(_env_llm("LLM_REPEAT_PENALTY", "OLLAMA_REPEAT_PENALTY", "1.0"))
     timeout: int = int(_env_llm("LLM_TIMEOUT", "OLLAMA_TIMEOUT", "60"))
+    response_cache_ttl_seconds: int = int(os.getenv("LLM_RESPONSE_CACHE_TTL", "3600"))
+    response_cache_max_entries: int = int(os.getenv("LLM_RESPONSE_CACHE_MAX_SIZE", "256"))
 
 
 @dataclass
@@ -126,6 +128,50 @@ class AdminConfig:
 
 
 @dataclass
+class AdminFaqConfig:
+    """
+    관리자 큐레이션 FAQ 피드백 루프 설정.
+
+    원칙 4: 하드코딩 금지 — 거절 문구·임계치·경로 모두 환경변수로 오버라이드.
+    """
+    # 관리자가 추가한 FAQ 저장 파일 (gitignore, 런타임 추가)
+    admin_faq_path: str = os.getenv(
+        "ADMIN_FAQ_PATH", str(DATA_DIR / "faq_admin.json")
+    )
+    # 정식 FAQ 파일 (scripts/ingest_faq.py 와 공유)
+    academic_faq_path: str = os.getenv(
+        "ACADEMIC_FAQ_PATH", str(DATA_DIR / "faq_academic.json")
+    )
+    # answer_generator 의 거절 문구 — 미답변 탐지 시그널
+    refusal_phrase_ko: str = os.getenv(
+        "ADMIN_FAQ_REFUSAL_KO", "관련 정보를 찾을 수 없습니다"
+    )
+    refusal_phrase_en: str = os.getenv(
+        "ADMIN_FAQ_REFUSAL_EN", "couldn't find relevant information"
+    )
+    # rating <= N 이면 미답변 후보
+    uncovered_rating_threshold: int = int(os.getenv("ADMIN_FAQ_RATING_THRESHOLD", "2"))
+    # 미답변 질의 그룹핑 자카드 임계치 (관리자 받은편지함 중복 제거)
+    cluster_sim_threshold: float = float(os.getenv("ADMIN_FAQ_CLUSTER_SIM", "0.6"))
+    # 기존 FAQ 중복 판정 — stem 커버리지 (search_faq direct_answer 와 동일 기준)
+    dedup_sim_threshold: float = float(os.getenv("ADMIN_FAQ_DEDUP_SIM", "0.75"))
+    # 미답변 스캔 기본 일수
+    uncovered_default_days: int = int(os.getenv("ADMIN_FAQ_SCAN_DAYS", "7"))
+    # 반환 상한
+    uncovered_max_return: int = int(os.getenv("ADMIN_FAQ_MAX_RETURN", "100"))
+    # admin FAQ 생성 시 source_question 을 검색면에 포함
+    include_source_question_in_chunk: bool = (
+        os.getenv("ADMIN_FAQ_INCLUDE_SOURCE_Q", "true").lower() == "true"
+    )
+    # student_type 기반 FAQ 필터 전역 스위치 (false → 전체 허용, 하위 호환 폴백용)
+    student_type_filter_enabled: bool = (
+        os.getenv("ADMIN_FAQ_STYPE_FILTER", "true").lower() == "true"
+    )
+    # 학년 자동계산 기준 학년도 (현재 연도 기본값, .env CURRENT_ACADEMIC_YEAR 로 오버라이드)
+    current_academic_year: int = int(os.getenv("CURRENT_ACADEMIC_YEAR", "2026"))
+
+
+@dataclass
 class Settings:
     llm: LLMConfig = field(default_factory=LLMConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
@@ -136,6 +182,7 @@ class Settings:
     app: AppConfig = field(default_factory=AppConfig)
     admin: AdminConfig = field(default_factory=AdminConfig)
     crawler: CrawlerConfig = field(default_factory=CrawlerConfig)
+    admin_faq: AdminFaqConfig = field(default_factory=AdminFaqConfig)
 
 
 settings = Settings()

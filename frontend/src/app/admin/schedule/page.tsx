@@ -1,11 +1,10 @@
 "use client";
-import { useState, useEffect, use } from "react";
+import { useState, useEffect } from "react";
 import { useAdmin, type ScheduleEvent } from "@/hooks/useAdmin";
 
 const EMPTY: ScheduleEvent = { event_name: "", semester: "", start_date: "", end_date: "", note: "" };
 
-export default function SchedulePage({ params }: { params: Promise<{ lang: string }> }) {
-  use(params);
+export default function SchedulePage() {
   const { token, fetchSchedule, addSchedule, updateSchedule } = useAdmin();
   const [events, setEvents] = useState<ScheduleEvent[]>([]);
   const [form, setForm] = useState<ScheduleEvent>(EMPTY);

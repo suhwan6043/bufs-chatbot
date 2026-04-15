@@ -60,6 +60,7 @@ class ChromaStore:
                 "cohort_from": c.cohort_from,
                 "cohort_to": c.cohort_to,
                 "semester": c.semester,
+                "student_types": getattr(c, "student_types", ""),  # 빈 문자열 = 전체 허용
                 **{k: str(v) for k, v in c.metadata.items()},
             }
             for c in chunks
@@ -89,6 +90,7 @@ class ChromaStore:
         doc_type: Optional[Union[str, List[str]]] = None,
         semester: Optional[str] = None,
         department: Optional[str] = None,
+        student_type: Optional[str] = None,
         query_embedding: list = None,
     ) -> List[SearchResult]:
         """쿼리에 대해 유사 문서를 검색합니다.
@@ -102,7 +104,7 @@ class ChromaStore:
         elif hasattr(query_embedding, 'tolist'):
             query_embedding = query_embedding.tolist()
 
-        where_filter = self._build_filter(student_id, doc_type, semester, department)
+        where_filter = self._build_filter(student_id, doc_type, semester, department, student_type)
 
         kwargs = {
             "query_embeddings": [query_embedding],
@@ -147,6 +149,7 @@ class ChromaStore:
         doc_type: Optional[Union[str, List[str]]] = None,
         semester: Optional[str] = None,
         department: Optional[str] = None,
+        student_type: Optional[str] = None,
     ) -> Optional[dict]:
         """
         메타데이터 필터를 구성합니다.
@@ -180,6 +183,14 @@ class ChromaStore:
         if department:
             # department 메타데이터가 있는 청크(수업시간표)만 필터링
             conditions.append({"department": {"$eq": department}})
+        if student_type and settings.admin_faq.student_type_filter_enabled:
+            # 빈 student_types 청크(전체 허용) 또는 해당 유형이 포함된 청크만 반환
+            conditions.append({
+                "$or": [
+                    {"student_types": {"$eq": ""}},
+                    {"student_types": {"$contains": student_type}},
+                ]
+            })
 
         if not conditions:
             return None

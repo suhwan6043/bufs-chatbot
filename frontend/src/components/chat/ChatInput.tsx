@@ -31,7 +31,7 @@ export default function ChatInput({ lang, onSend, disabled }: ChatInputProps) {
   };
 
   return (
-    <div className="sticky bottom-0 bg-white/95 backdrop-blur-md border-t border-slate-100 p-4 md:p-6 pb-20 lg:pb-6 z-20">
+    <div className="sticky bottom-0 bg-white/95 backdrop-blur-md border-t border-slate-100 p-4 md:p-6 z-20">
       <div className="max-w-4xl mx-auto space-y-3">
         {/* Trending tags */}
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">

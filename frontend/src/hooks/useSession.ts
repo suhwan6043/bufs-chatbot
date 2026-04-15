@@ -33,17 +33,47 @@ export function useSession(lang: Lang) {
     return data.session_id;
   }, [lang]);
 
+  const syncSessionLang = useCallback(async (sid: string, sessionLang: string) => {
+    if (sessionLang === lang) return;
+
+    await apiFetch(`/api/session/${sid}/lang?lang=${lang}`, {
+      method: "PUT",
+    });
+  }, [lang]);
+
   useEffect(() => {
-    const existing = getCookie(COOKIE_KEY);
-    if (existing) {
-      apiFetch<SessionInfo>(`/api/session/${existing}`)
-        .then((s) => { setSessionId(existing); setSession(s); })
-        .catch(() => createSession())
-        .finally(() => setLoading(false));
-    } else {
-      createSession().finally(() => setLoading(false));
+    let cancelled = false;
+
+    async function loadSession() {
+      try {
+        const existing = getCookie(COOKIE_KEY);
+
+        if (existing) {
+          const s = await apiFetch<SessionInfo>(`/api/session/${existing}`);
+          await syncSessionLang(existing, s.lang);
+          if (!cancelled) {
+            setSessionId(existing);
+            setSession({ ...s, lang });
+          }
+          return;
+        }
+
+        await createSession();
+      } catch {
+        await createSession();
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
     }
-  }, [createSession]);
+
+    void loadSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [createSession, lang, syncSessionLang]);
 
   const updateProfile = useCallback(async (profile: UserProfile) => {
     if (!sessionId) return;

@@ -12,6 +12,7 @@ BUFS 공지사항 크롤러 - 그누보드5(gnuboard5) 기반 게시판
 import logging
 import re
 from datetime import date, datetime
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from app.config import settings
 from app.crawler.base_crawler import BaseCrawler, BUFS_BASE_URL
 from app.crawler.change_detector import CrawledItem
@@ -44,6 +45,21 @@ def _current_semester_label() -> str:
         return f"{today.year}-1"
     else:
         return f"{today.year - 1}-2"
+
+
+def _normalize_post_url(url: str) -> str:
+    """
+    gnuboard5 게시글 URL에서 목록 페이지 파라미터(&page=N)를 제거합니다.
+
+    gnuboard5는 목록에서 게시글 링크에 현재 페이지 번호를 포함시킵니다.
+    새 게시글이 올라오면 기존 게시글이 다음 페이지로 밀려 URL이 바뀌므로
+    page 파라미터를 제거한 정규화 URL을 source_id로 사용합니다.
+    """
+    parsed = urlparse(url)
+    qs = parse_qs(parsed.query, keep_blank_values=True)
+    qs.pop("page", None)
+    normalized_query = urlencode(sorted((k, v[0]) for k, v in qs.items()))
+    return urlunparse(parsed._replace(query=normalized_query))
 
 
 def _parse_post_date(date_str: str) -> date | None:
@@ -107,25 +123,32 @@ class NoticeCrawler(BaseCrawler):
     def get_targets(self) -> list[dict]:
         return self.DEFAULT_TARGETS
 
-    def crawl(self, pinned_only: bool | None = None) -> list[CrawledItem]:
+    def crawl(
+        self,
+        pinned_only: bool | None = None,
+        known_hashes: dict | None = None,
+    ) -> list[CrawledItem]:
         """
         모든 대상 게시판을 크롤링합니다.
 
         Args:
             pinned_only: None=전체, True=고정공지만, False=번호게시글만
+            known_hashes: ChangeDetector.get_all_tracked() 결과.
+                          전달 시 이미 알려진 일반공지는 HTTP 요청 없이 스텁으로 처리합니다.
         """
         semester_start = _current_semester_start()
         semester_label = _current_semester_label()
         mode_label = {None: "전체", True: "고정공지만", False: "번호게시글만"}
         logger.info(
-            "크롤링 시작: 학기=%s, 기준일=%s, 모드=%s",
+            "크롤링 시작: 학기=%s, 기준일=%s, 모드=%s, known=%d건",
             semester_label, semester_start.isoformat(), mode_label[pinned_only],
+            len(known_hashes) if known_hashes else 0,
         )
 
         all_items: list[CrawledItem] = []
         for target in self.get_targets():
             items = self._crawl_board(
-                target, semester_start, semester_label, pinned_only,
+                target, semester_start, semester_label, pinned_only, known_hashes,
             )
             all_items.extend(items)
             logger.info(
@@ -144,6 +167,7 @@ class NoticeCrawler(BaseCrawler):
         semester_start: date,
         semester_label: str,
         pinned_only: bool | None = None,
+        known_hashes: dict | None = None,
     ) -> list[CrawledItem]:
         """
         단일 게시판의 목록 페이지를 순회하며 게시글을 수집합니다.
@@ -151,9 +175,11 @@ class NoticeCrawler(BaseCrawler):
         - 번호게시글: 날짜가 semester_start 이전이면 중단
         - 고정공지: 날짜 필터 면제 (오래된 공지도 수집)
         - pinned_only: None=전체, True=고정공지만, False=번호게시글만
+        - known_hashes: 이미 추적 중인 게시글 해시. 일반공지가 알려진 경우 HTTP 생략.
         """
         items: list[CrawledItem] = []
         base_url = target["list_url"]
+        known = known_hashes or {}
 
         for page in range(1, settings.crawler.max_pages_per_board + 1):
             list_url = f"{base_url}&page={page}" if page > 1 else base_url
@@ -168,11 +194,30 @@ class NoticeCrawler(BaseCrawler):
             )
 
             for url, title, post_date, is_pinned in posts:
-                item = self._crawl_post(
-                    url, title, post_date, target, semester_label, is_pinned,
-                )
-                if item:
-                    items.append(item)
+                normalized = _normalize_post_url(url)
+
+                # 고정공지는 내용이 바뀔 수 있으므로 항상 재확인.
+                # 일반공지는 이미 추적 중이면 HTTP 요청 없이 캐시 해시로 스텁 생성.
+                if normalized in known and not is_pinned:
+                    cached = known[normalized]
+                    items.append(CrawledItem(
+                        source_id=normalized,
+                        title=cached.get("title", title),
+                        content="",
+                        content_type=target["content_type"],
+                        content_hash=cached["content_hash"],
+                        crawled_at=datetime.now(),
+                        source_name=target["name"],
+                        metadata=cached.get("metadata", {}),
+                        is_pinned=False,
+                    ))
+                    logger.debug("스텁 사용 (재크롤 생략): %s", normalized)
+                else:
+                    item = self._crawl_post(
+                        url, title, post_date, target, semester_label, is_pinned,
+                    )
+                    if item:
+                        items.append(item)
 
             if stop:
                 logger.info(
@@ -343,7 +388,7 @@ class NoticeCrawler(BaseCrawler):
         date_str = post_date.isoformat() if post_date else ""
 
         return CrawledItem(
-            source_id=url,
+            source_id=_normalize_post_url(url),
             title=title,
             content=full_content,
             content_type=target["content_type"],

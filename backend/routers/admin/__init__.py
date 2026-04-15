@@ -9,6 +9,7 @@ from backend.routers.admin.crawler import router as crawler_router
 from backend.routers.admin.logs import router as logs_router
 from backend.routers.admin.contacts import router as contacts_router
 from backend.routers.admin.graph import router as graph_router
+from backend.routers.admin.faq import router as faq_router
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 router.include_router(auth_router)
@@ -18,3 +19,4 @@ router.include_router(crawler_router)
 router.include_router(logs_router)
 router.include_router(contacts_router)
 router.include_router(graph_router)
+router.include_router(faq_router)

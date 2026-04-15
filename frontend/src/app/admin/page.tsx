@@ -1,13 +1,9 @@
 "use client";
-import { useState, use } from "react";
+import { useState} from "react";
 import { useRouter } from "next/navigation";
-import type { Lang } from "@/lib/types";
-import { t } from "@/lib/i18n";
 import { useAdmin } from "@/hooks/useAdmin";
 
-export default function AdminLoginPage({ params }: { params: Promise<{ lang: string }> }) {
-  const { lang: rawLang } = use(params);
-  const lang = (rawLang === "en" ? "en" : "ko") as Lang;
+export default function AdminLoginPage() {
   const router = useRouter();
   const { login, error } = useAdmin();
   const [pw, setPw] = useState("");
@@ -19,7 +15,7 @@ export default function AdminLoginPage({ params }: { params: Promise<{ lang: str
     setLoading(true);
     const ok = await login(pw);
     setLoading(false);
-    if (ok) window.location.href = `/${lang}/admin/dashboard`;
+    if (ok) window.location.href = `/admin/dashboard`;
   };
 
   return (
@@ -27,16 +23,16 @@ export default function AdminLoginPage({ params }: { params: Promise<{ lang: str
       <div className="w-full max-w-sm">
         <div className="text-center mb-6">
           <div className="text-4xl mb-2">{"\uD83D\uDD10"}</div>
-          <h1 className="text-xl font-bold text-navy">{t(lang, "admin.login_title")}</h1>
+          <h1 className="text-xl font-bold text-navy">{"관리자 로그인"}</h1>
         </div>
         <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-border p-6 shadow-sm space-y-4">
           <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} autoFocus
-            placeholder={t(lang, "admin.password_ph")}
+            placeholder={"관리자 비밀번호 입력"}
             className="w-full px-3 py-2.5 border border-border rounded-lg text-sm focus:border-accent outline-none" />
           {error && <p className="text-xs text-red-500">{error}</p>}
           <button type="submit" disabled={loading}
             className="w-full py-2.5 bg-accent text-white rounded-lg font-medium hover:bg-accent/90 disabled:opacity-50 transition-colors">
-            {loading ? "..." : t(lang, "admin.login_btn")}
+            {loading ? "..." : "로그인"}
           </button>
         </form>
       </div>

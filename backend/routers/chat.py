@@ -100,8 +100,19 @@ def _enrich_analysis(question: str, analysis, router_inst, session_data: dict):
             analysis.missing_info.remove("student_id")
     if not analysis.entities.get("department") and _profile.get("department"):
         analysis.entities["department"] = _profile["department"]
-    if _profile.get("student_type") and _profile["student_type"] != "내국인":
-        analysis.student_type = _profile["student_type"]
+    if _profile.get("student_type"):
+        analysis.student_type = _profile["student_type"]  # 내국인도 포함 (버그 수정)
+
+    # 학년 추정: 학번(입학연도) 기반 자동 계산, 프롬프트 컨텍스트 전용
+    if getattr(analysis, "grade", None) is None and analysis.student_id:
+        try:
+            from app.config import settings as _settings
+            adm = int(analysis.student_id)
+            est = _settings.admin_faq.current_academic_year - adm + 1
+            if 1 <= est <= 6:
+                analysis.grade = est
+        except (ValueError, TypeError, AttributeError):
+            pass
 
     # 성적표 기반 컨텍스트
     transcript_data = session_data.get("transcript")
@@ -143,6 +154,18 @@ def _enrich_analysis(question: str, analysis, router_inst, session_data: dict):
         except Exception as e:
             logger.warning("성적표 분석 실패: %s", e)
 
+    # 성적표 컨텍스트가 없을 때 프로필 정보(학번·유형·학년)를 student_context로 구성
+    if not student_context and (analysis.student_id or analysis.student_type):
+        parts = []
+        if analysis.student_id:
+            parts.append(f"{analysis.student_id}학번")
+        if analysis.student_type:
+            parts.append(analysis.student_type)
+        if getattr(analysis, "grade", None):
+            parts.append(f"{analysis.grade}학년(추정)")
+        if parts:
+            student_context = "[학생 정보] " + " ".join(parts)
+
     return analysis, transcript_context, student_context
 
 
@@ -150,15 +173,39 @@ def _serialize_results(results: list) -> list[dict]:
     """SearchResult 리스트를 JSON 직렬화 가능 dict로 변환."""
     items = []
     for r in results[:10]:  # 최대 10개
+        meta = r.metadata or {}
         items.append({
-            "text": (r.text or "")[:200],
+            "text": r.text or "",  # 전체 텍스트 (하이라이팅용)
             "score": round(float(r.score or 0), 4),
             "source": r.source or "",
             "page_number": getattr(r, "page_number", 0) or 0,
-            "doc_type": (r.metadata or {}).get("doc_type", ""),
-            "in_context": bool((r.metadata or {}).get("in_context")),
+            "doc_type": meta.get("doc_type", ""),
+            "in_context": bool(meta.get("in_context")),
+            "section_path": meta.get("section_path", ""),
+            "source_url": meta.get("source_url", ""),
+            "title": meta.get("title", ""),
+            "post_date": meta.get("post_date", ""),
+            "faq_id": meta.get("faq_id", ""),
+            "faq_question": meta.get("faq_question", ""),
+            "faq_answer": meta.get("faq_answer", ""),
         })
     return items
+
+
+def _build_generation_cache_kwargs(question: str, merged, analysis, student_context: str) -> dict:
+    return {
+        "question": question,
+        "context": merged.formatted_context,
+        "student_id": analysis.student_id,
+        "question_focus": analysis.entities.get("question_focus"),
+        "lang": analysis.lang,
+        "matched_terms": analysis.matched_terms,
+        "student_context": student_context,
+        "context_confidence": merged.context_confidence,
+        "question_type": analysis.question_type.value if analysis.question_type else None,
+        "intent": analysis.intent.value if analysis.intent else None,
+        "entities": analysis.entities,
+    }
 
 
 # ── SSE 스트리밍 엔드포인트 ──
@@ -269,7 +316,7 @@ async def chat_stream(
         _t4 = time.monotonic()
         if (
             merged.context_confidence is not None
-            and merged.context_confidence < 0.5
+            and merged.context_confidence < 0.3
             and not merged.direct_answer
             and not transcript_context
         ):
@@ -342,7 +389,7 @@ async def chat_stream(
                 "intent": analysis.intent.value if analysis.intent else "",
                 "duration_ms": int((time.monotonic() - _t0) * 1000),
             }, ensure_ascii=False)}
-            _try_log(question, msg, sid, analysis, _t0)
+            _try_log(question, msg, sid, analysis, _t0, context_confidence=merged.context_confidence)
             return
 
         # direct_answer 단락 응답 (KO only)
@@ -354,7 +401,33 @@ async def chat_stream(
                 "intent": analysis.intent.value if analysis.intent else "",
                 "duration_ms": int((time.monotonic() - _t0) * 1000),
             }, ensure_ascii=False)}
-            _try_log(question, merged.direct_answer, sid, analysis, _t0)
+            _try_log(question, merged.direct_answer, sid, analysis, _t0, context_confidence=merged.context_confidence)
+            return
+
+        all_results = search_results["vector_results"] + search_results["graph_results"]
+        cache_kwargs = _build_generation_cache_kwargs(question, merged, analysis, student_context)
+        cached_answer = generator.get_cached_response(**cache_kwargs)
+        if cached_answer:
+            messages = session_data.get("messages", [])
+            messages.append({"role": "user", "content": question})
+            messages.append({
+                "role": "assistant",
+                "content": cached_answer,
+                "rated": False,
+                "rating": None,
+            })
+            session_store.update(sid, "messages", messages)
+            _try_log(question, cached_answer, sid, analysis, _t0, context_confidence=merged.context_confidence)
+            yield {"event": "done", "data": json.dumps({
+                "answer": cached_answer,
+                "source_urls": [
+                    {"title": u.get("title", ""), "url": u.get("url", "")}
+                    for u in (merged.source_urls or [])
+                ],
+                "results": _serialize_results(all_results),
+                "intent": analysis.intent.value if analysis.intent else "",
+                "duration_ms": int((time.monotonic() - _t0) * 1000),
+            }, ensure_ascii=False)}
             return
 
         # Stage 5: LLM 스트리밍 생성
@@ -437,7 +510,6 @@ async def chat_stream(
 
         # Stage 6: 응답 검증
         _t6 = time.monotonic()
-        all_results = search_results["vector_results"] + search_results["graph_results"]
         try:
             passed, warnings = validator.validate(
                 answer=full_answer,
@@ -456,6 +528,8 @@ async def chat_stream(
         if footer:
             full_answer += footer
 
+        generator.store_cached_response(full_answer, **cache_kwargs)
+
         # 메시지 이력에 추가
         messages = session_data.get("messages", [])
         messages.append({"role": "user", "content": question})
@@ -468,7 +542,7 @@ async def chat_stream(
         session_store.update(sid, "messages", messages)
 
         # 로그
-        _try_log(question, full_answer, sid, analysis, _t0)
+        _try_log(question, full_answer, sid, analysis, _t0, context_confidence=merged.context_confidence)
 
         # stage별 타이밍 로그
         _ms_total = int((time.monotonic() - _t0) * 1000)
@@ -560,7 +634,7 @@ async def chat_sync(
                 "- PDF 학사 안내 자료가 등록되어 있는지\n"
                 "- 질문에 학번을 포함했는지 (예: 2023학번)"
             )
-        _try_log(question, msg, sid, analysis, _t0)
+        _try_log(question, msg, sid, analysis, _t0, context_confidence=merged.context_confidence)
         return ChatResponse(
             answer=msg,
             intent=analysis.intent.value if analysis.intent else "",
@@ -568,11 +642,29 @@ async def chat_sync(
         )
 
     if merged.direct_answer and analysis.lang != "en":
-        _try_log(question, merged.direct_answer, sid, analysis, _t0)
+        _try_log(question, merged.direct_answer, sid, analysis, _t0, context_confidence=merged.context_confidence)
         return ChatResponse(
             answer=merged.direct_answer,
             source_urls=[SourceURL(title=u.get("title", ""), url=u.get("url", ""))
                          for u in (merged.source_urls or [])],
+            intent=analysis.intent.value if analysis.intent else "",
+            duration_ms=int((time.monotonic() - _t0) * 1000),
+        )
+
+    all_results = search_results["vector_results"] + search_results["graph_results"]
+    cache_kwargs = _build_generation_cache_kwargs(question, merged, analysis, student_context)
+    cached_answer = generator.get_cached_response(**cache_kwargs)
+    if cached_answer:
+        messages = session_data.get("messages", [])
+        messages.append({"role": "user", "content": question})
+        messages.append({"role": "assistant", "content": cached_answer, "rated": False, "rating": None})
+        session_store.update(sid, "messages", messages)
+        _try_log(question, cached_answer, sid, analysis, _t0, context_confidence=merged.context_confidence)
+        return ChatResponse(
+            answer=cached_answer,
+            source_urls=[SourceURL(title=u.get("title", ""), url=u.get("url", ""))
+                         for u in (merged.source_urls or [])],
+            results=[SearchResultItem(**r) for r in _serialize_results(all_results)],
             intent=analysis.intent.value if analysis.intent else "",
             duration_ms=int((time.monotonic() - _t0) * 1000),
         )
@@ -638,7 +730,6 @@ async def chat_sync(
             logger.debug("Phase4 후처리 실패 (sync), 원본 유지: %s", e)
 
     # 응답 검증
-    all_results = search_results["vector_results"] + search_results["graph_results"]
     try:
         passed, warnings = validator.validate(
             answer=full_answer,
@@ -656,6 +747,8 @@ async def chat_sync(
     if footer:
         full_answer += footer
 
+    generator.store_cached_response(full_answer, **cache_kwargs)
+
     # 메시지 이력 저장
     messages = session_data.get("messages", [])
     messages.append({"role": "user", "content": question})
@@ -663,7 +756,7 @@ async def chat_sync(
     session_store.update(sid, "messages", messages)
 
     # 로그
-    _try_log(question, full_answer, sid, analysis, _t0)
+    _try_log(question, full_answer, sid, analysis, _t0, context_confidence=merged.context_confidence)
 
     return ChatResponse(
         answer=full_answer,
@@ -695,7 +788,14 @@ async def clear_history(session_id: str = Query(...)):
 
 # ── helper ──
 
-def _try_log(question: str, answer: str, sid: str, analysis, _t0: float):
+def _try_log(
+    question: str,
+    answer: str,
+    sid: str,
+    analysis,
+    _t0: float,
+    context_confidence: float | None = None,
+):
     """Q&A 로그 기록. PIIRedactor 실패 시에도 원본으로 기록."""
     duration_ms = int((time.monotonic() - _t0) * 1000)
     intent_name = analysis.intent.name if analysis.intent else ""
@@ -728,6 +828,7 @@ def _try_log(question: str, answer: str, sid: str, analysis, _t0: float):
             intent=intent_name,
             student_id=student_id,
             duration_ms=duration_ms,
+            context_confidence=context_confidence,
         )
     except Exception as e:
         logger.error("대화 로그 기록 실패: %s", e)

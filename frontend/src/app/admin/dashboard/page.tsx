@@ -1,6 +1,5 @@
 "use client";
-import { useState, useEffect, use } from "react";
-import type { Lang } from "@/lib/types";
+import { useState, useEffect} from "react";
 import { t } from "@/lib/i18n";
 import { useAdmin } from "@/hooks/useAdmin";
 
@@ -9,9 +8,7 @@ interface DailyCount { date: string; count: number }
 interface IntentCount { intent: string; count: number }
 interface RecentChat { time: string; question: string; intent: string; duration_ms: number; rating: string }
 
-export default function AdminDashboard({ params }: { params: Promise<{ lang: string }> }) {
-  const { lang: rawLang } = use(params);
-  const lang = (rawLang === "en" ? "en" : "ko") as Lang;
+export default function AdminDashboard() {
   const { token, fetchDashboard, logout } = useAdmin();
 
   const [kpi, setKpi] = useState<KPI | null>(null);
@@ -33,7 +30,7 @@ export default function AdminDashboard({ params }: { params: Promise<{ lang: str
       <div className="min-h-screen bg-main flex items-center justify-center">
         <div className="text-center">
           <p className="text-muted mb-4">인증이 필요합니다.</p>
-          <a href={`/${lang}/admin`} className="text-accent hover:underline">로그인 페이지로 이동</a>
+          <a href={`/admin`} className="text-accent hover:underline">로그인 페이지로 이동</a>
         </div>
       </div>
     );
@@ -42,16 +39,16 @@ export default function AdminDashboard({ params }: { params: Promise<{ lang: str
   if (loading) return <div className="min-h-screen bg-main flex items-center justify-center"><p className="text-muted animate-pulse">로딩 중...</p></div>;
 
   const kpiCards = [
-    { label: t(lang, "admin.total_chats"), value: kpi?.total_questions ?? 0, icon: "\uD83D\uDCAC", color: "border-l-blue-500" },
-    { label: t(lang, "admin.today_chats"), value: kpi?.today_questions ?? 0, icon: "\uD83D\uDCCA", color: "border-l-green-500" },
-    { label: t(lang, "admin.avg_response"), value: `${kpi?.avg_duration_sec ?? 0}s`, icon: "\u23F1\uFE0F", color: "border-l-orange-500" },
-    { label: t(lang, "admin.faq_count"), value: kpi?.faq_count ?? 0, icon: "\uD83D\uDCCB", color: "border-l-purple-500" },
+    { label: "총 대화 수", value: kpi?.total_questions ?? 0, icon: "\uD83D\uDCAC", color: "border-l-blue-500" },
+    { label: "오늘 대화", value: kpi?.today_questions ?? 0, icon: "\uD83D\uDCCA", color: "border-l-green-500" },
+    { label: "평균 응답", value: `${kpi?.avg_duration_sec ?? 0}s`, icon: "\u23F1\uFE0F", color: "border-l-orange-500" },
+    { label: "FAQ 항목", value: kpi?.faq_count ?? 0, icon: "\uD83D\uDCCB", color: "border-l-purple-500" },
   ];
 
   return (
     <div className="bg-main min-h-full">
       <div className="max-w-6xl mx-auto px-6 py-6 space-y-6">
-        <h1 className="text-lg font-bold text-navy">{t(lang, "admin.dashboard")}</h1>
+        <h1 className="text-lg font-bold text-navy">{"대시보드"}</h1>
         {/* KPI Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {kpiCards.map((c) => (

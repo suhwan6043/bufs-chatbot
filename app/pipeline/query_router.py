@@ -220,6 +220,7 @@ class QueryRouter:
             student_id=analysis.student_id,
             doc_type=preferred_types,
             department=department,
+            student_type=analysis.student_type,
             query_embedding=_q_emb,
         )
 
@@ -234,6 +235,7 @@ class QueryRouter:
                 n_results=n_candidates,
                 student_id=analysis.student_id,
                 department=department,
+                student_type=analysis.student_type,
                 query_embedding=_q_emb,
             )
             # 중복 제거 후 병합
@@ -255,6 +257,7 @@ class QueryRouter:
                     n_results=5,
                     student_id=analysis.student_id,
                     doc_type=["faq"],
+                    student_type=analysis.student_type,
                     query_embedding=_q_emb,
                 )
                 seen_texts = {c.text[:100] for c in candidates}

@@ -1,9 +1,8 @@
 "use client";
-import { useState, useEffect, use } from "react";
+import { useState, useEffect } from "react";
 import { useAdmin, type EarlyGradData } from "@/hooks/useAdmin";
 
-export default function EarlyGradPage({ params }: { params: Promise<{ lang: string }> }) {
-  use(params);
+export default function EarlyGradPage() {
   const {
     token, fetchEarlyGrad,
     saveEarlyGradSchedule, saveEarlyGradEligibility,

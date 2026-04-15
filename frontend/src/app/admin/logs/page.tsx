@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, use } from "react";
+import { useState, useEffect } from "react";
 import { useAdmin, type LogEntry } from "@/hooks/useAdmin";
 import { BASE_URL } from "@/lib/api";
 
@@ -18,9 +18,7 @@ function renderStars(rating: string | number | null | undefined) {
   return "★".repeat(Math.min(n, 5)) + "☆".repeat(Math.max(0, 5 - n));
 }
 
-export default function LogsPage({ params }: { params: Promise<{ lang: string }> }) {
-  const { lang: rawLang } = use(params);
-  const lang = rawLang === "en" ? "en" : "ko";
+export default function LogsPage() {
   const { token, fetchLogDates, fetchLogs } = useAdmin();
 
   const [dates, setDates] = useState<string[]>([]);

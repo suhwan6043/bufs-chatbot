@@ -12,7 +12,7 @@ export default function StreamingMessage({ text }: { text: string }) {
         <Sparkles className="w-5 h-5 text-white" />
       </div>
       <div className="max-w-[85%] lg:max-w-[75%] p-4 bg-slate-50 border border-slate-200 rounded-[1.5rem] rounded-tl-none shadow-sm">
-        <div className="prose prose-sm max-w-none text-slate-800">
+        <div className="prose prose-sm max-w-none whitespace-pre-wrap text-slate-800">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{escaped + " \u258C"}</ReactMarkdown>
         </div>
       </div>

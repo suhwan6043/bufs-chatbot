@@ -36,6 +36,7 @@ class ChatLogger:
         student_id: Optional[str] = None,
         duration_ms: int = 0,
         rating: Optional[int] = None,
+        context_confidence: Optional[float] = None,
     ) -> None:
         """Q&A 한 쌍을 오늘 날짜 JSONL 파일에 추가합니다."""
         entry = {
@@ -48,6 +49,8 @@ class ChatLogger:
             "duration_ms": duration_ms,
             "rating": rating,
         }
+        if context_confidence is not None:
+            entry["context_confidence"] = round(float(context_confidence), 4)
         try:
             with open(self._today_path(), "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")

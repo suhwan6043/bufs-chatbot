@@ -1,5 +1,5 @@
 "use client";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { apiFetch } from "@/lib/api";
 
 /* ── 타입 정의 ─────────────────────────────────────────── */
@@ -37,7 +37,6 @@ export interface GradRow {
   node_id: string; group: string; group_label: string; student_type: string; major: string;
   credits: number | string; liberal: number | string; global_comm: number | string;
   exam: string; cert: string;
-  // 추가 필드
   community: string; nomad: string;
   career_explore: number | null; major_explore: number | null;
   exam_bool: boolean;
@@ -52,10 +51,7 @@ export interface GradOptions {
 }
 export interface DeptCertData {
   node_id: string | null;
-  data: {
-    cert_requirement: string; cert_subjects: string;
-    cert_pass_criteria: string; cert_alternative: string;
-  };
+  data: { cert_requirement: string; cert_subjects: string; cert_pass_criteria: string; cert_alternative: string; };
 }
 export interface EarlyGradData {
   schedules: { id?: string; semester: string; start_date: string; end_date: string; method: string }[];
@@ -71,17 +67,110 @@ export interface AttachmentStatus {
   hwp: { count: number; total_kb: number };
   other: { count: number; total_kb: number };
 }
+export interface FaqItem {
+  id: string;
+  category: string;
+  question: string;
+  answer: string;
+  source: "academic" | "admin";
+  created_by?: string | null;
+  created_at?: string | null;
+  source_question?: string | null;
+  answer_type?: string | null;
+}
+export interface FaqListResponse {
+  total: number;
+  items: FaqItem[];
+  categories: string[];
+}
+export interface FaqCreateBody {
+  question: string;
+  answer: string;
+  category: string;
+  source_question?: string;
+}
+export interface FaqUpdateBody {
+  question?: string;
+  answer?: string;
+  category?: string;
+  source_question?: string;
+}
+export interface UncoveredExample {
+  question: string;
+  answer: string;
+  timestamp: string;
+  session_id: string;
+  rating: number | null;
+  refused: boolean;
+}
+export interface UncoveredCluster {
+  representative_question: string;
+  count: number;
+  last_asked: string;
+  examples: UncoveredExample[];
+}
+export interface UncoveredResponse {
+  scanned_days: number;
+  total_candidates: number;
+  clusters: UncoveredCluster[];
+}
+
+/* ── 보안 상수 ──────────────────────────────────────────── */
+
+const TOKEN_KEY = "admin_token";
+const EXPIRES_KEY = "admin_expires_ms"; // 브라우저 로컬 밀리초 (타임존 무관)
+
+function isExpired(): boolean {
+  if (typeof window === "undefined") return true;
+  const e = localStorage.getItem(EXPIRES_KEY);
+  if (!e) return true;
+  return Number(e) <= Date.now();
+}
+
+function setExpiry(ttlMs: number = 30 * 60 * 1000) {
+  // 서버 expires_at 대신 브라우저 로컬 시간 기준으로 만료 설정 (타임존 문제 회피)
+  localStorage.setItem(EXPIRES_KEY, String(Date.now() + ttlMs));
+}
+
+function readToken(): string | null {
+  if (typeof window === "undefined") return null;
+  const t = localStorage.getItem(TOKEN_KEY);
+  if (!t) return null;
+  if (isExpired()) {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(EXPIRES_KEY);
+    return null;
+  }
+  return t;
+}
 
 /* ── Hook ──────────────────────────────────────────────── */
 
-const ADMIN_TOKEN_KEY = "admin_token";
-
 export function useAdmin() {
-  const [token, setToken] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem(ADMIN_TOKEN_KEY);
-  });
+  const [token, setToken] = useState<string | null>(() => readToken());
   const [error, setError] = useState("");
+
+  // 주기적 만료 체크 (1분)
+  useEffect(() => {
+    if (!token) return;
+    const id = setInterval(() => {
+      if (isExpired()) {
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(EXPIRES_KEY);
+        setToken(null);
+      }
+    }, 60_000);
+    return () => clearInterval(id);
+  }, [token]);
+
+  // 탭 간 동기화
+  useEffect(() => {
+    const fn = (e: StorageEvent) => {
+      if (e.key === TOKEN_KEY && !e.newValue) setToken(null);
+    };
+    window.addEventListener("storage", fn);
+    return () => window.removeEventListener("storage", fn);
+  }, []);
 
   const login = useCallback(async (password: string) => {
     setError("");
@@ -90,8 +179,9 @@ export function useAdmin() {
         method: "POST",
         body: JSON.stringify({ password }),
       });
+      localStorage.setItem(TOKEN_KEY, data.token);
+      setExpiry(30 * 60 * 1000); // 30분
       setToken(data.token);
-      localStorage.setItem(ADMIN_TOKEN_KEY, data.token);
       return true;
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "로그인 실패");
@@ -103,26 +193,36 @@ export function useAdmin() {
     if (token) {
       try { await apiFetch("/api/admin/logout", { method: "POST", headers: { Authorization: `Bearer ${token}` } }); } catch {}
     }
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(EXPIRES_KEY);
     setToken(null);
-    localStorage.removeItem(ADMIN_TOKEN_KEY);
   }, [token]);
 
-  /* ── 인증 fetch (GET/POST/PUT) ── */
   const authFetch = useCallback(async <T,>(path: string, opts?: RequestInit): Promise<T> => {
-    if (!token) throw new Error("Not authenticated");
+    if (!token || isExpired()) {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(EXPIRES_KEY);
+      setToken(null);
+      throw new Error("Not authenticated");
+    }
     const headers: Record<string, string> = { Authorization: `Bearer ${token}`, ...(opts?.headers as Record<string, string> ?? {}) };
     if (opts?.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
-    return apiFetch<T>(path, { ...opts, headers });
+    try {
+      return await apiFetch<T>(path, { ...opts, headers });
+    } catch (e: unknown) {
+      // 401 → 토큰 만료/무효 → 자동 로그아웃
+      if (e instanceof Error && e.message.includes("401")) {
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(EXPIRES_KEY);
+        setToken(null);
+      }
+      throw e;
+    }
   }, [token]);
 
-  /* ── 대시보드 ── */
   const fetchDashboard = useCallback(() => authFetch<DashboardData>("/api/admin/dashboard"), [authFetch]);
-
-  /* ── 대화 로그 ── */
   const fetchLogDates = useCallback(() => authFetch<{ dates: string[] }>("/api/admin/logs/dates"), [authFetch]);
   const fetchLogs = useCallback((params: string) => authFetch<LogsResponse>(`/api/admin/logs?${params}`), [authFetch]);
-
-  /* ── 크롤러 ── */
   const fetchCrawler = useCallback(() => authFetch<CrawlerStatus>("/api/admin/crawler"), [authFetch]);
   const triggerCrawl = useCallback(() => authFetch<{ ok: boolean; message: string }>("/api/admin/crawler/trigger", { method: "POST" }), [authFetch]);
   const resetHashes = useCallback(() => authFetch<{ ok: boolean }>("/api/admin/crawler/reset-hashes", { method: "POST" }), [authFetch]);
@@ -130,45 +230,53 @@ export function useAdmin() {
   const fetchCrawlHistory = useCallback(() => authFetch<{ records: Record<string, unknown>[] }>("/api/admin/crawler/history"), [authFetch]);
   const fetchNotices = useCallback(() => authFetch<{ notices: Record<string, unknown>[] }>("/api/admin/crawler/notices"), [authFetch]);
   const fetchAttachments = useCallback(() => authFetch<AttachmentStatus>("/api/admin/crawler/attachments"), [authFetch]);
-
-  /* ── 그래프 ── */
   const fetchGraph = useCallback(() => authFetch<GraphStatus>("/api/admin/graph"), [authFetch]);
   const resetChat = useCallback(() => authFetch<{ ok: boolean; message: string }>("/api/admin/graph/reset-chat", { method: "POST" }), [authFetch]);
-
-  /* ── 연락처 ── */
   const fetchContacts = useCallback(() => authFetch<{ total: number; entries: ContactEntry[] }>("/api/admin/contacts"), [authFetch]);
   const searchContacts = useCallback((q: string) => authFetch<{ is_contact_query: boolean; results: ContactEntry[] }>(`/api/admin/contacts/search?q=${encodeURIComponent(q)}`), [authFetch]);
   const fetchContactsJson = useCallback(() => authFetch<{ json_content: string }>("/api/admin/contacts/json"), [authFetch]);
   const saveContactsJson = useCallback((json_content: string) => authFetch<{ ok: boolean }>("/api/admin/contacts", { method: "PUT", body: JSON.stringify({ json_content }) }), [authFetch]);
-
-  /* ── 졸업요건 ── */
   const fetchGraduation = useCallback(() => authFetch<{ rows: GradRow[] }>("/api/admin/graduation"), [authFetch]);
   const saveGraduation = useCallback((body: unknown) => authFetch<{ ok: boolean }>("/api/admin/graduation", { method: "PUT", body: JSON.stringify(body) }), [authFetch]);
   const fetchGradOptions = useCallback(() => authFetch<GradOptions>("/api/admin/graduation/options"), [authFetch]);
   const fetchDeptCert = useCallback((major: string) => authFetch<DeptCertData>(`/api/admin/graduation/dept-cert?major=${encodeURIComponent(major)}`), [authFetch]);
   const saveDeptCert = useCallback((body: unknown) => authFetch<{ ok: boolean }>("/api/admin/graduation/dept-cert", { method: "PUT", body: JSON.stringify(body) }), [authFetch]);
-
-  /* ── 조기졸업 ── */
   const fetchEarlyGrad = useCallback(() => authFetch<EarlyGradData>("/api/admin/early-graduation"), [authFetch]);
   const saveEarlyGradSchedule = useCallback((body: unknown) => authFetch<{ ok: boolean }>("/api/admin/early-graduation/schedule", { method: "PUT", body: JSON.stringify(body) }), [authFetch]);
   const saveEarlyGradEligibility = useCallback((body: unknown) => authFetch<{ ok: boolean }>("/api/admin/early-graduation/eligibility", { method: "PUT", body: JSON.stringify(body) }), [authFetch]);
   const saveEarlyGradCriteria = useCallback((body: unknown) => authFetch<{ ok: boolean }>("/api/admin/early-graduation/criteria", { method: "PUT", body: JSON.stringify(body) }), [authFetch]);
   const saveEarlyGradNotes = useCallback((body: unknown) => authFetch<{ ok: boolean }>("/api/admin/early-graduation/notes", { method: "PUT", body: JSON.stringify(body) }), [authFetch]);
-
-  /* ── 학사일정 ── */
   const fetchSchedule = useCallback(() => authFetch<{ events: ScheduleEvent[] }>("/api/admin/schedule"), [authFetch]);
   const addSchedule = useCallback((body: unknown) => authFetch<{ ok: boolean }>("/api/admin/schedule", { method: "POST", body: JSON.stringify(body) }), [authFetch]);
   const updateSchedule = useCallback((body: unknown) => authFetch<{ ok: boolean }>("/api/admin/schedule", { method: "PUT", body: JSON.stringify(body) }), [authFetch]);
 
+  // FAQ 피드백 루프 — 미답변 질의 수집 → 관리자 큐레이션 → 증분 반영
+  const fetchFaqList = useCallback((source: "all" | "admin" | "academic" = "all") =>
+    authFetch<FaqListResponse>(`/api/admin/faq?source=${source}`), [authFetch]);
+  const createFaq = useCallback((body: FaqCreateBody) =>
+    authFetch<FaqItem>("/api/admin/faq", { method: "POST", body: JSON.stringify(body) }), [authFetch]);
+  const updateFaq = useCallback((faqId: string, body: FaqUpdateBody) =>
+    authFetch<FaqItem>(`/api/admin/faq/${encodeURIComponent(faqId)}`, { method: "PUT", body: JSON.stringify(body) }), [authFetch]);
+  const deleteFaq = useCallback((faqId: string) =>
+    authFetch<{ ok: boolean; id: string }>(`/api/admin/faq/${encodeURIComponent(faqId)}`, { method: "DELETE" }), [authFetch]);
+  const fetchUncovered = useCallback((days?: number, limit?: number) => {
+    const params = new URLSearchParams();
+    if (days !== undefined) params.set("days", String(days));
+    if (limit !== undefined) params.set("limit", String(limit));
+    const q = params.toString();
+    return authFetch<UncoveredResponse>(`/api/admin/faq/uncovered${q ? "?" + q : ""}`);
+  }, [authFetch]);
+
   return {
     token, error, login, logout, authFetch,
-    fetchDashboard,
-    fetchLogDates, fetchLogs,
+    verifying: false, // layout 호환
+    fetchDashboard, fetchLogDates, fetchLogs,
     fetchCrawler, triggerCrawl, resetHashes, reingest, fetchCrawlHistory, fetchNotices, fetchAttachments,
     fetchGraph, resetChat,
     fetchContacts, searchContacts, fetchContactsJson, saveContactsJson,
     fetchGraduation, saveGraduation, fetchGradOptions, fetchDeptCert, saveDeptCert,
     fetchEarlyGrad, saveEarlyGradSchedule, saveEarlyGradEligibility, saveEarlyGradCriteria, saveEarlyGradNotes,
     fetchSchedule, addSchedule, updateSchedule,
+    fetchFaqList, createFaq, updateFaq, deleteFaq, fetchUncovered,
   };
 }

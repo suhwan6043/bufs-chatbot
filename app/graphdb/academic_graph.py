@@ -711,6 +711,7 @@ class AcademicGraph:
         question: str,
         category: str = None,
         top_k: int = 5,
+        student_type: Optional[str] = None,
     ) -> List[SearchResult]:
         """
         FAQ 그래프 검색 — IDF 가중 + 원본 stem 기반 precision 매칭.
@@ -762,6 +763,12 @@ class AcademicGraph:
             data = self.G.nodes[nid]
             if category and data.get("카테고리") != category:
                 continue
+            # student_type 필터: 노드에 student_types 리스트가 있을 때만 적용
+            # 빈 리스트이거나 필드 없음 → 전체 허용 (하위 호환)
+            if student_type and settings.admin_faq.student_type_filter_enabled:
+                node_stypes = data.get("student_types", [])
+                if node_stypes and student_type not in node_stypes:
+                    continue
 
             # stems 캐시 활용 (빌드 시 사전 계산)
             cached = self._faq_stems_cache.get(nid)
@@ -1099,7 +1106,7 @@ class AcademicGraph:
                     faq_top_k = 3
                 else:
                     faq_top_k = 2
-                results.extend(self.search_faq(question, top_k=faq_top_k))
+                results.extend(self.search_faq(question, top_k=faq_top_k, student_type=student_type))
 
         # ── 보충 탐색 게이팅: direct_answer가 이미 있으면 보충 스킵 ──
         # focused handler가 정확한 답을 제공한 경우 추가 노이즈 방지

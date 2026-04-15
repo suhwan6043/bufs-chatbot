@@ -81,14 +81,17 @@ def _run_notice_job() -> None:
     logger.info("[스케줄러] 공지사항 크롤링 잡 시작")
 
     try:
-        # ── 크롤링 ───────────────────────────────────────────────
-        from app.crawler.notice_crawler import NoticeCrawler
-        crawler = NoticeCrawler()
-        items = crawler.crawl(pinned_only=False)  # 번호게시글만 (고정공지는 정적 수집)
-
-        # ── 변경 감지 ─────────────────────────────────────────────
+        # ── 변경 감지기 + known_hashes 준비 (크롤 전에 생성) ────────
         from app.crawler.change_detector import ChangeDetector
         detector = ChangeDetector()
+        known_hashes = detector.get_all_tracked()
+
+        # ── 크롤링 (known 일반공지는 HTTP 생략, 스텁 사용) ───────────
+        from app.crawler.notice_crawler import NoticeCrawler
+        crawler = NoticeCrawler()
+        items = crawler.crawl(pinned_only=None, known_hashes=known_hashes)
+
+        # ── 변경 감지 ─────────────────────────────────────────────
         events = detector.detect(items)
 
         if not events:

@@ -2,8 +2,7 @@
 import { useState, useEffect, use, useCallback } from "react";
 import { useAdmin, type GradRow, type GradOptions, type DeptCertData } from "@/hooks/useAdmin";
 
-export default function GraduationPage({ params }: { params: Promise<{ lang: string }> }) {
-  use(params);
+export default function GraduationPage() {
   const {
     token, fetchGraduation, saveGraduation,
     fetchGradOptions, fetchDeptCert, saveDeptCert,

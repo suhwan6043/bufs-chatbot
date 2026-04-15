@@ -60,6 +60,7 @@ class Chunk:
     cohort_from: int = 2016  # 이 청크가 적용되는 최소 학번 (포함)
     cohort_to: int = 2030    # 이 청크가 적용되는 최대 학번 (포함)
     semester: str = ""       # 학기 (예: "2026-1", "2025-2"), 빈 문자열 = 전 학기 공통
+    student_types: str = ""  # 허용 학생유형 파이프 구분 문자열 "내국인|외국인|편입생". 빈 문자열 = 전체 허용
     metadata: dict = field(default_factory=dict)
 
 
@@ -69,6 +70,7 @@ class QueryAnalysis:
     intent: Intent
     student_id: Optional[str] = None
     student_type: Optional[str] = None  # '내국인' | '외국인' | '편입생'
+    grade: Optional[int] = None         # 추정 학년 (1~6), 프롬프트 컨텍스트 전용
     entities: dict = field(default_factory=dict)
     requires_graph: bool = False
     requires_vector: bool = True

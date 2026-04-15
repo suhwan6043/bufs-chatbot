@@ -67,3 +67,6 @@ data/attachments/
 data/crawl_meta/
 data/extracted/
 data/pdfs/crawled/
+
+# Admin-curated FAQ (runtime additions, not version-controlled)
+data/faq_admin.json

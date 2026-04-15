@@ -21,6 +21,13 @@ export interface SearchResultItem {
   page_number: number;
   doc_type: string;
   in_context: boolean;
+  section_path?: string;
+  source_url?: string;
+  title?: string;
+  post_date?: string;
+  faq_id?: string;
+  faq_question?: string;
+  faq_answer?: string;
 }
 
 export interface SessionInfo {

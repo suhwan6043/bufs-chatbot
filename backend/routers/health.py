@@ -101,6 +101,52 @@ async def search_timing(question: str = "2023학번 이후 학생의 한 학기 
     }
 
 
+@router.get("/debug-context")
+async def debug_context(question: str = "20학번 졸업요건 알려줘"):
+    """디버그: 질문의 컨텍스트 크기와 프롬프트 크기 확인."""
+    from backend.dependencies import get_analyzer, get_router, get_merger, get_generator
+    from app.pipeline.answer_generator import SYSTEM_PROMPT
+
+    analyzer = get_analyzer()
+    router_inst = get_router()
+    merger = get_merger()
+    generator = get_generator()
+
+    analysis = analyzer.analyze(question)
+    results = router_inst.route_and_search(question, analysis)
+    merged = merger.merge(
+        vector_results=results["vector_results"],
+        graph_results=results["graph_results"],
+        question=question,
+        intent=analysis.intent,
+        entities=analysis.entities,
+        question_type=analysis.question_type,
+    )
+
+    prompt = generator._build_prompt(
+        question, merged.formatted_context,
+        student_id=analysis.student_id,
+        question_focus=analysis.entities.get("question_focus"),
+        lang=analysis.lang,
+        context_confidence=merged.context_confidence,
+        question_type=analysis.question_type.value if analysis.question_type else None,
+        entities=analysis.entities,
+        intent=analysis.intent.value if analysis.intent else None,
+    )
+
+    return {
+        "context_chars": len(merged.formatted_context),
+        "system_chars": len(SYSTEM_PROMPT),
+        "prompt_chars": len(prompt),
+        "total_input_chars": len(SYSTEM_PROMPT) + len(prompt),
+        "direct_answer": merged.direct_answer[:100] if merged.direct_answer else None,
+        "confidence": merged.context_confidence,
+        "intent": analysis.intent.value if analysis.intent else "",
+        "prompt_preview": prompt[:500],
+        "context_preview": merged.formatted_context[:500],
+    }
+
+
 @router.get("/llm")
 async def health_llm():
     """LLM 서버 연결 상태 확인."""

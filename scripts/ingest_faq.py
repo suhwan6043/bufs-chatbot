@@ -41,19 +41,61 @@ def load_faq(path: Path) -> list:
     return data
 
 
+def _search_question(item: dict) -> str:
+    """
+    검색·토크나이저가 사용할 질문 텍스트.
+
+    관리자 큐레이션 FAQ(`source_question` 존재)의 경우, 학생 원문 질문을
+    검색면에 포함해 비공식 문장 recall을 높인다.
+    표시용(답변 HTML 상 'Q: ...' 라벨)도 병합본을 사용 — 관리자 책임 아래
+    폴리싱된 question 이 전면에 오고 원문은 보조 구문으로 덧붙는다.
+    """
+    q = (item.get("question") or "").strip()
+    sq = (item.get("source_question") or "").strip()
+    if sq and sq not in q:
+        return f"{q} {sq}".strip()
+    return q
+
+
 def _item_text(item: dict) -> str:
-    """FAQ 항목의 해시 계산용 콘텐츠 (질문 + 답변 + 카테고리)."""
+    """FAQ 항목의 해시 계산용 콘텐츠 (질문 + 답변 + 카테고리 + student_types + cohort)."""
+    stypes = "|".join(item.get("student_types") or [])
+    cohort = f"{item.get('cohort_from', '')}-{item.get('cohort_to', '')}"
     return (
         (item.get("category") or "")
         + "|"
-        + (item.get("question") or "")
+        + _search_question(item)
         + "|"
         + (item.get("answer") or "")
+        + "|"
+        + stypes
+        + "|"
+        + cohort
     )
 
 
 def _item_hash(item: dict) -> str:
     return hashlib.sha256(_item_text(item).encode("utf-8")).hexdigest()
+
+
+def _graph_items(faq_data: list) -> list[dict]:
+    """
+    그래프 빌더에 넘길 때만 `source_question` 을 `question` 에 병합한
+    얕은 복사본을 반환한다. 원본 리스트는 변경하지 않음.
+
+    그래프 노드의 `구분` 속성(=question)이 토큰 인덱스의 소스이므로,
+    학생 원문을 여기 포함해야 비공식 문장으로도 매칭이 가능해진다.
+    """
+    out: list[dict] = []
+    for item in faq_data:
+        sq = (item.get("source_question") or "").strip()
+        if sq:
+            clone = dict(item)
+            clone["question"] = _search_question(item)
+            out.append(clone)
+        else:
+            out.append(item)
+    return out
 
 
 def to_crawled_item(item: dict) -> CrawledItem:
@@ -80,7 +122,9 @@ def create_chunk(item: dict, source_file: str) -> Chunk | None:
 
     category = item.get("category", "")
     header = f"[{category}] " if category else ""
-    text = f"{header}Q: {question}\n\nA: {answer}"
+    # 검색 텍스트: 관리자 FAQ 는 source_question 을 포함해 recall 향상.
+    search_q = _search_question(item)
+    text = f"{header}Q: {search_q}\n\nA: {answer}"
     faq_id = item.get("id", "")
     chunk_id = hashlib.md5(f"{source_file}:{faq_id}:{question}".encode()).hexdigest()
 
@@ -93,6 +137,16 @@ def create_chunk(item: dict, source_file: str) -> Chunk | None:
     answer_type = item.get("answer_type")
     if answer_type:
         meta["answer_type"] = answer_type
+    # 관리자 메타 (선택)
+    if item.get("source"):
+        meta["source"] = item["source"]
+
+    # student_types: 파이프 구분 문자열로 직렬화 (ChromaDB는 배열 미지원)
+    raw_stypes = item.get("student_types")
+    student_types_str = "|".join(raw_stypes) if raw_stypes and isinstance(raw_stypes, list) else ""
+    # cohort_from/cohort_to: JSON에 없으면 기존 기본값 유지 (하위 호환)
+    cohort_from = int(item.get("cohort_from", 2016))
+    cohort_to   = int(item.get("cohort_to",   2030))
 
     return Chunk(
         chunk_id=chunk_id,
@@ -101,9 +155,10 @@ def create_chunk(item: dict, source_file: str) -> Chunk | None:
         source_file=source_file,
         student_id=None,
         doc_type="faq",
-        cohort_from=2016,
-        cohort_to=2030,
+        cohort_from=cohort_from,
+        cohort_to=cohort_to,
         semester="",
+        student_types=student_types_str,
         metadata=meta,
     )
 
@@ -125,9 +180,9 @@ def ingest_full(store: ChromaStore, graph: AcademicGraph, faq_data: list, source
     store.add_chunks(chunks)
     logger.info("FAQ 전체 인제스트: %d개 청크 → ChromaDB", len(chunks))
 
-    # 그래프 전체 재빌드
+    # 그래프 전체 재빌드 (source_question 을 검색면에 병합)
     builder = FaqNodeBuilder()
-    stats = builder.build_from_items(graph, faq_data)
+    stats = builder.build_from_items(graph, _graph_items(faq_data))
     logger.info(
         "FAQ 그래프: 추가=%d, 업데이트=%d, 제거=%d, 엣지=%d",
         stats["added"], stats["updated"], stats["removed"], stats["edges"],
@@ -196,8 +251,9 @@ def ingest_incremental(store: ChromaStore, graph: AcademicGraph, faq_data: list,
         logger.info("FAQ 청크 추가: %d개", len(chunks_to_add))
 
     # 그래프 증분 반영 — FaqNodeBuilder.build_from_items은 upsert + 미존재 삭제
+    # source_question 을 검색면에 병합한 복사본을 넘긴다 (원본 유지).
     builder = FaqNodeBuilder()
-    graph_stats = builder.build_from_items(graph, faq_data)
+    graph_stats = builder.build_from_items(graph, _graph_items(faq_data))
     logger.info(
         "FAQ 그래프 증분: 추가=%d, 업데이트=%d, 제거=%d, 엣지=%d",
         graph_stats["added"], graph_stats["updated"], graph_stats["removed"],

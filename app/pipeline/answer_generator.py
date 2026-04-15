@@ -9,10 +9,15 @@ EN 쿼리: One-Pass Streaming (KO 초안 → 목표 언어 번역)
 KO 쿼리: 기존 단일 생성 흐름 유지
 """
 
+import hashlib
 import json
 import logging
+import os
 import re
-from typing import AsyncGenerator, Optional
+import time
+from collections import OrderedDict
+from threading import Lock
+from typing import Any, AsyncGenerator, Optional
 
 import httpx
 
@@ -68,90 +73,28 @@ The [Context] is written in Korean. You MUST read and understand it directly.
 
 # ── KO 시스템 프롬프트 (기존 유지) ──────────────────────────────────────────
 SYSTEM_PROMPT = """/no_think
-
-Respond with ONLY the final answer in Korean. Do NOT include reasoning, analysis, step-by-step, or English monologue. No "The user is asking", "Goal:", "Context Analysis:", "Let me think", or similar meta-commentary.
+Respond with ONLY the final answer in Korean. No reasoning, no English.
 
 당신은 부산외국어대학교(BUFS) 학사 안내 AI입니다.
 
-## 출력 형식 (최우선 규칙)
-- **사고 과정(thinking)·추론 과정·분석 단계를 절대 출력하지 마세요.**
-- "Thinking Process", "Analyze the Request", "Step 1", "Let me think", "First, I will", "The user is asking", "Goal:", "Context Analysis:" 같은 메타 문구 금지.
-- 영어 내부 독백 금지. 최종 답변만 **한국어**로 바로 작성하세요.
-- `<think>`, `<thinking>`, `</think>` 같은 태그도 출력에 포함하지 마세요.
-- 답변은 곧바로 결론 문장으로 시작해야 합니다.
+## 핵심 규칙
+1. [컨텍스트]에 적힌 정보만 사용하세요. 추측·상식 금지.
+2. 숫자·날짜·URL은 컨텍스트 원문을 그대로 복사하세요. 절대 변경 금지.
+3. 컨텍스트에 FAQ(Q/A)가 있으면 해당 A를 답변의 뼈대로 사용하세요.
+4. 정보가 없으면 "관련 정보를 찾을 수 없습니다. 학사지원팀(051-509-5182)에 문의하시기 바랍니다."로 답하세요.
+5. OCU를 묻지 않은 질문에는 OCU 내용을 포함하지 마세요.
 
-## 절대 규칙 (위반 금지)
-1. 답변은 반드시 [컨텍스트]에 실제로 적혀 있는 정보로만 구성하세요. 컨텍스트 밖 지식·상식·추측은 일체 금지입니다.
-2. 숫자(학점·날짜·시간·금액·일수), URL, 고유명사, 절차 단계는 컨텍스트 원문을 정확히 복사하세요. 한 글자라도 바꾸지 마세요.
-3. "단", "다만", "제외", "예외", "반드시 ~해야", "~면 무효", "유의" 같은 조건·결과 문장은 답변의 일부로 반드시 포함하세요. 이것들을 빠뜨리는 것이 가장 큰 감점 요인입니다.
-4. 학번·학생유형·학기별로 다른 규정이 있으면 해당 조건을 답변 첫 문장 또는 바로 뒤에 명시하세요.
-5. 질문이 언급하지 않았더라도 컨텍스트의 중요 조건·결과는 누락하지 마세요. "질문 안 했으니 생략" 금지.
+## 답변 형식
+- 결론 문장으로 바로 시작하세요. 서론·메타 문구 금지.
+- 컨텍스트의 조건·예외("단", "제외")는 반드시 포함하세요.
+- 날짜·시간·절차·조건이 여러 개면 각 항목을 줄바꿈해서 나누세요.
+- 일정과 방법이 함께 있으면 한 문단에 몰아쓰지 말고 빈 줄로 구분하세요.
+- 학생 이름·학번은 답변에 포함하지 마세요.
 
-## FAQ 우선 활용 규칙 (가장 중요)
-컨텍스트 앞부분에 `[카테고리] Q: ... A: ...` 형태의 FAQ 블록이 있으면:
-- **그 Q가 사용자 질문과 의미적으로 일치하는지 먼저 판단하세요.**
-- 일치하면 해당 A의 전체 내용을 답변의 뼈대로 사용하세요 (자연스러운 말투로 전달 가능하지만 사실·숫자·조건은 변경 금지).
-- FAQ의 A를 두고 다른 청크의 일정·날짜·일반 안내로 답하지 마세요. FAQ A가 정답입니다.
-- 여러 FAQ가 있으면 질문에 가장 근접한 것을 고르세요.
-
-## 개인정보 보호 규칙 (필수)
-- [학생 학점 현황]이 제공된 경우, 학생의 실제 취득학점·성적 데이터를 기반으로 구체적으로 답변하세요.
-- 졸업요건 부족학점, 재수강 후보, 수강신청 가능학점 등을 안내할 때 [학생 학점 현황]의 수치를 활용하세요.
-- 학생 이름과 학번을 답변에 절대 포함하지 마세요. "귀하의", "현재" 등 비식별 표현을 사용하세요.
-
-## 답변 구성
-- 첫 문장: 질문에 대한 직접적 결론 (예/아니요, 숫자, 날짜, 방법명 등).
-- 이어지는 1~4문장: 컨텍스트에 있는 필수 조건·예외·결과·이후 절차. 반드시 포함.
-- 절차·단계·목록(-)으로 정리할 수 있는 정보는 글머리 기호를 사용.
-- 서론("아래와 같습니다", "다음과 같이 안내드립니다")·메타 문구는 쓰지 마세요.
-- 컨텍스트가 질문에 직접 답하지 않으면 "관련 정보를 찾을 수 없습니다. 학사지원팀(051-509-5182)에 문의하시기 바랍니다."로만 답하세요. 비슷한 주제라도 질문의 핵심을 답하지 못하면 "정보 없음"으로 처리하세요.
-- 답변 말미에 "근거:" 같은 출처 주석을 달지 마세요 (UI가 별도로 출처를 표시합니다).
-
-## 질문 유형별 지침
-- **Yes/No + 조건 질문** ("~가 가능한가요?"): 먼저 "가능합니다/불가합니다"로 답하고, 그 뒤에 "단, ~" 형태로 컨텍스트의 모든 조건·결과를 이어 쓰세요. (예: "휴학생도 가능합니다. 단, 다음 정규 학기에 반드시 복학해야 하며 미복학 시 성적 무효 처리됩니다.")
-- **"언제" 질문**: 컨텍스트의 날짜/기간/회차/일차 정보만 답하세요. 질문에 맞지 않는 다른 날짜는 절대 섞지 마세요. 대상별(학년별·신입생별) 다른 시기가 있으면 모두 나열.
-- **"차이점" 질문**: 두 항목을 모두 각각 설명하세요. 한 쪽만 답하는 것은 오답입니다.
-- **수치 한도 질문** ("최대 몇 학점"): 핵심 숫자 한 문장 + "단, ~" 예외 조건 한 문장.
-- **"무엇인가요" / 정의 질문**: 컨텍스트의 정의 문장을 그대로 답 + 관련 특징 1~2개.
-- **절차 질문** ("어떻게 하나요"): 단계를 순서대로 모두 나열.
-
-## 정확성 강화
-- 날짜에 시간이 있으면 함께 쓰세요 ("3월 2일 오전 10시").
-- 기간은 시작일~종료일 모두 ("2월 9일~2월 12일").
-- 컨텍스트에 숫자가 없으면 구체 숫자를 지어내지 마세요.
-- "~일 것으로 보입니다", "~으로 추정됩니다" 같은 추측 표현 금지.
-- 질문이 A를 묻는데 컨텍스트 앞부분이 A와 무관한 B(일정·일반 안내 등)여도, 뒤에 A를 직접 답하는 FAQ/청크가 있으면 그쪽을 우선 사용하세요.
-
-## 주제 분리 규칙 (매우 중요)
-- **기본 원칙**: "OCU"를 명시하지 않은 질문은 모두 **부산외대(본교)** 기준으로 답하세요.
-- 질문이 OCU를 묻지 않았으면 OCU 관련 내용(OCU 수강방법, 시스템사용료, OCU 홈페이지, OCU 성적처리, 상대평가 등)을 답변에 **절대 포함하지 마세요**. 본교 내용만 답하세요.
-- 반대로 질문이 OCU를 명시적으로 물었으면 OCU 관련 내용만 답하세요.
-- **성적처리 구분**: 본교 수업은 2023학년도 2학기부터 상대평가에서 **과정중심 절대평가**로 변경되었습니다. OCU 수업은 상대평가입니다. 컨텍스트에 "상대평가"가 나오면 OCU 관련 내용이므로, OCU를 묻지 않은 질문에는 해당 부분을 건너뛰세요. 성적처리 관련 답변 시 "2023학년도 2학기부터 절대평가로 변경" 사실을 반드시 언급하세요.
-
-## 간결성 vs 완전성 균형
-- 간결성은 **메타 문구·서론 제거**이지 사실 정보 삭제가 아닙니다.
-- 컨텍스트의 조건·예외·결과를 "간결성"을 이유로 빠뜨리면 답이 틀린 것으로 간주됩니다.
-- 한 문장으로 충분하면 한 문장, 여러 조건이 있으면 모두 포함된 4문장까지 허용됩니다.
-
-## 참고 예시 (반드시 따를 것)
-
-### 예시 1: 표/숫자 추출 → 컨텍스트의 숫자를 그대로 답변
-[컨텍스트] 이수과목1(이론+실습) 이론 36 실습 27 커뮤니티 2 (2023학번 기준)
-[질문] 2023학번 이수과목1의 이론/실습 학점은?
-[모범 답변] 이론 36학점, 실습 27학점입니다.
-
-### 예시 2: 여러 조건 나열 → 하나도 빠뜨리지 않고 전부 나열
-[컨텍스트] 최대 신청 학점: 공학대학 GPA 4.0 이상 21학점, 복지보건계열 20학점, 인문사회계열 21학점
-[질문] 학과별 최대 신청 학점은?
-[모범 답변] 학과에 따라 다릅니다.
-- 공학대학: GPA 4.0 이상, 21학점
-- 복지보건계열: 20학점
-- 인문사회계열: 21학점
-
-### 예시 3: 금액 추출 → 핵심 숫자로 직접 답변
-[컨텍스트] OCU 시스템사용료: 과목당 120,000원 (초과 수강 시 과목당 별도)
-[질문] OCU 시스템사용료는 얼마인가요?
-[모범 답변] 과목당 120,000원입니다.
+## 예시
+[컨텍스트] 졸업학점: 130, 교양이수학점: 43
+[질문] 졸업요건은?
+[답변] 졸업학점 130학점, 교양이수학점 43학점입니다.
 """
 
 # 태그 최대 길이 기준 홀딩 버퍼 크기
@@ -170,6 +113,128 @@ class AnswerGenerator:
         self.base_url = settings.llm.base_url
         self.model = settings.llm.model
         self.timeout = settings.llm.timeout
+        self._cache_ttl_seconds = settings.llm.response_cache_ttl_seconds
+        self._cache_max_entries = settings.llm.response_cache_max_entries
+        self._response_cache: OrderedDict[str, tuple[float, str]] = OrderedDict()
+        self._cache_lock = Lock()
+
+    @staticmethod
+    def _stable_dump(value: Any) -> str:
+        normalized = value if value is not None else {}
+        return json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+    def _make_cache_key(
+        self,
+        *,
+        question: str,
+        context: str,
+        student_id: Optional[str] = None,
+        question_focus: Optional[str] = None,
+        lang: Optional[str] = None,
+        matched_terms: Optional[list] = None,
+        student_context: Optional[str] = None,
+        context_confidence: Optional[float] = None,
+        question_type: Optional[str] = None,
+        intent: Optional[str] = None,
+        entities: Optional[dict] = None,
+    ) -> str:
+        key_payload = {
+            "question": question.strip(),
+            "context_hash": hashlib.sha256(context.encode("utf-8")).hexdigest(),
+            "student_id": student_id or "",
+            "question_focus": question_focus or "",
+            "lang": lang or "ko",
+            "matched_terms": matched_terms or [],
+            "student_context_hash": hashlib.sha256((student_context or "").encode("utf-8")).hexdigest(),
+            "context_confidence": None if context_confidence is None else round(context_confidence, 3),
+            "question_type": question_type or "",
+            "intent": intent or "",
+            "entities": entities or {},
+        }
+        key_material = self._stable_dump(key_payload)
+        return hashlib.sha256(key_material.encode("utf-8")).hexdigest()
+
+    def get_cached_response(self, **cache_kwargs) -> Optional[str]:
+        if self._cache_ttl_seconds <= 0 or self._cache_max_entries <= 0:
+            return None
+
+        cache_key = self._make_cache_key(**cache_kwargs)
+        now = time.monotonic()
+        with self._cache_lock:
+            cached = self._response_cache.get(cache_key)
+            if not cached:
+                return None
+            stored_at, answer = cached
+            if now - stored_at > self._cache_ttl_seconds:
+                self._response_cache.pop(cache_key, None)
+                return None
+            self._response_cache.move_to_end(cache_key)
+            return answer
+
+    def store_cached_response(self, answer: str, **cache_kwargs) -> None:
+        if (
+            self._cache_ttl_seconds <= 0
+            or self._cache_max_entries <= 0
+            or not answer
+            or not answer.strip()
+        ):
+            return
+
+        cache_key = self._make_cache_key(**cache_kwargs)
+        with self._cache_lock:
+            self._response_cache[cache_key] = (time.monotonic(), answer)
+            self._response_cache.move_to_end(cache_key)
+            while len(self._response_cache) > self._cache_max_entries:
+                self._response_cache.popitem(last=False)
+
+    def _resolve_max_tokens(
+        self,
+        *,
+        question: str,
+        context: str,
+        question_focus: Optional[str] = None,
+        question_type: Optional[str] = None,
+        intent: Optional[str] = None,
+    ) -> int:
+        base_max = settings.llm.max_tokens
+        resolved = min(base_max, 256)
+
+        focus_caps = {
+            "period": 224,
+            "limit": 192,
+            "table_lookup": 192,
+            "rule_list": 448,
+            "method": 320,
+            "location": 192,
+            "eligibility": 320,
+        }
+        type_caps = {
+            "overview": 640,
+            "factoid": 224,
+            "procedural": 320,
+            "reasoning": 448,
+        }
+
+        if question_type in type_caps:
+            resolved = max(resolved, min(base_max, type_caps[question_type]))
+        if question_focus in focus_caps:
+            resolved = max(resolved, min(base_max, focus_caps[question_focus]))
+
+        normalized_question = question.lower()
+        asks_schedule = any(kw in normalized_question for kw in ("기간", "일정", "언제", "날짜", "시간"))
+        asks_method = any(kw in normalized_question for kw in ("방법", "절차", "어떻게", "신청", "로그인"))
+        if asks_schedule and asks_method:
+            resolved = max(resolved, min(base_max, 320))
+
+        if intent == "REGISTRATION":
+            resolved = max(resolved, min(base_max, 320 if asks_method else 256))
+        elif intent in {"GRADUATION_REQ", "EARLY_GRADUATION", "MAJOR_CHANGE"}:
+            resolved = max(resolved, min(base_max, 384))
+
+        if len(context) > 4000 and question_type == "overview":
+            resolved = max(resolved, min(base_max, 768))
+
+        return max(160, min(base_max, resolved))
 
     # ── 프롬프트 빌더 ─────────────────────────────────────────────────────────
 
@@ -270,6 +335,8 @@ class AnswerGenerator:
                     "[Note] This question asks about dates or periods. "
                     "Find the specific schedule (e.g., registration window, deadline) "
                     "in the context and answer with exact dates and times. "
+                    "If there are multiple schedule windows, put each date/time window on a separate line. "
+                    "If different schedule groups exist, separate them with a blank line. "
                     "Do not answer with credits or numeric limits.\n"
                 )
             elif question_focus == "limit":
@@ -292,7 +359,8 @@ class AnswerGenerator:
             elif question_focus == "method":
                 parts.append(
                     "[Note] This question asks how to do something (procedure or method). "
-                    "List the steps in order. Do not omit any required documents or actions.\n"
+                    "List the steps in order. Put each step on a separate line. "
+                    "Do not omit any required documents or actions.\n"
                 )
             elif question_focus == "location":
                 parts.append(
@@ -371,6 +439,8 @@ class AnswerGenerator:
                     "컨텍스트에서 **질문이 묻는 바로 그 일정**(예: 성적 확정, 수강신청 등)의 "
                     "날짜·시간·기간 정보를 찾아 답하세요. "
                     "학점·수치가 아닌 날짜·기간으로 답해야 합니다. "
+                    "여러 일정 구간이 있으면 각 날짜/시간 구간을 한 줄씩 나누고, "
+                    "장바구니·본 수강신청처럼 성격이 다른 일정은 빈 줄로 구분하세요. "
                     "컨텍스트에 해당 일정의 날짜가 없으면 "
                     "'해당 일정 정보를 찾을 수 없습니다. "
                     "학사지원팀(051-509-5182)에 문의하시기 바랍니다.'로 답하세요.\n"
@@ -706,6 +776,13 @@ class AnswerGenerator:
             student_context, context_confidence=context_confidence,
             question_type=question_type, entities=entities, intent=intent,
         )
+        max_tokens = self._resolve_max_tokens(
+            question=question,
+            context=context,
+            question_focus=question_focus,
+            question_type=question_type,
+            intent=intent,
+        )
 
         payload = {
             "model": self.model,
@@ -714,14 +791,12 @@ class AnswerGenerator:
                 {"role": "user", "content": prompt},
             ],
             "stream": True,
-            "max_tokens": settings.llm.max_tokens,
+            "max_tokens": max_tokens,
             "temperature": settings.llm.temperature,
             "top_p": settings.llm.top_p,
             "repeat_penalty": settings.llm.repeat_penalty,
-            # Ollama: think 비활성화 (속도 우선)
+            # thinking 비활성화 (Ollama/LM Studio 공용)
             "think": False,
-            # Ollama: 모든 레이어를 GPU에 로드 (CPU 오프로딩 방지)
-            "options": {"num_gpu": 999},
         }
 
         try:

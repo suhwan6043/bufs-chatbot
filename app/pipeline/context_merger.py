@@ -388,12 +388,17 @@ class ContextMerger:
             if not result_text or not result_text.strip():
                 continue
 
-            # 중복 감지: 앞 120자로 서명. 같은 본문은 한 번만 수용.
-            # (같은 페이지 번호의 유사 청크 여러 개가 들어오는 경우도 포함)
-            _sig = result_text.strip()[:120]
-            if _sig in _seen_text_prefixes:
+            dedupe_sig = result_text.strip()[:120]
+            if dedupe_sig in _seen_text_prefixes:
                 continue
-            _seen_text_prefixes.add(_sig)
+            _seen_text_prefixes.add(dedupe_sig)
+
+            result_text = self._slice_evidence_text(
+                result_text,
+                question=question,
+                entities=entities,
+                question_type=question_type,
+            )
 
             text_len = len(result_text)
             remaining = max_chars - total_chars
@@ -600,6 +605,38 @@ class ContextMerger:
             if m:
                 return f"로그인은 {m.group(1).strip()} 오픈됩니다."
 
+        # ── 8-b) 수강신청/장바구니 일정형 fact question ──
+        asks_registration_schedule = (
+            any(kw in q for kw in ("수강신청", "장바구니", "위시리스트"))
+            and any(kw in q for kw in ("기간", "일정", "언제", "시간", "로그인"))
+            and not any(kw in q for kw in ("방법", "절차", "어떻게"))
+        )
+        if asks_registration_schedule:
+            target_terms = []
+            if "장바구니" in q or "위시리스트" in q:
+                target_terms.extend(("장바구니", "위시리스트"))
+            if "로그인" in q:
+                target_terms.append("로그인")
+            if "수강신청" in q and "로그인" not in q:
+                target_terms.append("수강신청")
+
+            schedule_lines = []
+            for line in context.split("\n"):
+                compact = re.sub(r"\s+", "", line)
+                if not compact:
+                    continue
+                if target_terms and not any(term in compact for term in target_terms):
+                    continue
+                if not re.search(r"(\d{1,2}\.\s*\d{1,2}|\d{1,2}:\d{2}|\([월화수목금토일]\))", compact):
+                    continue
+                schedule_lines.append(line.strip(" -"))
+
+            if schedule_lines:
+                joined = "\n".join(dict.fromkeys(schedule_lines))
+                checked = _checked(joined)
+                if checked:
+                    return checked
+
         # ── 9) 이론/실습 학점 추출 ──
         if any(kw in q for kw in ("이론", "실습", "이수과목")):
             m = re.search(r"이론\s*(\d+)\s*(?:학점)?\s*실습\s*(\d+)", context)
@@ -737,6 +774,120 @@ class ContextMerger:
                 return trimmed
 
         return text
+
+    @classmethod
+    def _slice_evidence_text(
+        cls,
+        text: str,
+        question: str,
+        entities: Optional[dict] = None,
+        question_type: Optional[QuestionType] = None,
+    ) -> str:
+        """질문과 직접 맞닿는 원문 줄만 유지해 프롬프트 길이를 줄입니다."""
+        if not text or not question or len(text) < 900:
+            return text
+
+        lines = [line.rstrip() for line in text.splitlines()]
+        if len(lines) < 5:
+            return text
+
+        entities = entities or {}
+        question_focus = entities.get("question_focus")
+        tokens = {
+            token.lower()
+            for token in cls._extract_core_tokens(question)
+            if len(token) >= 2
+        }
+
+        for value in entities.values():
+            if not isinstance(value, str):
+                continue
+            tokens.update(
+                token.lower()
+                for token in cls._extract_core_tokens(value)
+                if len(token) >= 2
+            )
+
+        if not tokens:
+            return text
+
+        keep_indexes: set[int] = set()
+        for idx, raw_line in enumerate(lines):
+            line = raw_line.strip()
+            if not line:
+                continue
+            if cls._line_matches_question(
+                line=line,
+                tokens=tokens,
+                question_focus=question_focus,
+                question_type=question_type,
+            ):
+                for near_idx in range(max(0, idx - 1), min(len(lines), idx + 2)):
+                    keep_indexes.add(near_idx)
+
+        if not keep_indexes:
+            return text
+
+        sliced = "\n".join(
+            lines[idx] for idx in sorted(keep_indexes)
+            if lines[idx].strip()
+        ).strip()
+        if len(sliced) < 200 or len(sliced) >= len(text) * 0.9:
+            return text
+        return sliced
+
+    @classmethod
+    def _line_matches_question(
+        cls,
+        *,
+        line: str,
+        tokens: set[str],
+        question_focus: Optional[str] = None,
+        question_type: Optional[QuestionType] = None,
+    ) -> bool:
+        normalized = line.lower()
+        token_hits = sum(1 for token in tokens if token in normalized)
+        focus_match = cls._line_matches_focus(normalized, question_focus)
+
+        if token_hits >= 2:
+            return True
+        if token_hits >= 1 and focus_match:
+            return True
+        if question_type == QuestionType.PROCEDURAL and token_hits >= 1:
+            return True
+        return False
+
+    @staticmethod
+    def _line_matches_focus(line: str, question_focus: Optional[str]) -> bool:
+        if not question_focus:
+            return False
+
+        focus_patterns = {
+            "period": (
+                r"\d{1,2}\.\s*\d{1,2}",
+                r"\d{4}-\d{2}-\d{2}",
+                r"\d{1,2}:\d{2}",
+                r"\([월화수목금토일]\)",
+            ),
+            "limit": (r"\d{1,3}(?:,\d{3})*", r"학점", r"회", r"명", r"원"),
+            "table_lookup": (r"\d{1,3}(?:,\d{3})*", r"\|", r"학점", r"시간", r"금액"),
+            "rule_list": (r"대상", r"조건", r"기준", r"요건", r"제한", r"가능"),
+            "method": (r"신청", r"로그인", r"접속", r"제출", r"확인", r"사이트", r"절차"),
+            "location": (
+                r"https?://",
+                r"\b[A-Z]\d{3}(?:-\d+)?\b",
+                r"호",
+                r"층",
+                r"센터",
+                r"사무실",
+            ),
+            "eligibility": (r"대상", r"자격", r"가능", r"불가", r"이상", r"이하"),
+        }
+
+        patterns = focus_patterns.get(question_focus)
+        if not patterns:
+            return False
+        return any(re.search(pattern, line) for pattern in patterns)
 
     @staticmethod
     def _collect_source_urls(results: list) -> list:

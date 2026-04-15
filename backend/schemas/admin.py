@@ -134,3 +134,74 @@ class LogEntry(BaseModel):
     answer: str = ""
     duration_ms: int = 0
     rating: Optional[int] = None
+
+
+# ── FAQ (관리자 큐레이션 피드백 루프) ──
+class FaqItem(BaseModel):
+    """목록/상세 응답용."""
+    id: str
+    category: str = ""
+    question: str = ""
+    answer: str = ""
+    source: str = "academic"        # "academic" | "admin"
+    created_by: Optional[str] = None
+    created_at: Optional[str] = None
+    source_question: Optional[str] = None
+    answer_type: Optional[str] = None
+    # 학생 속성 분기 필드 (없으면 전체 허용)
+    student_types: list[str] = Field(default_factory=list,
+        description="적용 학생유형 (빈 리스트=전체). 예: ['외국인','편입생']")
+    cohort_from: Optional[int] = Field(None, description="적용 최소 학번 (예: 2023)")
+    cohort_to: Optional[int] = Field(None, description="적용 최대 학번 (예: 2025)")
+
+
+class FaqCreate(BaseModel):
+    question: str = Field(..., min_length=1, max_length=2000)
+    answer: str = Field(..., min_length=1, max_length=10000)
+    category: str = Field(..., min_length=1, max_length=50)
+    source_question: Optional[str] = Field(default=None, max_length=2000)
+    # 학생 속성 분기 필드 (선택, 없으면 전체 허용)
+    student_types: list[str] = Field(default_factory=list,
+        description="적용 학생유형 (빈 리스트=전체). 예: ['외국인','편입생']")
+    cohort_from: Optional[int] = Field(None, description="적용 최소 학번 (예: 2023)")
+    cohort_to: Optional[int] = Field(None, description="적용 최대 학번 (예: 2025)")
+
+
+class FaqUpdate(BaseModel):
+    question: Optional[str] = Field(default=None, min_length=1, max_length=2000)
+    answer: Optional[str] = Field(default=None, min_length=1, max_length=10000)
+    category: Optional[str] = Field(default=None, min_length=1, max_length=50)
+    source_question: Optional[str] = Field(default=None, max_length=2000)
+    # 학생 속성 분기 필드 (선택, None이면 기존값 유지)
+    student_types: Optional[list[str]] = Field(default=None)
+    cohort_from: Optional[int] = Field(default=None)
+    cohort_to: Optional[int] = Field(default=None)
+
+
+class FaqListResponse(BaseModel):
+    total: int
+    items: list[FaqItem] = Field(default_factory=list)
+    categories: list[str] = Field(default_factory=list)
+
+
+class UncoveredExample(BaseModel):
+    question: str
+    answer: str = ""
+    timestamp: str = ""
+    session_id: str = ""
+    rating: Optional[int] = None
+    refused: bool = False
+
+
+class UncoveredCluster(BaseModel):
+    """미답변 질의 클러스터 — 관리자에게 노출."""
+    representative_question: str
+    count: int
+    last_asked: str = ""
+    examples: list[UncoveredExample] = Field(default_factory=list)
+
+
+class UncoveredResponse(BaseModel):
+    scanned_days: int
+    total_candidates: int
+    clusters: list[UncoveredCluster] = Field(default_factory=list)

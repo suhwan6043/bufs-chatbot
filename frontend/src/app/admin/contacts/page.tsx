@@ -1,9 +1,8 @@
 "use client";
-import { useState, useEffect, use } from "react";
+import { useState, useEffect } from "react";
 import { useAdmin, type ContactEntry } from "@/hooks/useAdmin";
 
-export default function ContactsPage({ params }: { params: Promise<{ lang: string }> }) {
-  use(params);
+export default function ContactsPage() {
   const { token, fetchContacts, searchContacts, fetchContactsJson, saveContactsJson } = useAdmin();
   const [entries, setEntries] = useState<ContactEntry[]>([]);
   const [total, setTotal] = useState(0);

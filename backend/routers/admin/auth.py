@@ -141,6 +141,12 @@ async def admin_login(body: AdminLogin, request: Request):
         raise HTTPException(status_code=401, detail=f"비밀번호 오류. 남은 시도: {_MAX_ATTEMPTS - failed}회")
 
 
+@router.get("/verify")
+async def admin_verify(_=Depends(require_admin)):
+    """토큰 유효성 검증. 유효하면 200, 아니면 401."""
+    return {"valid": True}
+
+
 @router.post("/logout")
 async def admin_logout(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """관리자 로그아웃 → 토큰 무효화."""

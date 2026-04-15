@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, use } from "react";
+import { useState, useEffect } from "react";
 import { useAdmin, type CrawlerStatus, type AttachmentStatus } from "@/hooks/useAdmin";
 
 interface HistoryRecord {
@@ -8,8 +8,7 @@ interface HistoryRecord {
   errors?: string[]; duration_ms?: number;
 }
 
-export default function CrawlerPage({ params }: { params: Promise<{ lang: string }> }) {
-  use(params);
+export default function CrawlerPage() {
   const { token, fetchCrawler, triggerCrawl, resetHashes, reingest, fetchCrawlHistory, fetchNotices, fetchAttachments } = useAdmin();
 
   const [status, setStatus] = useState<CrawlerStatus | null>(null);

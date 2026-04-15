@@ -1,9 +1,8 @@
 "use client";
-import { useState, useEffect, use } from "react";
+import { useState, useEffect } from "react";
 import { useAdmin, type GraphStatus } from "@/hooks/useAdmin";
 
-export default function GraphPage({ params }: { params: Promise<{ lang: string }> }) {
-  use(params);
+export default function GraphPage() {
   const { token, fetchGraph, resetChat } = useAdmin();
   const [data, setData] = useState<GraphStatus | null>(null);
   const [msg, setMsg] = useState("");

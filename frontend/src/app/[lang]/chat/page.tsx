@@ -102,7 +102,7 @@ export default function ChatPage({ params }: { params: Promise<{ lang: string }>
         {/* Tab content */}
         {activeTab === "chat" && (
           <>
-            <main className="flex-1 overflow-y-auto pb-48 lg:pb-32">
+            <main className="flex-1 overflow-y-auto pb-32">
               <div className="max-w-4xl mx-auto p-4 md:p-6">
                 {!hasMessages ? (
                   <WelcomeScreen lang={lang} onSelect={sendMessage} hasTranscript={session?.has_transcript} />
@@ -173,8 +173,8 @@ export default function ChatPage({ params }: { params: Promise<{ lang: string }>
           </main>
         )}
 
-        {/* Mobile bottom tab bar */}
-        <MobileBottomBar lang={lang} activeTab={activeTab} onTabChange={handleTabChange} />
+        {/* Mobile bottom tab bar — 비활성 (채팅 입력창 겹침 방지) */}
+        {/* <MobileBottomBar lang={lang} activeTab={activeTab} onTabChange={handleTabChange} /> */}
       </div>
     </div>
   );

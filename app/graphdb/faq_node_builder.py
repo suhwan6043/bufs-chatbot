@@ -110,6 +110,15 @@ class FaqNodeBuilder:
             }
             if item.get("answer_type"):
                 node_metadata["answer_type"] = item["answer_type"]
+            # student_types: 허용 학생유형 리스트 (없으면 전체 허용, 하위 호환)
+            raw_stypes = item.get("student_types")
+            if raw_stypes and isinstance(raw_stypes, list):
+                node_metadata["student_types"] = raw_stypes
+            # cohort_from/cohort_to: FAQ 단위 학번 범위 (없으면 전체 학번)
+            if item.get("cohort_from") is not None:
+                node_metadata["cohort_from"] = int(item["cohort_from"])
+            if item.get("cohort_to") is not None:
+                node_metadata["cohort_to"] = int(item["cohort_to"])
 
             graph.add_faq_node(
                 faq_id=faq_id,
