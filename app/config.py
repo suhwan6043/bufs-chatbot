@@ -172,6 +172,37 @@ class AdminFaqConfig:
 
 
 @dataclass
+class ContextBudgetConfig:
+    """
+    적응형 컨텍스트 예산 설정.
+
+    원칙 1(유연한 스키마 진화): intent별 고정 dict 대신 결과 수 기반 공식으로 스케일.
+    원칙 2(비용·지연 최적화): 적게 찾히면 적게, 많이 찾히면 비례 확장.
+    원칙 4(하드코딩 금지): 모든 튜닝 상수 환경변수 오버라이드.
+
+    공식: budget(n) = min(base + max(0, min(n, baseline_k+max_extra) - baseline_k) * per_chunk_bonus,
+                          base × cap_ratio)
+    - n ≤ baseline_k: base 그대로 (현행 동작 유지)
+    - n > baseline_k: 청크당 per_chunk_bonus 토큰씩 추가
+    - 최대 base × cap_ratio로 상한
+
+    per_chunk_max도 n이 클수록 타이트하게 → 다양성 보장.
+    """
+    # 결과 수가 이 이하일 땐 base 그대로 (3개까진 원래 설계 유지)
+    baseline_chunk_count: int = int(os.getenv("CTX_BASELINE_CHUNK_COUNT", "3"))
+    # 청크당 추가 토큰 (평균 청크 ~450자 × TOKENS_PER_CHAR 1.5 = 675 → 1/3 여유)
+    per_chunk_bonus: int = int(os.getenv("CTX_PER_CHUNK_BONUS", "225"))
+    # n-baseline의 최대 반영 수 (9개 이상은 cap에 걸리도록)
+    max_extra_chunks: int = int(os.getenv("CTX_MAX_EXTRA_CHUNKS", "8"))
+    # 상한 (base × cap_ratio)
+    cap_ratio: float = float(os.getenv("CTX_CAP_RATIO", "2.5"))
+    # 다양성 모드 트리거 임계 (n이 이 이상이면 per_chunk_max 타이트하게)
+    diversity_trigger_n: int = int(os.getenv("CTX_DIVERSITY_TRIGGER_N", "6"))
+    # 다양성 모드에서 단일 청크 최대 글자수 (budget 비례가 아닌 절대값)
+    diversity_chunk_cap: int = int(os.getenv("CTX_DIVERSITY_CHUNK_CAP", "500"))
+
+
+@dataclass
 class Settings:
     llm: LLMConfig = field(default_factory=LLMConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
@@ -183,6 +214,7 @@ class Settings:
     admin: AdminConfig = field(default_factory=AdminConfig)
     crawler: CrawlerConfig = field(default_factory=CrawlerConfig)
     admin_faq: AdminFaqConfig = field(default_factory=AdminFaqConfig)
+    context_budget: ContextBudgetConfig = field(default_factory=ContextBudgetConfig)
 
 
 settings = Settings()
