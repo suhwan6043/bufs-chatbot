@@ -19,11 +19,21 @@ import time
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-from backend.database import create_user, authenticate_user, get_user_by_id
-from backend.schemas.user import UserRegister, UserLogin, UserInfo, AuthToken
+from backend.database import (
+    create_user, authenticate_user, get_user_by_id,
+    list_chat_messages, count_chat_messages,
+    list_notifications, count_unread_notifications,
+    mark_notification_read, mark_all_notifications_read,
+)
+from backend.session import session_store
+from backend.schemas.user import (
+    UserRegister, UserLogin, UserInfo, AuthToken,
+    ChatHistoryItem, ChatHistoryResponse,
+    NotificationItem, NotificationListResponse, UnreadCountResponse,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/user", tags=["user"])
@@ -118,6 +128,24 @@ async def require_user(
     return payload
 
 
+async def require_user_optional(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+) -> Optional[dict]:
+    """
+    Optional JWT verification. Returns user payload if valid, else None.
+    - 헤더 없음 → None
+    - 헤더 있지만 토큰 무효 → None (에러 throw 안 함)
+
+    로그인/비로그인 공통 업로드 경로(transcript, 피드백 등)에서 사용.
+    """
+    if credentials is None:
+        return None
+    try:
+        return _verify_user_token(credentials.credentials)
+    except Exception:
+        return None
+
+
 # ── Endpoints ──
 
 @router.post("/register", response_model=AuthToken)
@@ -181,9 +209,91 @@ async def get_me(payload: dict = Depends(require_user)):
 
 @router.post("/logout")
 async def logout(
+    session_id: Optional[str] = Query(default=None),
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ):
-    """Blacklist the current token."""
+    """JWT blacklist + 서버 세션 메모리 purge.
+
+    로그아웃 시 호출 측(프론트)이 현재 session_id를 넘기면, 해당 세션 엔트리를
+    session_store에서 완전히 삭제한다 — transcript·messages·consent 모두 제거.
+    """
     if credentials and credentials.credentials:
         _blacklisted_tokens.add(credentials.credentials)
+    if session_id:
+        session_store.delete(session_id)
     return {"ok": True}
+
+
+# ── 본인 채팅 이력 ─────────────────────────────────────────
+
+@router.get("/chat-history", response_model=ChatHistoryResponse)
+async def get_chat_history(
+    limit: int = 50,
+    offset: int = 0,
+    payload: dict = Depends(require_user),
+):
+    """본인이 로그인 상태에서 했던 질문·답변 이력 (최신순)."""
+    uid = int(payload["user_id"])
+    limit = max(1, min(int(limit), 200))
+    offset = max(0, int(offset))
+    items = list_chat_messages(uid, limit=limit, offset=offset)
+    return ChatHistoryResponse(
+        total=count_chat_messages(uid),
+        items=[ChatHistoryItem(**it) for it in items],
+    )
+
+
+# ── 알림 ───────────────────────────────────────────────────
+
+def _to_notification_item(row: dict) -> NotificationItem:
+    return NotificationItem(
+        id=int(row["id"]),
+        kind=str(row["kind"]),
+        faq_id=row.get("faq_id"),
+        chat_message_id=row.get("chat_message_id"),
+        title=str(row.get("title") or ""),
+        body=str(row.get("body") or ""),
+        read=row.get("read_at") is not None,
+        created_at=str(row.get("created_at") or ""),
+    )
+
+
+@router.get("/notifications", response_model=NotificationListResponse)
+async def get_notifications(
+    limit: int = 50,
+    payload: dict = Depends(require_user),
+):
+    """본인 알림 목록 (미읽음 우선)."""
+    uid = int(payload["user_id"])
+    rows = list_notifications(uid, limit=limit)
+    return NotificationListResponse(
+        unread_count=count_unread_notifications(uid),
+        items=[_to_notification_item(r) for r in rows],
+    )
+
+
+@router.get("/notifications/unread-count", response_model=UnreadCountResponse)
+async def get_unread_count(payload: dict = Depends(require_user)):
+    """페이지 방문 시 호출할 경량 엔드포인트 — 미읽음 개수만 반환."""
+    return UnreadCountResponse(unread_count=count_unread_notifications(int(payload["user_id"])))
+
+
+@router.post("/notifications/{notification_id}/read")
+async def mark_read(
+    notification_id: int,
+    payload: dict = Depends(require_user),
+):
+    """개별 알림을 읽음 처리. 소유자 검증은 DB 헬퍼에서 user_id 매칭으로 수행."""
+    uid = int(payload["user_id"])
+    ok = mark_notification_read(notification_id, uid)
+    if not ok:
+        raise HTTPException(status_code=404, detail="알림을 찾을 수 없거나 이미 읽었습니다.")
+    return {"ok": True}
+
+
+@router.post("/notifications/read-all")
+async def mark_all_read(payload: dict = Depends(require_user)):
+    """전체 읽음 처리 — 반환값: 갱신된 행 수."""
+    uid = int(payload["user_id"])
+    updated = mark_all_notifications_read(uid)
+    return {"ok": True, "updated": updated}

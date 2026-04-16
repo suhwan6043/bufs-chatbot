@@ -79,6 +79,7 @@ class QueryAnalysis:
     question_type: QuestionType = QuestionType.FACTOID  # 질문 유형 (Embedding 기반)
     matched_terms: list = field(default_factory=list)  # [{"ko": "수강신청", "en": "Course Registration"}]
     ko_query: Optional[str] = None  # EN 쿼리의 한국어 변환본 (그래프/FAQ 검색용)
+    normalized_query: Optional[str] = None  # glossary 정규화된 쿼리 (학식→학생식당 등)
 
 
 @dataclass

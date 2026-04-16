@@ -29,8 +29,9 @@ audit_logger = logging.getLogger("transcript.audit")
 _STUDENT_ID_RE = re.compile(r"(?:19|20)[0-9]\d{4,6}")
 # 파일명 허용 패턴 (영숫자, 한글, 밑줄, 하이픈, 괄호, 공백, 점)
 _ALLOWED_EXTENSIONS = frozenset({
-    ".xls", ".pdf", ".doc", ".docx", ".ppt", ".pptx", ".hwp",
-    ".png", ".jpg", ".jpeg", ".bmp", ".gif",
+    # 파서가 실제 지원하는 5가지 문서 포맷만 허용.
+    # (2026-04-16) 이미지 포맷(.png/.jpg 등) 제거 — 파서 미지원, OCR 의존성 없음.
+    ".xls", ".xlsx", ".pdf", ".doc", ".docx", ".ppt", ".pptx", ".hwp",
 })
 _EXT_PATTERN = "|".join(e.lstrip(".") for e in _ALLOWED_EXTENSIONS)
 _SAFE_FILENAME_RE = re.compile(

@@ -9,9 +9,9 @@ import json
 import logging
 import re
 import time
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
 from backend.dependencies import (
@@ -27,6 +27,24 @@ from backend.schemas.chat import ChatResponse, SearchResultItem, SourceURL
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+
+def _resolve_user_id(access_token: Optional[str]) -> Optional[int]:
+    """SSE·POST 쿼리 파라미터로 전달된 JWT 토큰을 검증하고 user_id 반환.
+
+    비로그인(토큰 없음)이나 만료·서명 불일치면 None — 채팅은 정상 진행되지만
+    개인 DB 저장·알림 구독은 스킵된다.
+    """
+    if not access_token:
+        return None
+    try:
+        from backend.routers.user import _verify_user_token
+        payload = _verify_user_token(access_token)
+        if payload and "user_id" in payload:
+            return int(payload["user_id"])
+    except Exception as exc:
+        logger.debug("JWT 검증 실패: %s", exc)
+    return None
 
 
 # ── 연락처 단락 처리 (LLM 없이 즉시 응답) ──
@@ -84,10 +102,14 @@ def _get_contact_footer(intent, entities: dict, question: str) -> str:
     return ""
 
 
-def _enrich_analysis(question: str, analysis, router_inst, session_data: dict):
+def _enrich_analysis(question: str, analysis, router_inst, session_data: dict,
+                      user_id: Optional[int] = None):
     """
     chat_app.py:_enrich_analysis() 이식.
     st.session_state 대신 session_data dict 사용.
+
+    2026-04-16: 로그인 사용자 + 세션 transcript 없음 → DB에서 자동 복원.
+    transcript_context 반환 전에 PIIRedactor.redact_for_llm() 명시 적용.
     """
     transcript_context = ""
     student_context = ""
@@ -116,6 +138,20 @@ def _enrich_analysis(question: str, analysis, router_inst, session_data: dict):
 
     # 성적표 기반 컨텍스트
     transcript_data = session_data.get("transcript")
+
+    # (2026-04-16) 세션에 transcript 없음 + 로그인 사용자 → DB에서 on-demand 복원
+    if not transcript_data and user_id:
+        try:
+            from backend.database import get_user_transcript
+            row = get_user_transcript(user_id)
+            if row and row.get("parsed_json"):
+                transcript_data = _rehydrate_transcript_from_json(row["parsed_json"])
+                if transcript_data is not None:
+                    session_data["transcript"] = transcript_data
+                    logger.info("transcript DB 복원: user_id=%s", user_id)
+        except Exception as exc:
+            logger.warning("transcript DB 복원 실패 user_id=%s: %s", user_id, exc)
+
     if transcript_data:
         try:
             from app.transcript.analyzer import TranscriptAnalyzer
@@ -166,7 +202,69 @@ def _enrich_analysis(question: str, analysis, router_inst, session_data: dict):
         if parts:
             student_context = "[학생 정보] " + " ".join(parts)
 
+    # (2026-04-16) LLM 전송 전 PII 재마스킹 명시 호출 — 이름·학번 유출 최종 방어.
+    if transcript_context or student_context:
+        try:
+            from app.transcript.security import PIIRedactor
+            if transcript_context:
+                transcript_context = PIIRedactor.redact_for_llm(transcript_context)
+            if student_context:
+                student_context = PIIRedactor.redact_for_llm(student_context)
+        except Exception as exc:
+            logger.warning("PIIRedactor.redact_for_llm 실패: %s", exc)
+
     return analysis, transcript_context, student_context
+
+
+def _rehydrate_transcript_from_json(parsed_json: str):
+    """
+    DB에 저장된 PII 마스킹 JSON을 StudentAcademicProfile 객체로 복원.
+    user_transcripts.parsed_json → 분석 가능한 객체.
+    실패 시 None.
+    """
+    import json as _json
+    try:
+        from app.transcript.models import (
+            StudentAcademicProfile, StudentProfile, CreditSummary, CreditCategory,
+        )
+    except Exception:
+        return None
+    try:
+        raw = _json.loads(parsed_json)
+    except Exception:
+        return None
+
+    def _build_profile(p: dict) -> StudentProfile:
+        fields = {f.name: p.get(f.name) for f in StudentProfile.__dataclass_fields__.values()}
+        # None 필드는 기본값 유지하도록 제거
+        fields = {k: v for k, v in fields.items() if v is not None}
+        return StudentProfile(**fields)
+
+    def _build_credits(c: dict) -> CreditSummary:
+        cats = []
+        for cat in c.get("categories", []) or []:
+            try:
+                cats.append(CreditCategory(**{
+                    k: cat.get(k) for k in CreditCategory.__dataclass_fields__
+                    if cat.get(k) is not None
+                }))
+            except Exception:
+                continue
+        fields = {
+            k: c.get(k) for k in CreditSummary.__dataclass_fields__
+            if k != "categories" and c.get(k) is not None
+        }
+        return CreditSummary(categories=cats, **fields)
+
+    try:
+        return StudentAcademicProfile(
+            profile=_build_profile(raw.get("profile", {}) or {}),
+            credits=_build_credits(raw.get("credits", {}) or {}),
+            courses=raw.get("courses", []) or [],
+        )
+    except Exception as exc:
+        logger.warning("transcript JSON → dataclass 복원 실패: %s", exc)
+        return None
 
 
 def _serialize_results(results: list) -> list[dict]:
@@ -212,8 +310,12 @@ def _build_generation_cache_kwargs(question: str, merged, analysis, student_cont
 
 @router.get("/stream")
 async def chat_stream(
+    request: Request,
     session_id: str = Query(..., description="세션 ID"),
     question: str = Query(..., min_length=1, max_length=2000, description="질문"),
+    access_token: Optional[str] = Query(
+        None, description="선택: 로그인 사용자 JWT. 있으면 chat_messages에 저장되어 FAQ 알림 구독 가능."
+    ),
 ):
     """
     GET /api/chat/stream?session_id=X&question=Y → SSE 스트리밍.
@@ -223,7 +325,13 @@ async def chat_stream(
     - clear: {} — EN 원패스 전환 시 플레이스홀더 초기화
     - done: {answer, source_urls, results, intent, duration_ms} — 완료
     - error: {message} — 에러
+
+    X-Test-Mode 헤더가 "1"/"true"이면 JSONL 로그 + chat_messages DB 양쪽 모두 기록하지 않음.
     """
+    # 평가·회귀 스크립트가 실사용자 로그를 오염시키지 않도록
+    from app.logging.chat_logger import set_skip_log
+    _is_test = request.headers.get("X-Test-Mode", "").strip().lower() in {"1", "true", "yes", "on"}
+    set_skip_log(_is_test)
 
     async def event_generator() -> AsyncGenerator[dict, None]:
         _t0 = time.monotonic()
@@ -242,24 +350,13 @@ async def chat_stream(
         # 세션 확인/생성
         sid, session_data = session_store.get_or_create(session_id)
 
+        # JWT 토큰이 있으면 user_id 추출 (비로그인은 None — 개인 DB 저장 스킵)
+        user_id = _resolve_user_id(access_token)
+
         # 연락처 단락 처리
         contact_answer = _format_contact_answer(question)
         if contact_answer:
-            try:
-                _cl = get_chat_logger()
-                if not _cl:
-                    from app.logging import ChatLogger
-                    _cl = ChatLogger()
-                _cl.log(
-                    question=question,
-                    answer=contact_answer,
-                    session_id=sid,
-                    intent="CONTACT",
-                    student_id=None,
-                    duration_ms=int((time.monotonic() - _t0) * 1000),
-                )
-            except Exception as e:
-                logger.error("연락처 로그 기록 실패: %s", e)
+            _try_log_simple(question, contact_answer, sid, "CONTACT", _t0, user_id=user_id)
             yield {"event": "done", "data": json.dumps({
                 "answer": contact_answer,
                 "source_urls": [],
@@ -290,13 +387,14 @@ async def chat_stream(
         if lang == "en":
             analysis.lang = "en"
         analysis, transcript_context, student_context = _enrich_analysis(
-            question, analysis, router_inst, session_data
+            question, analysis, router_inst, session_data, user_id=user_id
         )
         _ms_analyze = int((time.monotonic() - _t1) * 1000)
 
-        # Stage 2: 검색
+        # Stage 2: 검색 (glossary 정규화된 쿼리 사용 — 학식→학생식당 등)
         _t2 = time.monotonic()
-        search_results = router_inst.route_and_search(question, analysis)
+        _search_query = analysis.normalized_query or question
+        search_results = router_inst.route_and_search(_search_query, analysis)
         _ms_search = int((time.monotonic() - _t2) * 1000)
 
         # Stage 3: 컨텍스트 병합
@@ -389,7 +487,7 @@ async def chat_stream(
                 "intent": analysis.intent.value if analysis.intent else "",
                 "duration_ms": int((time.monotonic() - _t0) * 1000),
             }, ensure_ascii=False)}
-            _try_log(question, msg, sid, analysis, _t0, context_confidence=merged.context_confidence)
+            _try_log(question, msg, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
             return
 
         # direct_answer 단락 응답 (KO only)
@@ -401,7 +499,7 @@ async def chat_stream(
                 "intent": analysis.intent.value if analysis.intent else "",
                 "duration_ms": int((time.monotonic() - _t0) * 1000),
             }, ensure_ascii=False)}
-            _try_log(question, merged.direct_answer, sid, analysis, _t0, context_confidence=merged.context_confidence)
+            _try_log(question, merged.direct_answer, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
             return
 
         all_results = search_results["vector_results"] + search_results["graph_results"]
@@ -417,7 +515,7 @@ async def chat_stream(
                 "rating": None,
             })
             session_store.update(sid, "messages", messages)
-            _try_log(question, cached_answer, sid, analysis, _t0, context_confidence=merged.context_confidence)
+            _try_log(question, cached_answer, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
             yield {"event": "done", "data": json.dumps({
                 "answer": cached_answer,
                 "source_urls": [
@@ -542,7 +640,7 @@ async def chat_stream(
         session_store.update(sid, "messages", messages)
 
         # 로그
-        _try_log(question, full_answer, sid, analysis, _t0, context_confidence=merged.context_confidence)
+        _try_log(question, full_answer, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
 
         # stage별 타이밍 로그
         _ms_total = int((time.monotonic() - _t0) * 1000)
@@ -581,17 +679,27 @@ async def chat_stream(
 
 @router.post("", response_model=ChatResponse)
 async def chat_sync(
+    request: Request,
     session_id: str = Query(...),
     question: str = Query(..., min_length=1, max_length=2000),
+    access_token: Optional[str] = Query(None),
 ):
-    """POST /api/chat — 논스트리밍 채팅 (테스트/평가용)."""
+    """POST /api/chat — 논스트리밍 채팅 (테스트/평가용).
+
+    X-Test-Mode 헤더가 참이면 JSONL 로그 + chat_messages DB 저장 모두 건너뜀.
+    """
+    from app.logging.chat_logger import set_skip_log
+    _is_test = request.headers.get("X-Test-Mode", "").strip().lower() in {"1", "true", "yes", "on"}
+    set_skip_log(_is_test)
+
     _t0 = time.monotonic()
     sid, session_data = session_store.get_or_create(session_id)
+    user_id = _resolve_user_id(access_token)
 
     # 연락처 단락
     contact = _format_contact_answer(question)
     if contact:
-        _try_log_simple(question, contact, sid, "CONTACT", _t0)
+        _try_log_simple(question, contact, sid, "CONTACT", _t0, user_id=user_id)
         return ChatResponse(answer=contact, intent="CONTACT",
                             duration_ms=int((time.monotonic() - _t0) * 1000))
 
@@ -606,10 +714,11 @@ async def chat_sync(
     if lang == "en":
         analysis.lang = "en"
     analysis, transcript_context, student_context = _enrich_analysis(
-        question, analysis, router_inst, session_data
+        question, analysis, router_inst, session_data, user_id=user_id
     )
 
-    search_results = router_inst.route_and_search(question, analysis)
+    _search_query = analysis.normalized_query or question
+    search_results = router_inst.route_and_search(_search_query, analysis)
     merged = merger.merge(
         vector_results=search_results["vector_results"],
         graph_results=search_results["graph_results"],
@@ -634,7 +743,7 @@ async def chat_sync(
                 "- PDF 학사 안내 자료가 등록되어 있는지\n"
                 "- 질문에 학번을 포함했는지 (예: 2023학번)"
             )
-        _try_log(question, msg, sid, analysis, _t0, context_confidence=merged.context_confidence)
+        _try_log(question, msg, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
         return ChatResponse(
             answer=msg,
             intent=analysis.intent.value if analysis.intent else "",
@@ -642,7 +751,7 @@ async def chat_sync(
         )
 
     if merged.direct_answer and analysis.lang != "en":
-        _try_log(question, merged.direct_answer, sid, analysis, _t0, context_confidence=merged.context_confidence)
+        _try_log(question, merged.direct_answer, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
         return ChatResponse(
             answer=merged.direct_answer,
             source_urls=[SourceURL(title=u.get("title", ""), url=u.get("url", ""))
@@ -659,7 +768,7 @@ async def chat_sync(
         messages.append({"role": "user", "content": question})
         messages.append({"role": "assistant", "content": cached_answer, "rated": False, "rating": None})
         session_store.update(sid, "messages", messages)
-        _try_log(question, cached_answer, sid, analysis, _t0, context_confidence=merged.context_confidence)
+        _try_log(question, cached_answer, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
         return ChatResponse(
             answer=cached_answer,
             source_urls=[SourceURL(title=u.get("title", ""), url=u.get("url", ""))
@@ -756,7 +865,7 @@ async def chat_sync(
     session_store.update(sid, "messages", messages)
 
     # 로그
-    _try_log(question, full_answer, sid, analysis, _t0, context_confidence=merged.context_confidence)
+    _try_log(question, full_answer, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
 
     return ChatResponse(
         answer=full_answer,
@@ -786,7 +895,79 @@ async def clear_history(session_id: str = Query(...)):
     return {"ok": True}
 
 
+# ── FAQ 단건 조회 (알림 → 상세 답변 표시) ──
+
+@router.get("/faq/{faq_id}")
+async def get_faq_by_id(faq_id: str):
+    """알림 클릭 시 수정된 FAQ 답변을 채팅 화면에 표시하기 위한 경량 조회.
+
+    FAQ 본문은 공개 지식이므로 별도 인증 없음. id 매칭만 수행.
+    faq_id 형식: ADMIN-YYYYMMDD-NNNN (관리자 추가) 또는 기존 FAQ-*.
+    """
+    import json as _json
+    from pathlib import Path
+    from app.config import settings
+
+    def _load(path: Path) -> list:
+        if not path.exists():
+            return []
+        try:
+            data = _json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and "faq" in data:
+                data = data["faq"]
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []
+
+    items = _load(Path(settings.admin_faq.academic_faq_path)) + _load(
+        Path(settings.admin_faq.admin_faq_path)
+    )
+    for it in items:
+        if it.get("id") == faq_id:
+            return {
+                "id": faq_id,
+                "category": it.get("category", ""),
+                "question": it.get("question", ""),
+                "answer": it.get("answer", ""),
+            }
+    return {"id": faq_id, "category": "", "question": "", "answer": ""}
+
+
 # ── helper ──
+
+def _persist_user_message(
+    user_id: Optional[int],
+    sid: str,
+    question: str,
+    answer: str,
+    intent: str,
+) -> Optional[int]:
+    """로그인 사용자면 chat_messages 테이블에 저장하고 row id 반환.
+
+    user_id=None 이거나 저장 실패 시 None 반환 (채팅 자체는 영향 없음).
+    원본 질문·답변(PII 마스킹 전)을 저장 — 본인만 조회 가능하므로 허용.
+
+    X-Test-Mode 헤더로 should_skip_log()가 참이면 DB 저장도 건너뛴다
+    (평가/회귀 테스트가 실사용자 이력을 오염시키지 않도록).
+    """
+    from app.logging.chat_logger import should_skip_log
+    if should_skip_log():
+        return None
+    if user_id is None:
+        return None
+    try:
+        from backend.database import insert_chat_message
+        return insert_chat_message(
+            user_id=user_id,
+            session_id=sid,
+            question=question,
+            answer=answer,
+            intent=intent or "",
+        )
+    except Exception as exc:
+        logger.error("chat_messages 저장 실패 (user_id=%s): %s", user_id, exc)
+        return None
+
 
 def _try_log(
     question: str,
@@ -795,22 +976,30 @@ def _try_log(
     analysis,
     _t0: float,
     context_confidence: float | None = None,
-):
-    """Q&A 로그 기록. PIIRedactor 실패 시에도 원본으로 기록."""
+    user_id: Optional[int] = None,
+) -> Optional[int]:
+    """Q&A 로그 기록. PIIRedactor 실패 시에도 원본으로 기록.
+
+    user_id 가 있으면 chat_messages DB에도 저장 (원본, 본인만 조회 가능).
+    JSONL 로그에는 PII 마스킹된 버전 + user_id/chat_message_id 필드 포함.
+    반환값: chat_messages row id (비로그인은 None).
+    """
     duration_ms = int((time.monotonic() - _t0) * 1000)
     intent_name = analysis.intent.name if analysis.intent else ""
     student_id = analysis.student_id
 
-    # PIIRedactor가 있으면 마스킹, 없으면 원본 사용
+    # 1) 개인 DB 저장 (로그인 사용자만) — 원본 그대로
+    chat_message_id = _persist_user_message(user_id, sid, question, answer, intent_name)
+
+    # 2) PIIRedactor가 있으면 JSONL 로그용 마스킹
     q_log, a_log = question, answer
     try:
         from app.transcript.security import PIIRedactor
         q_log = PIIRedactor.redact_for_log(question)
         a_log = PIIRedactor.redact_for_log(answer)
     except Exception:
-        pass  # PIIRedactor 실패 시 원본 그대로 기록
+        pass
 
-    # 싱글톤 로거 먼저 시도, 없으면 직접 생성
     chat_logger = get_chat_logger()
     if not chat_logger:
         try:
@@ -818,7 +1007,7 @@ def _try_log(
             chat_logger = ChatLogger()
         except Exception as e:
             logger.error("ChatLogger 생성 실패: %s", e)
-            return
+            return chat_message_id
 
     try:
         chat_logger.log(
@@ -829,26 +1018,41 @@ def _try_log(
             student_id=student_id,
             duration_ms=duration_ms,
             context_confidence=context_confidence,
+            user_id=user_id,
+            chat_message_id=chat_message_id,
         )
     except Exception as e:
         logger.error("대화 로그 기록 실패: %s", e)
 
+    return chat_message_id
 
-def _try_log_simple(question: str, answer: str, sid: str, intent: str, _t0: float):
+
+def _try_log_simple(
+    question: str,
+    answer: str,
+    sid: str,
+    intent: str,
+    _t0: float,
+    user_id: Optional[int] = None,
+) -> Optional[int]:
     """analysis 객체 없이 로그 기록 (연락처 단락 등)."""
     duration_ms = int((time.monotonic() - _t0) * 1000)
+    chat_message_id = _persist_user_message(user_id, sid, question, answer, intent or "")
     chat_logger = get_chat_logger()
     if not chat_logger:
         try:
             from app.logging import ChatLogger
             chat_logger = ChatLogger()
         except Exception:
-            return
+            return chat_message_id
     try:
         chat_logger.log(
             question=question, answer=answer,
             session_id=sid, intent=intent,
             student_id=None, duration_ms=duration_ms,
+            user_id=user_id,
+            chat_message_id=chat_message_id,
         )
     except Exception:
         pass
+    return chat_message_id

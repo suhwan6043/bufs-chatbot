@@ -329,3 +329,190 @@ class TranscriptAnalyzer:
 
         text = "\n".join(lines)
         return PIIRedactor.redact_for_llm(text, self.profile)
+
+    # ── 리포트 페이지용 집계 메서드 (2026-04-16) ──────────────────
+    # 원칙 2: 문자열 포맷 없이 구조화 dict 반환 → UI가 자유 렌더링.
+
+    def _semester_breakdown(self) -> list[dict]:
+        """이수학기별 학점/평점 집계. courses를 그룹핑."""
+        by_term: dict[str, dict] = {}
+        for c in self.profile.courses:
+            term = c.이수학기 or ""
+            if not term:
+                continue
+            d = by_term.setdefault(term, {
+                "term": term,
+                "credits": 0.0,
+                "course_count": 0,
+                "_grade_points": 0.0,
+                "_grade_credits": 0.0,
+            })
+            d["credits"] += float(c.학점 or 0)
+            d["course_count"] += 1
+            rank = _GRADE_ORDER.get(c.성적, -99)
+            # A+=4.5, A=4.0, B+=3.5 ... — 대학별 표준 공식 적용
+            grade_map = {
+                "A+": 4.5, "A": 4.0, "A0": 4.0,
+                "B+": 3.5, "B": 3.0, "B0": 3.0,
+                "C+": 2.5, "C": 2.0, "C0": 2.0,
+                "D+": 1.5, "D": 1.0, "D0": 1.0, "F": 0.0,
+            }
+            gp = grade_map.get(c.성적)
+            if gp is not None and c.학점:
+                d["_grade_points"] += gp * float(c.학점)
+                d["_grade_credits"] += float(c.학점)
+
+        # 정렬 (학기 문자열 기준, 예: "2024/1" < "2024/2")
+        result: list[dict] = []
+        for term in sorted(by_term.keys()):
+            d = by_term[term]
+            gpa = round(d["_grade_points"] / d["_grade_credits"], 2) if d["_grade_credits"] > 0 else None
+            result.append({
+                "term": term,
+                "credits": round(d["credits"], 1),
+                "course_count": d["course_count"],
+                "gpa": gpa,
+            })
+        return result
+
+    def _grade_distribution(self) -> dict[str, int]:
+        """성적 등급별 과목 수 (A+, A, B+, ..., F, P, NP)."""
+        dist: dict[str, int] = {}
+        for c in self.profile.courses:
+            if not c.성적:
+                continue
+            # A0→A, B0→B, ... 정규화 (UI 표시용)
+            grade = c.성적
+            normalized = grade.replace("0", "") if grade in ("A0", "B0", "C0", "D0") else grade
+            dist[normalized] = dist.get(normalized, 0) + 1
+        return dist
+
+    def _graduation_projection(self) -> dict:
+        """
+        현재 이수학기 + 부족학점 기반 졸업 예정 학기 계산.
+        4원칙 #3·4 — 기본값은 TranscriptRulesConfig (graph 조회는 상위 action_rules에서).
+        순수 규정 계산, 주관 판단 없음.
+        """
+        from app.config import settings as _settings
+        cfg = _settings.transcript_rules
+
+        p = self.profile.profile
+        c = self.profile.credits
+
+        completed = int(p.이수학기 or 0)
+        normal_total = cfg.normal_semesters
+        remaining_credits = float(c.총_부족학점 or 0)
+
+        # 한 학기 최대 학점 (graph에서 조회 시도)
+        max_per_sem = cfg.fallback_reg_max
+        if self.graph and p.입학연도:
+            try:
+                rule = self.graph.get_registration_rule(p.입학연도) or {}
+                max_per_sem = int(rule.get("최대신청학점") or max_per_sem)
+            except Exception:
+                pass
+
+        sems_needed = 0
+        if remaining_credits > 0 and max_per_sem > 0:
+            # 올림 (1.0 학점만 남아도 1학기 필요)
+            sems_needed = int(-(-remaining_credits // max_per_sem))
+
+        # 졸업 예정 학기 계산 (학번 + 이수학기 기반)
+        expected_term = "unknown"
+        try:
+            year = int(p.입학연도)
+            # 남은 학기를 현재 학기에 더해 계산
+            total_term_idx = completed + sems_needed  # 전체 학기 인덱스 (1-based: 1,2,3,...)
+            if total_term_idx > 0:
+                extra_years = (total_term_idx - 1) // 2
+                is_second = (total_term_idx - 1) % 2 == 1
+                grad_year = year + extra_years
+                expected_term = f"{grad_year}-{'2' if is_second else '1'}"
+        except (ValueError, TypeError):
+            pass
+
+        # 조기졸업 자격 체크 (graph → config fallback)
+        can_early = False
+        eligible: list[str] = []
+        blocked: list[str] = []
+
+        gpa = float(c.평점평균 or 0)
+        if gpa >= cfg.early_grad_gpa:
+            eligible.append(f"평점 {gpa:.2f} ≥ {cfg.early_grad_gpa}")
+        else:
+            blocked.append(f"평점 {gpa:.2f} < {cfg.early_grad_gpa}")
+
+        if completed and completed < normal_total:
+            # 이미 정규 학기 다 못 마쳐야 조기 가능
+            if completed + sems_needed <= normal_total - 1:
+                eligible.append(f"이수학기 {completed} + 필요 {sems_needed} ≤ {normal_total - 1}")
+            else:
+                blocked.append(f"졸업까지 {sems_needed}학기 더 필요 — 조기졸업 불가")
+        else:
+            blocked.append(f"이수학기 {completed} — 정규 학기 기준 초과")
+
+        can_early = len(blocked) == 0
+
+        return {
+            "expected_term": expected_term,
+            "semesters_remaining": sems_needed,
+            "can_early_graduate": can_early,
+            "early_eligible_reasons": eligible,
+            "early_blocked_reasons": blocked,
+        }
+
+    def build_full_analysis(self) -> dict:
+        """
+        리포트 페이지용 구조화 분석 번들.
+        action_rules는 별도 호출 (endpoint에서 수행).
+        """
+        gap = self.graduation_gap()
+        c = self.profile.credits
+        progress_pct = 0
+        if c.총_졸업기준 > 0:
+            progress_pct = min(100, int((c.총_취득학점 / c.총_졸업기준) * 100))
+
+        # 카테고리 — "필수" 패턴 자동 판정 (4원칙 #1 스키마 진화)
+        categories = []
+        for cat in c.categories:
+            if cat.name == "총계":
+                continue
+            name = cat.name
+            required_kw = any(kw in name for kw in ("필수", "기본", "심화"))
+            cat_pct = 0
+            if cat.졸업기준 > 0:
+                cat_pct = min(100, int((cat.취득학점 / cat.졸업기준) * 100))
+            categories.append({
+                "name": name,
+                "acquired": float(cat.취득학점),
+                "required": float(cat.졸업기준),
+                "shortage": float(cat.부족학점),
+                "progress_pct": cat_pct,
+                "is_required": required_kw,
+            })
+
+        return {
+            "summary": {
+                "gpa": float(c.평점평균),
+                "acquired": float(c.총_취득학점),
+                "required": float(c.총_졸업기준),
+                "shortage": float(c.총_부족학점),
+                "progress_pct": progress_pct,
+            },
+            "categories": categories,
+            "semesters": self._semester_breakdown(),
+            "grade_distribution": self._grade_distribution(),
+            "retake_candidates": [
+                {
+                    "course": c.교과목명,
+                    "term": c.이수학기,
+                    "credits": float(c.학점),
+                    "grade": c.성적,
+                }
+                for c in self.retake_candidates()[:20]
+            ],
+            "registration_limit": self.registration_limit(),
+            "dual_major": self.dual_major_status(),
+            "graduation": self._graduation_projection(),
+            "graph_requirements": gap.get("graph_requirements", {}),
+        }

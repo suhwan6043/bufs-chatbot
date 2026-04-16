@@ -1,11 +1,12 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { MessageSquare, PlusCircle, FileText, History, User, Settings, LogOut, Send, X } from "lucide-react";
 import { CalendarPlus, ClipboardList, BookOpen, GraduationCap, Monitor, BarChart3, Calendar, Megaphone } from "lucide-react";
-import type { Lang, UserProfile, TabId } from "@/lib/types";
+import type { Lang, UserProfile, TabId, ChatMessage } from "@/lib/types";
 import { t } from "@/lib/i18n";
 import { QUICK_FEATURES_BASE, PORTAL_LINKS } from "@/lib/constants";
 import { apiFetch } from "@/lib/api";
+import { useChatHistory } from "@/hooks/useChatHistory";
 import TranscriptUpload from "./TranscriptUpload";
 
 const QF_ICONS: Record<string, React.ElementType> = { CalendarPlus, ClipboardList, BookOpen, GraduationCap };
@@ -17,6 +18,7 @@ interface SidebarProps {
   sessionId?: string | null;
   hasTranscript?: boolean;
   authUser?: { nickname: string; student_id: string; department: string } | null;
+  messages?: ChatMessage[];  // 현재 세션 메시지 (비로그인 대화기록 소스)
   onSelectQuestion: (q: string) => void;
   onClearChat: () => void;
   onNewChat: () => void;
@@ -28,8 +30,22 @@ interface SidebarProps {
 }
 
 export default function Sidebar({
-  lang, profile, sessionId, hasTranscript, authUser, onSelectQuestion, onClearChat, onNewChat, onTabChange, onLogout, activeTab, isOpen, onClose,
+  lang, profile, sessionId, hasTranscript, authUser, messages = [], onSelectQuestion, onClearChat, onNewChat, onTabChange, onLogout, activeTab, isOpen, onClose,
 }: SidebarProps) {
+  // 로그인 사용자: DB 이력 조회 / 비로그인: no-op
+  const { items: historyItems, isLoggedIn, refresh: refreshHistory } = useChatHistory({ limit: 20, autoLoad: false });
+
+  // 사이드바 열릴 때마다 로그인 사용자는 최신 이력 재조회
+  useEffect(() => {
+    if (isOpen && isLoggedIn) refreshHistory();
+  }, [isOpen, isLoggedIn, refreshHistory]);
+
+  // 비로그인: 현재 세션의 user role 메시지로 대화기록 구성 (최신순)
+  const sessionHistory = messages
+    .filter((m) => m.role === "user")
+    .map((m, i) => ({ id: `s-${i}`, question: m.content }))
+    .reverse()
+    .slice(0, 20);
   const [fbText, setFbText] = useState("");
   const [fbSent, setFbSent] = useState(false);
   const [fbOpen, setFbOpen] = useState(false);
@@ -149,21 +165,56 @@ export default function Sidebar({
             })}
           </div>
 
-          {/* History placeholder */}
+          {/* 대화기록 — 로그인: DB 이력 / 비로그인: 현재 세션 질문 */}
           <div className="space-y-0.5">
-            <p className="px-4 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-              {t(lang, "sidebar.history")}
-            </p>
-            {[t(lang, "qf.register"), t(lang, "qf.grades"), t(lang, "qf.schedule")].map((item, i) => (
-              <button
-                key={i}
-                onClick={() => { onSelectQuestion(item); onTabChange("chat"); onClose(); }}
-                className="w-full flex items-center gap-3 px-4 py-2 text-sm font-medium text-slate-500 hover:bg-white hover:text-blue-600 rounded-xl transition-all group"
-              >
-                <History className="w-4 h-4 opacity-50 group-hover:opacity-100" />
-                <span className="truncate">{item}</span>
-              </button>
-            ))}
+            <div className="px-4 py-2 flex items-center justify-between">
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                {t(lang, "sidebar.history")}
+              </p>
+              {isLoggedIn && (
+                <span className="text-[10px] font-bold text-blue-500">
+                  {lang === "ko" ? "내 이력" : "My history"}
+                </span>
+              )}
+            </div>
+
+            {isLoggedIn ? (
+              historyItems.length === 0 ? (
+                <p className="px-4 py-3 text-xs text-slate-400">
+                  {lang === "ko" ? "아직 질문 이력이 없습니다." : "No questions yet."}
+                </p>
+              ) : (
+                historyItems.map((h) => (
+                  <button
+                    key={h.id}
+                    onClick={() => { onSelectQuestion(h.question); onTabChange("chat"); onClose(); }}
+                    className="w-full flex items-center gap-3 px-4 py-2 text-sm font-medium text-slate-500 hover:bg-white hover:text-blue-600 rounded-xl transition-all group text-left"
+                    title={h.question}
+                  >
+                    <History className="w-4 h-4 opacity-50 group-hover:opacity-100 shrink-0" />
+                    <span className="truncate">{h.question}</span>
+                  </button>
+                ))
+              )
+            ) : sessionHistory.length === 0 ? (
+              <p className="px-4 py-3 text-xs text-slate-400">
+                {lang === "ko"
+                  ? "이번 세션 이력이 여기 표시됩니다. 로그인하면 저장됩니다."
+                  : "Current session shown here. Log in to save history."}
+              </p>
+            ) : (
+              sessionHistory.map((h) => (
+                <button
+                  key={h.id}
+                  onClick={() => { onSelectQuestion(h.question); onTabChange("chat"); onClose(); }}
+                  className="w-full flex items-center gap-3 px-4 py-2 text-sm font-medium text-slate-500 hover:bg-white hover:text-blue-600 rounded-xl transition-all group text-left"
+                  title={h.question}
+                >
+                  <History className="w-4 h-4 opacity-50 group-hover:opacity-100 shrink-0" />
+                  <span className="truncate">{h.question}</span>
+                </button>
+              ))
+            )}
           </div>
         </nav>
 

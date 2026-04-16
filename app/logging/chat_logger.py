@@ -7,6 +7,8 @@
 
 import json
 import logging
+import os
+from contextvars import ContextVar
 from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
@@ -16,6 +18,23 @@ from app.config import DATA_DIR
 logger = logging.getLogger(__name__)
 
 LOG_DIR = DATA_DIR / "logs"
+
+# 평가·테스트 러너가 설정하면 모든 Q&A 로그 기록이 건너뜀 (회귀 스크립트가 production 로그 오염 방지).
+# production/사용자 트래픽에는 절대 세팅하지 말 것.
+CHAT_LOG_DISABLED = os.getenv("CHAT_LOG_DISABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+
+# 요청 단위 스킵 플래그 — 라우터 진입부에서 `X-Test-Mode` 헤더를 보면 True로 세팅.
+# JSONL 로그 + chat_messages DB 양쪽 모두 건너뛴다.
+_skip_log_var: ContextVar[bool] = ContextVar("camchat_skip_log", default=False)
+
+
+def set_skip_log(flag: bool) -> None:
+    """현재 요청에서 Q&A 로그 기록을 건너뛰도록 설정. ContextVar 기반이라 요청 간 격리됨."""
+    _skip_log_var.set(bool(flag))
+
+
+def should_skip_log() -> bool:
+    return CHAT_LOG_DISABLED or _skip_log_var.get()
 
 
 class ChatLogger:
@@ -37,8 +56,19 @@ class ChatLogger:
         duration_ms: int = 0,
         rating: Optional[int] = None,
         context_confidence: Optional[float] = None,
+        user_id: Optional[int] = None,
+        chat_message_id: Optional[int] = None,
     ) -> None:
-        """Q&A 한 쌍을 오늘 날짜 JSONL 파일에 추가합니다."""
+        """Q&A 한 쌍을 오늘 날짜 JSONL 파일에 추가합니다.
+
+        user_id: 로그인 사용자 id (비로그인=None). FAQ 이송 시 원본 질문자 식별에 사용.
+        chat_message_id: backend/database.py chat_messages 테이블 row id (개인 DB 저장 완료 시).
+
+        CHAT_LOG_DISABLED 환경변수 또는 요청의 X-Test-Mode 헤더가 참이면 조용히 건너뜀 —
+        평가·테스트 러너가 production 로그 오염을 방지하는 데 사용.
+        """
+        if should_skip_log():
+            return
         entry = {
             "timestamp": datetime.now().isoformat(timespec="seconds"),
             "session_id": session_id,
@@ -51,6 +81,10 @@ class ChatLogger:
         }
         if context_confidence is not None:
             entry["context_confidence"] = round(float(context_confidence), 4)
+        if user_id is not None:
+            entry["user_id"] = int(user_id)
+        if chat_message_id is not None:
+            entry["chat_message_id"] = int(chat_message_id)
         try:
             with open(self._today_path(), "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")

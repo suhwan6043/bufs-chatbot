@@ -11,8 +11,15 @@ export interface AuthUser {
   student_type: string;
 }
 
-const TOKEN_KEY = "camchat_auth_token";
+export const AUTH_TOKEN_KEY = "camchat_auth_token";
+const TOKEN_KEY = AUTH_TOKEN_KEY;
 const USER_KEY = "camchat_user";
+
+/** 외부 모듈에서 현재 JWT를 읽기 위한 헬퍼 (SSR 안전). */
+export function getAuthToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(TOKEN_KEY);
+}
 
 function getStored<T>(key: string): T | null {
   if (typeof window === "undefined") return null;
@@ -95,19 +102,40 @@ export function useAuth() {
     }
   }, []);
 
-  const logout = useCallback(async () => {
+  const logout = useCallback(async (opts?: { sessionId?: string | null }) => {
     const token = localStorage.getItem(TOKEN_KEY);
-    if (token) {
-      try {
-        await apiFetch("/api/user/logout", {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-        });
-      } catch {}
-    }
+    const sid = opts?.sessionId;
+    // 토큰 유무와 무관하게 session_id가 있으면 서버 세션을 purge해야 한다.
+    try {
+      const qs = sid ? `?session_id=${encodeURIComponent(sid)}` : "";
+      await apiFetch(`/api/user/logout${qs}`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+    } catch {}
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
     setUser(null);
+  }, []);
+
+  const authFetch = useCallback(async <T,>(path: string, opts?: RequestInit): Promise<T> => {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) throw new Error("로그인이 필요합니다.");
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      ...((opts?.headers as Record<string, string>) ?? {}),
+    };
+    if (opts?.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+    try {
+      return await apiFetch<T>(path, { ...opts, headers });
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message.includes("401")) {
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(USER_KEY);
+        setUser(null);
+      }
+      throw e;
+    }
   }, []);
 
   return {
@@ -117,5 +145,6 @@ export function useAuth() {
     login,
     register,
     logout,
+    authFetch,
   };
 }

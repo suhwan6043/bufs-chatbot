@@ -22,6 +22,12 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.config import settings
+from backend.database import (
+    add_faq_subscriber,
+    create_notification,
+    delete_faq_subscribers,
+    list_faq_subscribers,
+)
 from backend.routers.admin.auth import require_admin, _audit
 from backend.schemas.admin import (
     FaqCreate,
@@ -213,7 +219,57 @@ async def list_faq(
     )
 
 
+# ── GET: 카테고리 목록 (경량) ───────────────────────────────
+
+@router.get("/faq/categories")
+async def list_faq_categories(_=Depends(require_admin)):
+    """FAQ 카테고리 목록만 반환 (로그→FAQ 이송 폼용)."""
+    academic, admin = _merged_faqs()
+    return {"categories": _known_categories(academic, admin)}
+
+
 # ── POST: 추가 ─────────────────────────────────────────────
+
+def _truncate_body(text: str, limit: Optional[int] = None) -> str:
+    """알림 body 는 본문 요약 일부만 — 개인정보·긴 답변 유출 최소화."""
+    if not text:
+        return ""
+    limit = int(limit or settings.notifications.body_max_chars)
+    t = text.strip()
+    return t if len(t) <= limit else (t[:limit].rstrip() + "…")
+
+
+def _notify_subscribers(
+    faq_id: str,
+    kind: str,
+    title: str,
+    body: str,
+) -> int:
+    """해당 FAQ 구독자 전원에 알림 발송. 실패는 로그만, HTTP 500 안 냄."""
+    try:
+        subs = list_faq_subscribers(faq_id)
+    except Exception as exc:
+        logger.error("FAQ 구독자 조회 실패 faq_id=%s: %s", faq_id, exc)
+        return 0
+    sent = 0
+    for s in subs:
+        try:
+            create_notification(
+                user_id=int(s["user_id"]),
+                kind=kind,
+                title=title,
+                body=body,
+                faq_id=faq_id,
+                chat_message_id=s.get("chat_message_id"),
+            )
+            sent += 1
+        except Exception as exc:
+            logger.error(
+                "알림 생성 실패 user_id=%s faq_id=%s: %s",
+                s.get("user_id"), faq_id, exc,
+            )
+    return sent
+
 
 @router.post("/faq", response_model=FaqItem)
 async def create_faq(body: FaqCreate, _=Depends(require_admin)):
@@ -248,6 +304,26 @@ async def create_faq(body: FaqCreate, _=Depends(require_admin)):
         except Exception as exc:
             logger.error("FAQ 증분 반영 실패: %s", exc, exc_info=True)
             raise HTTPException(status_code=500, detail=f"FAQ 저장은 되었으나 증분 반영 실패: {exc}")
+
+        # 대화 로그 이송 시 구독자 등록 + 즉시 '답변 정정' 알림 발송
+        if body.source_user_id is not None:
+            try:
+                add_faq_subscriber(
+                    faq_id=new_id,
+                    user_id=int(body.source_user_id),
+                    chat_message_id=body.source_chat_message_id,
+                )
+                create_notification(
+                    user_id=int(body.source_user_id),
+                    kind="faq_answered",
+                    title=settings.notifications.title_answered_ko,
+                    body=_truncate_body(item["answer"]),
+                    faq_id=new_id,
+                    chat_message_id=body.source_chat_message_id,
+                )
+                _audit("FAQ_SUBSCRIBER_ADDED", f"faq_id={new_id} user_id={body.source_user_id}")
+            except Exception as exc:
+                logger.error("FAQ 구독자/알림 생성 실패: %s", exc, exc_info=True)
 
     return _to_faq_item(item)
 
@@ -299,6 +375,17 @@ async def update_faq(faq_id: str, body: FaqUpdate, _=Depends(require_admin)):
             logger.error("FAQ 증분 반영 실패: %s", exc, exc_info=True)
             raise HTTPException(status_code=500, detail=f"수정은 되었으나 증분 반영 실패: {exc}")
 
+        # 답변이 요청에 포함됐으면 구독자에게 알림
+        if body.answer is not None:
+            sent = _notify_subscribers(
+                faq_id=faq_id,
+                kind="faq_updated",
+                title=settings.notifications.title_updated_ko,
+                body=_truncate_body(target.get("answer", "")),
+            )
+            if sent:
+                _audit("FAQ_UPDATE_NOTIFIED", f"faq_id={faq_id} users={sent}")
+
     return _to_faq_item(target)
 
 
@@ -322,6 +409,14 @@ async def delete_faq(faq_id: str, _=Depends(require_admin)):
         except Exception as exc:
             logger.error("FAQ 증분 반영 실패: %s", exc, exc_info=True)
             raise HTTPException(status_code=500, detail=f"삭제는 되었으나 증분 반영 실패: {exc}")
+
+        # 구독자 매핑 정리 (notifications 은 개인 이력 보존을 위해 유지)
+        try:
+            removed = delete_faq_subscribers(faq_id)
+            if removed:
+                _audit("FAQ_SUBSCRIBERS_CLEARED", f"faq_id={faq_id} count={removed}")
+        except Exception as exc:
+            logger.error("FAQ 구독자 정리 실패: %s", exc)
 
     return {"ok": True, "id": faq_id}
 

@@ -165,6 +165,11 @@ class FaqCreate(BaseModel):
         description="적용 학생유형 (빈 리스트=전체). 예: ['외국인','편입생']")
     cohort_from: Optional[int] = Field(None, description="적용 최소 학번 (예: 2023)")
     cohort_to: Optional[int] = Field(None, description="적용 최대 학번 (예: 2025)")
+    # 대화 로그→FAQ 이송 시 원본 질문자 연결 (선택)
+    source_user_id: Optional[int] = Field(None,
+        description="이송 원본 질문자 user_id — 알림 대상")
+    source_chat_message_id: Optional[int] = Field(None,
+        description="이송 원본 chat_messages.id")
 
 
 class FaqUpdate(BaseModel):

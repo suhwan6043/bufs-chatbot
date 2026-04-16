@@ -84,5 +84,26 @@ export function useSession(lang: Lang) {
     setSession((prev) => prev ? { ...prev, user_profile: profile } : prev);
   }, [sessionId]);
 
-  return { sessionId, session, loading, updateProfile, createSession };
+  // 서버에서 최신 세션 상태를 재조회 (업로드 후 has_transcript 갱신용)
+  const refreshSession = useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      const data = await apiFetch<SessionInfo>(`/api/session/${sessionId}`);
+      setSession({ ...data, lang });
+    } catch {
+      // ignore — 세션 무효면 loadSession이 재생성
+    }
+  }, [sessionId, lang]);
+
+  // 세션 완전 리셋 — 로그아웃용. 쿠키 삭제 + 상태 클리어 + 새 빈 세션 생성.
+  const resetSession = useCallback(async () => {
+    if (typeof document !== "undefined") {
+      document.cookie = `${COOKIE_KEY}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax`;
+    }
+    setSessionId(null);
+    setSession(null);
+    await createSession();
+  }, [createSession]);
+
+  return { sessionId, session, loading, updateProfile, createSession, refreshSession, resetSession };
 }

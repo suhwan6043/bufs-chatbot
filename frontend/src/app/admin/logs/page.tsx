@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAdmin, type LogEntry } from "@/hooks/useAdmin";
 import { BASE_URL } from "@/lib/api";
 
@@ -18,8 +18,20 @@ function renderStars(rating: string | number | null | undefined) {
   return "★".repeat(Math.min(n, 5)) + "☆".repeat(Math.max(0, 5 - n));
 }
 
+interface PromoteForm {
+  question: string;
+  answer: string;
+  category: string;
+}
+
+interface PromoteResult {
+  idx: number;
+  ok: boolean;
+  msg: string;
+}
+
 export default function LogsPage() {
-  const { token, fetchLogDates, fetchLogs } = useAdmin();
+  const { token, fetchLogDates, fetchLogs, fetchFaqCategories, createFaq } = useAdmin();
 
   const [dates, setDates] = useState<string[]>([]);
   const [selDate, setSelDate] = useState("");
@@ -32,13 +44,31 @@ export default function LogsPage() {
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(false);
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+
+  // FAQ 이송 상태
+  const [categories, setCategories] = useState<string[]>([]);
+  const [promoteIdx, setPromoteIdx] = useState<number | null>(null);
+  const [promoteForm, setPromoteForm] = useState<PromoteForm>({ question: "", answer: "", category: "" });
+  const [promoteLoading, setPromoteLoading] = useState(false);
+  const [promoteResult, setPromoteResult] = useState<PromoteResult | null>(null);
+
   const limit = 50;
 
-  useEffect(() => { if (token) fetchLogDates().then((d) => setDates(d.dates)).catch(() => {}); }, [token, fetchLogDates]);
+  useEffect(() => {
+    if (token) fetchLogDates().then((d) => setDates(d.dates)).catch(() => {});
+  }, [token, fetchLogDates]);
 
-  const load = async (o = 0) => {
+  useEffect(() => {
+    if (token) {
+      fetchFaqCategories().then((r) => setCategories(r.categories)).catch(() => {});
+    }
+  }, [token, fetchFaqCategories]);
+
+  const load = useCallback(async (o = 0) => {
     setLoading(true);
     setExpandedIdx(null);
+    setPromoteIdx(null);
+    setPromoteResult(null);
     const p = new URLSearchParams({ limit: String(limit), offset: String(o) });
     if (selDate) p.set("log_date", selDate);
     if (intent) p.set("intent", intent);
@@ -51,9 +81,59 @@ export default function LogsPage() {
       setTopIntent(r.top_intent);
       setOffset(o);
     } catch {} finally { setLoading(false); }
-  };
+  }, [selDate, intent, fetchLogs]);
 
   useEffect(() => { if (token) load(); }, [token, selDate, intent]);
+
+  const openPromote = (idx: number, entry: LogEntry) => {
+    setPromoteIdx(idx);
+    setPromoteResult(null);
+    setPromoteForm({
+      question: entry.question,
+      answer: entry.answer || "",
+      category: categories[0] || "",
+    });
+  };
+
+  const closePromote = () => {
+    setPromoteIdx(null);
+    setPromoteResult(null);
+  };
+
+  const submitPromote = async (sourceEntry: LogEntry) => {
+    if (!promoteForm.question.trim() || !promoteForm.answer.trim() || !promoteForm.category.trim()) return;
+    setPromoteLoading(true);
+    try {
+      const loggedInUser = sourceEntry.user_id != null;
+      await createFaq({
+        question: promoteForm.question.trim(),
+        answer: promoteForm.answer.trim(),
+        category: promoteForm.category.trim(),
+        source_question: sourceEntry.question !== promoteForm.question.trim()
+          ? sourceEntry.question
+          : undefined,
+        // 로그인 사용자의 질문이면 user_id·message_id 연결 → FAQ 수정 시 알림 발송
+        source_user_id: sourceEntry.user_id ?? null,
+        source_chat_message_id: sourceEntry.chat_message_id ?? null,
+      });
+      setPromoteResult({
+        idx: promoteIdx!,
+        ok: true,
+        msg: loggedInUser
+          ? "FAQ에 등록되었습니다. 질문자에게 알림이 발송됩니다."
+          : "FAQ에 등록되었습니다.",
+      });
+      setPromoteIdx(null);
+    } catch (e: unknown) {
+      setPromoteResult({
+        idx: promoteIdx!,
+        ok: false,
+        msg: e instanceof Error ? e.message : "등록 실패",
+      });
+    } finally {
+      setPromoteLoading(false);
+    }
+  };
 
   if (!token) return null;
 
@@ -61,7 +141,6 @@ export default function LogsPage() {
     { label: "조회 대화 수", value: total, color: "border-l-blue-500" },
     { label: "오늘 대화", value: todayCount, color: "border-l-green-500" },
     { label: "평균 응답", value: `${(avgDuration / 1000).toFixed(1)}s`, color: "border-l-orange-500" },
-    // top_intent는 백엔드에서 이미 한국어 라벨로 번역되어 옴 → 그대로 표시
     { label: "최다 인텐트", value: topIntent || "-", color: "border-l-purple-500" },
   ];
 
@@ -118,21 +197,35 @@ export default function LogsPage() {
               entries.length === 0 ? <tr><td colSpan={8} className="text-center py-8 text-muted">데이터 없음</td></tr> :
               entries.map((e, i) => (
                 <>
-                  <tr key={`row-${i}`} className={`border-b border-border/50 hover:bg-gray-50 cursor-pointer ${expandedIdx === i ? "bg-blue-50" : ""}`}
-                    onClick={() => setExpandedIdx(expandedIdx === i ? null : i)}>
+                  <tr key={`row-${i}`}
+                    className={`border-b border-border/50 hover:bg-gray-50 cursor-pointer ${expandedIdx === i ? "bg-blue-50" : ""}`}
+                    onClick={() => {
+                      const next = expandedIdx === i ? null : i;
+                      setExpandedIdx(next);
+                      if (next === null) { setPromoteIdx(null); setPromoteResult(null); }
+                    }}>
                     <td className="px-3 py-2 text-muted">{expandedIdx === i ? "▼" : "▶"}</td>
                     <td className="px-3 py-2 whitespace-nowrap text-muted">{e.timestamp}</td>
-                    <td className="px-3 py-2 text-text-sub">{e.student_id || "-"}</td>
+                    <td className="px-3 py-2 text-text-sub">
+                      {e.student_id || "-"}
+                      {e.user_id != null && (
+                        <span className="ml-1 inline-block px-1.5 py-0.5 text-[10px] rounded bg-emerald-50 text-emerald-700 border border-emerald-200" title="로그인 사용자 — FAQ 이송 시 알림 대상">
+                          로그인
+                        </span>
+                      )}
+                    </td>
                     <td className="px-3 py-2 text-text-sub">{INTENT_LABELS[e.intent] || e.intent}</td>
                     <td className="px-3 py-2 max-w-[250px] truncate">{e.question}</td>
                     <td className="px-3 py-2 max-w-[250px] truncate text-text-sub">{e.answer ? e.answer.slice(0, 80) + "..." : "-"}</td>
                     <td className="px-3 py-2 text-text-sub">{e.duration_ms}</td>
                     <td className="px-3 py-2 text-yellow-500">{renderStars(e.rating)}</td>
                   </tr>
+
                   {expandedIdx === i && (
                     <tr key={`detail-${i}`} className="bg-gray-50">
                       <td colSpan={8} className="px-4 py-3">
                         <div className="space-y-2">
+                          {/* 질문 / 답변 */}
                           <div>
                             <span className="text-xs font-medium text-text">질문:</span>
                             <p className="text-xs text-text-sub mt-1 whitespace-pre-wrap">{e.question}</p>
@@ -146,6 +239,102 @@ export default function LogsPage() {
                             <span>응답시간: {e.duration_ms}ms</span>
                             <span>만족도: {renderStars(e.rating)}</span>
                           </div>
+
+                          {/* FAQ 이송 결과 배너 */}
+                          {promoteResult?.idx === i && (
+                            <div className={`text-xs px-3 py-2 rounded-lg ${promoteResult.ok ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-600 border border-red-200"}`}>
+                              {promoteResult.ok ? "✓ " : "✗ "}{promoteResult.msg}
+                            </div>
+                          )}
+
+                          {/* FAQ 이송 버튼 */}
+                          {promoteIdx !== i && !(promoteResult?.idx === i && promoteResult.ok) && (
+                            <div className="border-t border-border/50 pt-2">
+                              <button
+                                onClick={(ev) => { ev.stopPropagation(); openPromote(i, e); }}
+                                className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                              >
+                                FAQ로 등록
+                              </button>
+                            </div>
+                          )}
+
+                          {/* FAQ 이송 인라인 폼 */}
+                          {promoteIdx === i && (
+                            <div
+                              className="border border-blue-200 rounded-xl p-4 bg-blue-50 space-y-3 mt-2"
+                              onClick={(ev) => ev.stopPropagation()}
+                            >
+                              <p className="text-xs font-semibold text-blue-800">FAQ 등록 — 올바른 답변으로 수정 후 등록하세요</p>
+                              {e.user_id != null && (
+                                <p className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-2 py-1">
+                                  ✉ 등록 시 이 질문자(user_id {e.user_id})에게 자동으로 알림이 발송됩니다.
+                                </p>
+                              )}
+
+                              {/* 카테고리 */}
+                              <div>
+                                <label className="text-xs text-muted block mb-1">카테고리 <span className="text-red-500">*</span></label>
+                                <div className="flex gap-2">
+                                  <select
+                                    value={promoteForm.category}
+                                    onChange={(ev) => setPromoteForm(f => ({ ...f, category: ev.target.value }))}
+                                    className="flex-1 px-2 py-1.5 border border-border rounded-lg text-xs"
+                                  >
+                                    <option value="">선택...</option>
+                                    {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+                                  </select>
+                                  <input
+                                    placeholder="직접 입력"
+                                    value={categories.includes(promoteForm.category) ? "" : promoteForm.category}
+                                    onChange={(ev) => setPromoteForm(f => ({ ...f, category: ev.target.value }))}
+                                    className="w-32 px-2 py-1.5 border border-border rounded-lg text-xs"
+                                  />
+                                </div>
+                              </div>
+
+                              {/* 질문 */}
+                              <div>
+                                <label className="text-xs text-muted block mb-1">질문 <span className="text-red-500">*</span></label>
+                                <textarea
+                                  rows={2}
+                                  value={promoteForm.question}
+                                  onChange={(ev) => setPromoteForm(f => ({ ...f, question: ev.target.value }))}
+                                  className="w-full px-2 py-1.5 border border-border rounded-lg text-xs resize-none"
+                                />
+                              </div>
+
+                              {/* 올바른 답변 */}
+                              <div>
+                                <label className="text-xs text-muted block mb-1">
+                                  올바른 답변 <span className="text-red-500">*</span>
+                                  <span className="ml-1 text-orange-500 font-normal">← 잘못된 내용을 수정하세요</span>
+                                </label>
+                                <textarea
+                                  rows={5}
+                                  value={promoteForm.answer}
+                                  onChange={(ev) => setPromoteForm(f => ({ ...f, answer: ev.target.value }))}
+                                  className="w-full px-2 py-1.5 border border-orange-300 rounded-lg text-xs resize-y bg-white"
+                                />
+                              </div>
+
+                              <div className="flex gap-2 justify-end">
+                                <button
+                                  onClick={closePromote}
+                                  className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-gray-100"
+                                >
+                                  취소
+                                </button>
+                                <button
+                                  onClick={() => submitPromote(e)}
+                                  disabled={promoteLoading || !promoteForm.question.trim() || !promoteForm.answer.trim() || !promoteForm.category.trim()}
+                                  className="px-4 py-1.5 text-xs bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40 transition-colors"
+                                >
+                                  {promoteLoading ? "등록 중..." : "등록"}
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </td>
                     </tr>

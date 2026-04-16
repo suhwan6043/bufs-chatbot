@@ -31,10 +31,16 @@ export default function ChatInput({ lang, onSend, disabled }: ChatInputProps) {
   };
 
   return (
-    <div className="sticky bottom-0 bg-white/95 backdrop-blur-md border-t border-slate-100 p-4 md:p-6 z-20">
+    <div
+      className="sticky bottom-0 bg-white/95 backdrop-blur-md border-t border-slate-100 px-4 md:px-6 pt-4 md:pt-6 pb-4 md:pb-6 z-20"
+      style={{
+        // iOS 홈 바 영역 보호 (notch 기기)
+        paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)",
+      }}
+    >
       <div className="max-w-4xl mx-auto space-y-3">
-        {/* Trending tags */}
-        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+        {/* Trending tags — 모바일에선 숨김 (하단 4개 버튼 제거 요청) */}
+        <div className="hidden md:flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
           <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 rounded-full text-[10px] font-bold text-slate-400 uppercase tracking-tighter shrink-0">
             <Search className="w-3 h-3" /> {t(lang, "input.trending")}
           </div>

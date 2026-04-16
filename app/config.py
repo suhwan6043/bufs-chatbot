@@ -172,6 +172,81 @@ class AdminFaqConfig:
 
 
 @dataclass
+class NotificationConfig:
+    """
+    로그인 사용자 알림 설정.
+    FAQ 이송·수정 시 발송되는 알림 제목·보관 기간을 환경변수로 관리.
+    """
+    list_limit: int = int(os.getenv("NOTIF_LIST_LIMIT", "50"))
+    retention_days: int = int(os.getenv("NOTIF_RETENTION_DAYS", "30"))
+    body_max_chars: int = int(os.getenv("NOTIF_BODY_MAX_CHARS", "200"))
+    title_answered_ko: str = os.getenv(
+        "NOTIF_TITLE_ANSWERED_KO", "학사지원팀이 답변을 정정했습니다"
+    )
+    title_answered_en: str = os.getenv(
+        "NOTIF_TITLE_ANSWERED_EN", "Your question has been answered by the Academic Team"
+    )
+    title_updated_ko: str = os.getenv(
+        "NOTIF_TITLE_UPDATED_KO", "답변이 업데이트되었습니다"
+    )
+    title_updated_en: str = os.getenv(
+        "NOTIF_TITLE_UPDATED_EN", "Answer has been updated"
+    )
+
+
+@dataclass
+class PipelineConfig:
+    """
+    RAG 파이프라인 동작 플래그.
+    4원칙(하드코딩 금지) — 모든 임계치·토글은 환경변수로 관리.
+    """
+    # context_merger._slice_evidence_text: 긴 청크에서 질문 토큰과 매칭되는 줄만 유지.
+    # 2026-04-16 A/B 테스트 결과: slicing OFF가 Contains-F1 최선 (balanced +5.1pp, 퇴행 0).
+    # 따라서 기본값 OFF. 재활성화 필요 시 EVIDENCE_SLICING_ENABLED=1로 override.
+    evidence_slicing_enabled: bool = os.getenv(
+        "EVIDENCE_SLICING_ENABLED", "0"
+    ).strip().lower() not in ("0", "false", "no")
+    # _slice_evidence_text 조건 임계치 (Phase C에서 완화)
+    evidence_slicing_min_text_len: int = int(
+        os.getenv("EVIDENCE_SLICING_MIN_TEXT_LEN", "1400")
+    )
+    evidence_slicing_min_sliced_len: int = int(
+        os.getenv("EVIDENCE_SLICING_MIN_SLICED_LEN", "500")
+    )
+    evidence_slicing_context_lines: int = int(
+        os.getenv("EVIDENCE_SLICING_CONTEXT_LINES", "2")
+    )
+
+
+@dataclass
+class TranscriptRulesConfig:
+    """
+    학사 리포트 분석 임계치·기본값 (graph 동적 조회 실패 시 fallback).
+    4원칙 #4 준수 — 모든 값이 환경변수로 override 가능.
+    학사안내 업데이트는 graph 재인제스트로 반영되며, 이 fallback은 안전망.
+    """
+    # 부족 학점 severity 분기
+    shortage_warn_min: float = float(os.getenv("TR_SHORTAGE_WARN_MIN", "0.5"))
+    shortage_error_min: float = float(os.getenv("TR_SHORTAGE_ERROR_MIN", "10"))
+    # 재수강 후보 기준 성적 (이하)
+    retake_grade_threshold: str = os.getenv("TR_RETAKE_GRADE", "B0")
+    # 조기졸업 GPA 기준 (graph fallback)
+    early_grad_gpa: float = float(os.getenv("TR_EARLY_GRAD_GPA", "3.7"))
+    # 총 졸업 학점 fallback
+    fallback_graduation_credits: float = float(os.getenv("TR_GRAD_CREDITS_FALLBACK", "130"))
+    # 한 학기 수강신청 기본 최대 학점
+    fallback_reg_max: int = int(os.getenv("TR_REG_MAX_FALLBACK", "18"))
+    # 직전학기 평점 우수 시 확장 학점 상한
+    fallback_reg_max_extended: int = int(os.getenv("TR_REG_MAX_EXTENDED", "24"))
+    # 우수 평점 기준 (확장 학점 자격)
+    excellent_gpa_threshold: float = float(os.getenv("TR_EXCELLENT_GPA", "4.0"))
+    # 정규 졸업 학기 수 (조기졸업 판정용)
+    normal_semesters: int = int(os.getenv("TR_NORMAL_SEMESTERS", "8"))
+    # 조기졸업 가능 최소 학기 수 (6 또는 7)
+    early_grad_min_semesters: int = int(os.getenv("TR_EARLY_GRAD_MIN_SEMS", "6"))
+
+
+@dataclass
 class Settings:
     llm: LLMConfig = field(default_factory=LLMConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
@@ -183,6 +258,9 @@ class Settings:
     admin: AdminConfig = field(default_factory=AdminConfig)
     crawler: CrawlerConfig = field(default_factory=CrawlerConfig)
     admin_faq: AdminFaqConfig = field(default_factory=AdminFaqConfig)
+    notifications: NotificationConfig = field(default_factory=NotificationConfig)
+    pipeline: PipelineConfig = field(default_factory=PipelineConfig)
+    transcript_rules: TranscriptRulesConfig = field(default_factory=TranscriptRulesConfig)
 
 
 settings = Settings()

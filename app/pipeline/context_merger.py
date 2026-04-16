@@ -3,6 +3,24 @@
 CPU 전용, ~2ms 처리
 
 원칙 2: 인텐트별 적응형 RRF 가중치 + 컨텍스트 예산
+
+## 컨텍스트 우선순위 (2026-04-16 확정)
+
+merged.formatted_context 구성 시 아래 순서로 예산(max_chars) 소비:
+
+1. **transcript_context** — 학업성적사정표 기반 개인 데이터 (chat.py `_enrich_analysis`가
+   외부에서 생성해 `merge(transcript_context=...)` 인자로 주입). LLM 전송 전
+   `PIIRedactor.redact_for_llm()` 명시 처리 완료된 문자열.
+2. **direct_answer** — 그래프·FAQ의 `direct_answer` 플래그 청크 (IDF·stem coverage
+   게이트 통과한 고신뢰 답변). `_try_extract_direct_answer` 폴백 포함.
+3. **FAQ 승격 청크** — 그래프 IDF·특이성 점수 통과한 FAQ (`promoted_faq`).
+4. **벡터 domestic/guide 청크** — 공식 PDF (학사안내, 가이드북). 문서 우선순위
+   `source_rank=1`이 2위(가이드북)보다 RRF 결합 단계에서 우선.
+5. **벡터 notice/scholarship 청크** — 일반 공지·장학 (RRF 순위 그대로).
+6. **redirect FAQ** — "어디서 확인/문의" 안내형 (본문 재료 아니므로 최후순위).
+
+참고: `transcript_context`는 merge 내부가 아닌 호출자(chat.py)가 생성·마스킹·주입하므로
+이 파일에서는 raw 추가만 수행하고 우선순위 보호는 호출 순서로 달성된다.
 """
 
 import logging
@@ -393,12 +411,17 @@ class ContextMerger:
                 continue
             _seen_text_prefixes.add(dedupe_sig)
 
-            result_text = self._slice_evidence_text(
-                result_text,
-                question=question,
-                entities=entities,
-                question_type=question_type,
-            )
+            # 원칙 2+4 (2026-04-16 회귀 수정): 증거 텍스트 슬라이싱은
+            # settings.pipeline.evidence_slicing_enabled 플래그로 가드.
+            # 기본 ON이지만 A/B 테스트·비상 차단을 위해 환경변수 EVIDENCE_SLICING_ENABLED로 제어.
+            from app.config import settings as _settings
+            if _settings.pipeline.evidence_slicing_enabled:
+                result_text = self._slice_evidence_text(
+                    result_text,
+                    question=question,
+                    entities=entities,
+                    question_type=question_type,
+                )
 
             text_len = len(result_text)
             remaining = max_chars - total_chars
@@ -775,6 +798,14 @@ class ContextMerger:
 
         return text
 
+    # Phase C (2026-04-16): 조건·예외·한정 키워드가 포함된 줄은 무조건 보존.
+    # 이전 구현은 "2022학번 21학점 / 2023학번 18학점 / 단 평점 4.0 이상 24학점까지"
+    # 에서 예외 조항("단", "이상", "이하")을 유실시켜 다조건 질문 정답률 하락을 유발.
+    _EVIDENCE_ALWAYS_KEEP_PATTERNS = re.compile(
+        r"(단,|다만,|단\s|예외|제외|이상|이하|초과|미만|까지|이내|부터|포함|불포함|"
+        r"범위|예시|조건|기준|경우|제한|적용)"
+    )
+
     @classmethod
     def _slice_evidence_text(
         cls,
@@ -783,8 +814,21 @@ class ContextMerger:
         entities: Optional[dict] = None,
         question_type: Optional[QuestionType] = None,
     ) -> str:
-        """질문과 직접 맞닿는 원문 줄만 유지해 프롬프트 길이를 줄입니다."""
-        if not text or not question or len(text) < 900:
+        """
+        질문과 직접 맞닿는 원문 줄만 유지해 프롬프트 길이를 줄입니다.
+
+        Phase C (2026-04-16) 회귀 수정:
+        - min_text_len·min_sliced_len·context_lines 를 settings.pipeline 환경변수로 분리 (하드코딩 금지)
+        - 조건·예외·한정 키워드("단,", "다만,", "이상", "이하", "제외", ...) 포함 줄은 무조건 보존
+        - 주변 ±context_lines 줄로 컨텍스트 폭 확장 (기본 ±2)
+        """
+        from app.config import settings as _settings
+        _cfg = _settings.pipeline
+        min_text_len = _cfg.evidence_slicing_min_text_len
+        min_sliced_len = _cfg.evidence_slicing_min_sliced_len
+        ctx_n = max(1, _cfg.evidence_slicing_context_lines)
+
+        if not text or not question or len(text) < min_text_len:
             return text
 
         lines = [line.rstrip() for line in text.splitlines()]
@@ -812,6 +856,17 @@ class ContextMerger:
             return text
 
         keep_indexes: set[int] = set()
+
+        # Pass 1: 조건·예외 키워드 포함 줄은 무조건 보존 (+주변)
+        for idx, raw_line in enumerate(lines):
+            line = raw_line.strip()
+            if not line:
+                continue
+            if cls._EVIDENCE_ALWAYS_KEEP_PATTERNS.search(line):
+                for near_idx in range(max(0, idx - ctx_n), min(len(lines), idx + ctx_n + 1)):
+                    keep_indexes.add(near_idx)
+
+        # Pass 2: 질문 토큰과 매칭되는 줄 (+주변 ±ctx_n)
         for idx, raw_line in enumerate(lines):
             line = raw_line.strip()
             if not line:
@@ -822,7 +877,7 @@ class ContextMerger:
                 question_focus=question_focus,
                 question_type=question_type,
             ):
-                for near_idx in range(max(0, idx - 1), min(len(lines), idx + 2)):
+                for near_idx in range(max(0, idx - ctx_n), min(len(lines), idx + ctx_n + 1)):
                     keep_indexes.add(near_idx)
 
         if not keep_indexes:
@@ -832,7 +887,8 @@ class ContextMerger:
             lines[idx] for idx in sorted(keep_indexes)
             if lines[idx].strip()
         ).strip()
-        if len(sliced) < 200 or len(sliced) >= len(text) * 0.9:
+        # 너무 짧거나 (정보 손실), 너무 많이 남으면 (슬라이싱 효과 없음) 원본 유지
+        if len(sliced) < min_sliced_len or len(sliced) >= len(text) * 0.9:
             return text
         return sliced
 

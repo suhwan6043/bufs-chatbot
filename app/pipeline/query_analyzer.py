@@ -500,6 +500,7 @@ class QueryAnalyzer:
             missing_info=missing_info,
             lang="ko",
             question_type=question_type,
+            normalized_query=normalized if normalized != question else None,
         )
 
     def _analyze_en(self, question: str) -> QueryAnalysis:

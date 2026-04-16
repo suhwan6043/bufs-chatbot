@@ -1,44 +1,66 @@
 "use client";
 import { useState, useEffect } from "react";
-import { GraduationCap, CheckCircle2, AlertCircle, Sparkles, Upload } from "lucide-react";
-import type { Lang, TranscriptStatus } from "@/lib/types";
+import { GraduationCap, Upload, Sparkles } from "lucide-react";
+import type { Lang, TranscriptAnalysisData } from "@/lib/types";
 import { t } from "@/lib/i18n";
 import { apiFetch } from "@/lib/api";
+import TranscriptUpload from "@/components/layout/TranscriptUpload";
+import ProgressGrid from "@/components/report/ProgressGrid";
+import SemesterChart from "@/components/report/SemesterChart";
+import GradeDonut from "@/components/report/GradeDonut";
+import ActionChecklist from "@/components/report/ActionChecklist";
+import RetakeTable from "@/components/report/RetakeTable";
+import GraduationTimeline from "@/components/report/GraduationTimeline";
+import NextTermGuide from "@/components/report/NextTermGuide";
 
 interface AcademicReportProps {
   lang: Lang;
   sessionId: string | null;
   hasTranscript: boolean;
   onAskAI: (question: string) => void;
+  onUploaded?: () => void;
 }
 
-export default function AcademicReport({ lang, sessionId, hasTranscript, onAskAI }: AcademicReportProps) {
-  const [status, setStatus] = useState<TranscriptStatus | null>(null);
+export default function AcademicReport({ lang, sessionId, hasTranscript, onAskAI, onUploaded }: AcademicReportProps) {
+  const [analysis, setAnalysis] = useState<TranscriptAnalysisData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     if (!sessionId || !hasTranscript) return;
     setLoading(true);
-    apiFetch<TranscriptStatus>(`/api/transcript/status?session_id=${sessionId}`)
-      .then(setStatus)
-      .catch(() => {})
+    setError("");
+    apiFetch<TranscriptAnalysisData>(`/api/transcript/analysis?session_id=${sessionId}`)
+      .then((data) => {
+        if (!data.has_transcript) {
+          setAnalysis(null);
+        } else {
+          setAnalysis(data);
+        }
+      })
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : "분석 로드 실패");
+      })
       .finally(() => setLoading(false));
   }, [sessionId, hasTranscript]);
 
-  // No transcript — show upload CTA
-  if (!hasTranscript) {
+  // 업로드 필요 상태
+  if (!hasTranscript || (!loading && !analysis && !error)) {
     return (
-      <div className="flex flex-col items-center justify-center py-20 px-6 text-center animate-fade-in">
-        <div className="w-20 h-20 bg-blue-50 rounded-3xl flex items-center justify-center mb-6">
-          <Upload className="w-10 h-10 text-blue-400" />
+      <div className="flex flex-col items-center py-12 px-6 animate-fade-in space-y-6">
+        <div className="text-center">
+          <div className="w-20 h-20 bg-blue-50 rounded-3xl flex items-center justify-center mb-4 mx-auto">
+            <Upload className="w-10 h-10 text-blue-400" />
+          </div>
+          <h3 className="text-lg font-bold text-slate-700 mb-2">{t(lang, "report.title")}</h3>
+          <p className="text-sm text-slate-500 max-w-sm mx-auto">{t(lang, "report.no_transcript")}</p>
         </div>
-        <h3 className="text-lg font-bold text-slate-700 mb-2">{t(lang, "report.title")}</h3>
-        <p className="text-sm text-slate-500 max-w-sm">{t(lang, "report.no_transcript")}</p>
+        <TranscriptUpload lang={lang} sessionId={sessionId} variant="full" onUploaded={onUploaded} />
       </div>
     );
   }
 
-  if (loading || !status) {
+  if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
         <div className="flex gap-2">
@@ -50,12 +72,23 @@ export default function AcademicReport({ lang, sessionId, hasTranscript, onAskAI
     );
   }
 
-  const progressPct = status.progress_pct;
-  const isMet = status.total_shortage <= 0;
+  if (error || !analysis) {
+    return (
+      <div className="flex flex-col items-center py-20 px-6 text-center">
+        <p className="text-sm text-red-500">{error || "분석 데이터를 불러오지 못했습니다."}</p>
+      </div>
+    );
+  }
+
+  const s = analysis.summary;
+  const p = analysis.profile as Record<string, string | number | null | undefined>;
+  const pDept = (p.department as string) || "";
+  const pMasked = (p.masked_name as string) || "";
+  const pGrade = p.grade;
 
   return (
-    <div className="p-4 md:p-6 space-y-6 animate-slide-up max-w-4xl mx-auto">
-      {/* Dark hero card */}
+    <div className="p-4 md:p-6 space-y-6 max-w-6xl mx-auto animate-slide-up">
+      {/* 히어로 */}
       <div className="bg-slate-900 text-white p-6 md:p-8 rounded-[2rem] shadow-2xl overflow-hidden relative">
         <div className="absolute top-0 right-0 p-8 opacity-10 rotate-12">
           <GraduationCap className="w-40 h-40" />
@@ -65,102 +98,73 @@ export default function AcademicReport({ lang, sessionId, hasTranscript, onAskAI
             {t(lang, "report.official")}
           </div>
           <h3 className="text-xl md:text-2xl font-black mb-1">{t(lang, "report.semester")}</h3>
-          {status.masked_name && (
-            <p className="text-slate-400 text-sm mb-6 font-medium">{status.masked_name}</p>
-          )}
-
+          <p className="text-slate-400 text-sm mb-6 font-medium">
+            {pMasked}
+            {pDept && <span className="mx-2 text-slate-600">·</span>}
+            {pDept}
+            {pGrade ? <span className="ml-2 text-slate-500">{String(pGrade)}학년</span> : null}
+          </p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <StatCard label={t(lang, "report.credits_label")} value={`${status.total_acquired}`} sub={`/ ${status.total_required}`} />
-            <StatCard label={t(lang, "report.gpa_label")} value={status.gpa.toFixed(2)} highlight="text-blue-400" />
-            <StatCard
+            <Stat label={t(lang, "report.credits_label")} value={`${s.acquired}`} sub={`/ ${s.required}`} />
+            <Stat label={t(lang, "report.gpa_label")} value={s.gpa.toFixed(2)} highlight="text-blue-400" />
+            <Stat
               label={t(lang, "report.major_label")}
-              value={isMet ? "PASS" : `${status.total_shortage}`}
-              highlight={isMet ? "text-green-400 italic" : "text-orange-400"}
+              value={s.shortage <= 0 ? "PASS" : `${s.shortage}`}
+              highlight={s.shortage <= 0 ? "text-green-400" : "text-orange-400"}
             />
-            <StatCard label={lang === "ko" ? "이수율" : "Progress"} value={`${progressPct}%`} highlight="text-blue-400" />
+            <Stat label={lang === "ko" ? "이수율" : "Progress"} value={`${s.progress_pct}%`} highlight="text-blue-400" />
           </div>
         </div>
       </div>
 
-      {/* Met / Unmet requirements */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        {/* Met */}
-        <div className="p-6 border border-slate-100 rounded-[1.5rem] bg-slate-50 shadow-sm">
-          <h4 className="font-bold flex items-center gap-2 mb-4 text-slate-900">
-            <div className="w-7 h-7 bg-green-100 rounded-lg flex items-center justify-center">
-              <CheckCircle2 className="w-4 h-4 text-green-600" />
-            </div>
-            {t(lang, "report.met")}
-          </h4>
-          <ul className="space-y-3 text-sm text-slate-600 font-semibold">
-            {progressPct >= 50 && <ReqItem label={lang === "ko" ? "전공 필수 과목 이수" : "Major required courses"} status="YES" />}
-            {status.gpa >= 2.0 && <ReqItem label={lang === "ko" ? "최소 평점 기준 충족" : "Minimum GPA requirement"} status="YES" />}
-            {status.total_acquired >= 60 && <ReqItem label={lang === "ko" ? "60학점 이상 이수" : "60+ credits completed"} status="DONE" />}
-          </ul>
-        </div>
+      {/* 액션 체크리스트 (최상단 배치) */}
+      <ActionChecklist actions={analysis.actions} onAskAI={onAskAI} />
 
-        {/* Unmet */}
-        <div className="p-6 border border-orange-100 rounded-[1.5rem] bg-orange-50/30 shadow-sm">
-          <h4 className="font-bold flex items-center gap-2 mb-4 text-slate-900">
-            <div className="w-7 h-7 bg-orange-100 rounded-lg flex items-center justify-center">
-              <AlertCircle className="w-4 h-4 text-orange-600" />
-            </div>
-            {t(lang, "report.unmet")}
-          </h4>
-          <ul className="space-y-3 text-sm text-slate-600 font-semibold">
-            {status.total_shortage > 0 && (
-              <ReqItem
-                label={lang === "ko" ? "잔여 졸업 학점" : "Remaining credits"}
-                status={`${status.total_shortage} ${lang === "ko" ? "학점" : "cr"}`}
-                warn
-              />
-            )}
-            {status.dual_shortage > 0 && (
-              <ReqItem
-                label={lang === "ko" ? `복수전공 부족 (${status.dual_major})` : `Dual major shortage (${status.dual_major})`}
-                status={`${status.dual_shortage} ${lang === "ko" ? "학점" : "cr"}`}
-                warn
-              />
-            )}
-            {status.total_required - status.total_acquired > 20 && (
-              <ReqItem
-                label={lang === "ko" ? "교양 필수 영역 확인 필요" : "Liberal arts requirement check needed"}
-                status={lang === "ko" ? "확인" : "CHECK"}
-                warn
-              />
-            )}
-          </ul>
-        </div>
+      {/* 카테고리별 이수 현황 */}
+      <ProgressGrid categories={analysis.categories} title={lang === "ko" ? "카테고리별 이수 현황" : "Category Progress"} />
+
+      {/* 학기별 추이 + 성적 분포 */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <SemesterChart semesters={analysis.semesters} />
+        <GradeDonut distribution={analysis.grade_distribution} />
       </div>
 
-      {/* AI Guide */}
-      <div className="p-6 md:p-8 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-[1.5rem] text-white shadow-xl shadow-blue-100 relative overflow-hidden group">
-        <div className="absolute -right-4 -bottom-4 opacity-20 group-hover:scale-110 transition-transform">
+      {/* 재수강 테이블 */}
+      <RetakeTable candidates={analysis.retake_candidates} limit={analysis.registration_limit} />
+
+      {/* 졸업 로드맵 + 다음 학기 가이드 */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <GraduationTimeline projection={analysis.graduation} semesters={analysis.semesters} />
+        <NextTermGuide categories={analysis.categories} limit={analysis.registration_limit} />
+      </div>
+
+      {/* AI 가이드 CTA */}
+      <div className="p-6 md:p-8 bg-gradient-to-br from-blue-600 to-indigo-700 rounded-[1.5rem] text-white shadow-xl shadow-blue-100 relative overflow-hidden">
+        <div className="absolute -right-4 -bottom-4 opacity-20">
           <Sparkles className="w-28 h-28" />
         </div>
         <div className="relative z-10">
-          <div className="flex items-center gap-2 mb-3">
+          <h4 className="font-black text-lg mb-3 flex items-center gap-2">
             <Sparkles className="w-5 h-5 text-blue-200" />
-            <h4 className="font-black text-lg uppercase tracking-tight">{t(lang, "report.ai_guide")}</h4>
-          </div>
-          <p className="text-blue-50 leading-relaxed font-semibold text-base max-w-2xl">
+            {t(lang, "report.ai_guide")}
+          </h4>
+          <p className="text-blue-50 font-semibold text-sm md:text-base max-w-2xl mb-4">
             {lang === "ko"
-              ? `현재 ${status.total_shortage}학점이 부족합니다. AI에게 졸업 요건을 분석해달라고 요청해보세요.`
-              : `You need ${status.total_shortage} more credits. Ask AI to analyze your graduation requirements.`}
+              ? "이 분석 결과를 바탕으로 AI에게 질문하면 개인 맞춤 답변을 받을 수 있습니다."
+              : "Ask AI based on this analysis to get personalized answers."}
           </p>
-          <button
-            onClick={() => onAskAI(t(lang, "qf.graduation_q"))}
-            className="mt-5 px-5 py-2.5 bg-white text-blue-600 rounded-xl font-bold text-sm hover:bg-blue-50 transition-all shadow-lg"
-          >
-            {t(lang, "report.view_notice")}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <AskBtn q="내 졸업까지 남은 학점은?" label="졸업까지 남은 학점" onAskAI={onAskAI} />
+            <AskBtn q="내 재수강 대상 과목은?" label="재수강 대상" onAskAI={onAskAI} />
+            <AskBtn q="다음 학기 수강 몇 학점까지 가능해?" label="수강 한도" onAskAI={onAskAI} />
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-function StatCard({ label, value, sub, highlight }: { label: string; value: string; sub?: string; highlight?: string }) {
+function Stat({ label, value, sub, highlight }: { label: string; value: string; sub?: string; highlight?: string }) {
   return (
     <div className="bg-white/5 border border-white/10 p-4 rounded-2xl backdrop-blur-sm">
       <p className="text-[10px] font-bold text-slate-400 uppercase mb-1.5">{label}</p>
@@ -172,11 +176,13 @@ function StatCard({ label, value, sub, highlight }: { label: string; value: stri
   );
 }
 
-function ReqItem({ label, status, warn }: { label: string; status: string; warn?: boolean }) {
+function AskBtn({ q, label, onAskAI }: { q: string; label: string; onAskAI: (q: string) => void }) {
   return (
-    <li className="flex justify-between items-center py-1.5 border-b border-slate-200/50 last:border-0">
-      <span>{label}</span>
-      <span className={`font-bold ${warn ? "text-orange-600" : "text-green-600"}`}>{status}</span>
-    </li>
+    <button
+      onClick={() => onAskAI(q)}
+      className="px-4 py-2 bg-white text-blue-600 rounded-xl font-bold text-xs hover:bg-blue-50 transition-all shadow-lg"
+    >
+      {label}
+    </button>
   );
 }

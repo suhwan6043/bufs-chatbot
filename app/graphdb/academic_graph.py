@@ -822,13 +822,16 @@ class AcademicGraph:
             return min(raw / max_raw, 1.0)
 
         # direct_answer 임계값 — IDF 가중 점수 기준
-        # 원칙 2: 단일 토큰 쿼리는 매우 엄격한 임계값 적용
+        # 원칙 2: 단일 토큰 쿼리는 엄격한 임계값 적용
         # → "수강신청" 같은 흔한 토큰이 관련 없는 FAQ에 direct_answer를 부여하는 것 방지
+        # (2026-04-16) 0.85→0.55로 완화: stopword 제거 후 단일 핵심토큰("학생식당")만
+        # 남는 케이스에서 고IDF 토큰이 정확히 매칭돼도 임계값 미달하는 문제 해결.
+        # IDF가 높은 토큰은 그 자체로 특이성이 높으므로 0.55로도 오매칭 방지 가능.
         top_raw = scored[0][0] if scored else 0.0
         if len(q_core) == 1:
-            strong_match_threshold = max_raw * 0.85
+            strong_match_threshold = max_raw * 0.55
         elif len(q_core) == 2:
-            strong_match_threshold = max_raw * 0.6
+            strong_match_threshold = max_raw * 0.5
         else:
             strong_match_threshold = max_raw * 0.4
 
@@ -956,6 +959,43 @@ class AcademicGraph:
         # 폴백: 인덱스 사용
         nodes = self._nodes_by_type("수강신청규칙")
         return dict(nodes[0][1]) if nodes else None
+
+    def get_retake_rule(self, student_id: str) -> dict:
+        """
+        학번별 재수강 제한 규칙.
+        노드 ID 후보: retake_{reg_group}, reg_{reg_group} (수강신청규칙에 병합된 경우).
+        (2026-04-16 추가) 4원칙 #3 — 학사안내 재인제스트 시 자동 반영.
+        """
+        reg_group = get_reg_group(student_id)
+        for nid in (f"retake_{reg_group}", f"reg_{reg_group}"):
+            if nid in self.G.nodes:
+                data = dict(self.G.nodes[nid])
+                # 재수강 관련 속성만 추출 (수강신청규칙 노드일 때 혼합 방지)
+                retake_attrs = {
+                    k: v for k, v in data.items()
+                    if "재수강" in k or "retake" in k.lower()
+                }
+                if retake_attrs:
+                    return retake_attrs
+                return data
+        return {}
+
+    def get_early_graduation_info(self, student_id: str) -> dict:
+        """
+        학번별 조기졸업 자격·기준.
+        노드: early_grad_기준_{reg_group}, early_grad_신청자격, early_grad_기타사항
+        """
+        reg_group = get_reg_group(student_id)
+        out: dict = {}
+        candidates = [
+            f"early_grad_기준_{reg_group}",
+            "early_grad_신청자격",
+            "early_grad_기타사항",
+        ]
+        for nid in candidates:
+            if nid in self.G.nodes:
+                out[nid] = dict(self.G.nodes[nid])
+        return out
 
     def get_schedules(self, semester: str = None) -> List[dict]:
         """학사일정 반환. semester 미지정 시 전체."""

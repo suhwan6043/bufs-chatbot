@@ -104,11 +104,20 @@ class ChromaStore:
         elif hasattr(query_embedding, 'tolist'):
             query_embedding = query_embedding.tolist()
 
-        where_filter = self._build_filter(student_id, doc_type, semester, department, student_type)
+        # 주의: ChromaDB는 메타데이터 `where`에서 $contains 를 지원하지 않는다.
+        # → student_type 은 _build_filter() 가 아닌 Python 후처리로 분기.
+        where_filter = self._build_filter(student_id, doc_type, semester, department)
+
+        # student_type 필터가 활성화되어 있으면 후처리 드롭으로 n_results 가 줄어들 수 있으므로
+        # 넉넉히 가져와서 잘라낸다.
+        stype_filter_active = bool(
+            student_type and settings.admin_faq.student_type_filter_enabled
+        )
+        fetch_n = n_results * 2 if stype_filter_active else n_results
 
         kwargs = {
             "query_embeddings": [query_embedding],
-            "n_results": n_results,
+            "n_results": fetch_n,
         }
         if where_filter:
             kwargs["where"] = where_filter
@@ -120,7 +129,7 @@ class ChromaStore:
                 logger.warning("ChromaDB 필터 쿼리 실패 (InternalError), 필터 없이 재시도: %s", e)
                 fallback_kwargs = {
                     "query_embeddings": [query_embedding],
-                    "n_results": n_results,
+                    "n_results": fetch_n,
                 }
                 results = self.collection.query(**fallback_kwargs)
             else:
@@ -133,6 +142,12 @@ class ChromaStore:
                 distance = results["distances"][0][i] if results["distances"] else 0.0
                 score = 1.0 - distance  # 코사인 거리 -> 유사도
 
+                # student_type 후처리 필터 — 빈 student_types 는 전체 허용
+                if stype_filter_active:
+                    allowed = (metadata.get("student_types") or "")
+                    if allowed and student_type not in allowed.split("|"):
+                        continue
+
                 search_results.append(SearchResult(
                     text=doc,
                     score=score,
@@ -141,7 +156,8 @@ class ChromaStore:
                     metadata=metadata,
                 ))
 
-        return search_results
+        # 후처리 드롭 고려: 원래 n_results 만큼으로 잘라냄
+        return search_results[:n_results]
 
     @staticmethod
     def _build_filter(
@@ -149,7 +165,6 @@ class ChromaStore:
         doc_type: Optional[Union[str, List[str]]] = None,
         semester: Optional[str] = None,
         department: Optional[str] = None,
-        student_type: Optional[str] = None,
     ) -> Optional[dict]:
         """
         메타데이터 필터를 구성합니다.
@@ -183,14 +198,8 @@ class ChromaStore:
         if department:
             # department 메타데이터가 있는 청크(수업시간표)만 필터링
             conditions.append({"department": {"$eq": department}})
-        if student_type and settings.admin_faq.student_type_filter_enabled:
-            # 빈 student_types 청크(전체 허용) 또는 해당 유형이 포함된 청크만 반환
-            conditions.append({
-                "$or": [
-                    {"student_types": {"$eq": ""}},
-                    {"student_types": {"$contains": student_type}},
-                ]
-            })
+        # 주의: student_type 필터는 ChromaDB metadata where 에서 $contains 미지원으로
+        # chroma_store.search() 의 Python 후처리로 이동했다.
 
         if not conditions:
             return None

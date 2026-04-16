@@ -1,6 +1,7 @@
 "use client";
 import { useState, useCallback, useRef } from "react";
 import { sseUrl } from "@/lib/api";
+import { getAuthToken } from "@/hooks/useAuth";
 import type { ChatMessage, StreamDoneData, SourceURL, SearchResultItem } from "@/lib/types";
 
 export function useChat(sessionId: string | null) {
@@ -21,10 +22,15 @@ export function useChat(sessionId: string | null) {
 
       let accumulated = "";
 
-      const url = sseUrl("/api/chat/stream", {
+      // 로그인 사용자면 JWT를 쿼리로 전달 — EventSource는 커스텀 헤더 불가.
+      // 서버는 검증 실패 시 비로그인으로 폴백(채팅은 정상, 개인 DB 저장 스킵).
+      const token = getAuthToken();
+      const params: Record<string, string> = {
         session_id: sessionId,
         question: question.trim(),
-      });
+      };
+      if (token) params.access_token = token;
+      const url = sseUrl("/api/chat/stream", params);
 
       const es = new EventSource(url);
       esRef.current = es;

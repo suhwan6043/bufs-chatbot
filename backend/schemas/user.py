@@ -1,5 +1,6 @@
 """Pydantic schemas for user authentication."""
 
+from typing import Optional
 from pydantic import BaseModel, Field
 
 
@@ -49,3 +50,42 @@ class AuthToken(BaseModel):
     token: str
     expires_at: str
     user: UserInfo
+
+
+# ── 채팅 이력 (본인 전용) ──────────────────────────────────
+
+class ChatHistoryItem(BaseModel):
+    id: int
+    session_id: str
+    question: str
+    answer: str
+    intent: str = ""
+    rating: Optional[int] = None
+    created_at: str
+
+
+class ChatHistoryResponse(BaseModel):
+    total: int
+    items: list[ChatHistoryItem] = Field(default_factory=list)
+
+
+# ── 알림 ───────────────────────────────────────────────────
+
+class NotificationItem(BaseModel):
+    id: int
+    kind: str                  # 'faq_answered' | 'faq_updated'
+    faq_id: Optional[str] = None
+    chat_message_id: Optional[int] = None
+    title: str
+    body: str = ""
+    read: bool = False
+    created_at: str
+
+
+class NotificationListResponse(BaseModel):
+    unread_count: int
+    items: list[NotificationItem] = Field(default_factory=list)
+
+
+class UnreadCountResponse(BaseModel):
+    unread_count: int

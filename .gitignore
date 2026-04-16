@@ -70,3 +70,10 @@ data/pdfs/crawled/
 
 # Admin-curated FAQ (runtime additions, not version-controlled)
 data/faq_admin.json
+
+# Secrets — never commit
+data/.transcript_enc.key
+data/users.db
+data/users.db-journal
+data/users.db-wal
+data/users.db-shm

@@ -236,7 +236,10 @@ def main():
     print(f"Dataset: {args.dataset} ({len(items)} questions)")
     print(f"API: {args.base_url}")
 
-    client = httpx.Client(base_url=args.base_url, timeout=180)
+    client = httpx.Client(
+        base_url=args.base_url, timeout=180,
+        headers={"X-Test-Mode": "1"},  # 실사용자 로그(JSONL + chat_messages DB) 오염 방지
+    )
     r = client.post("/api/session", json={"lang": "ko"})
     session_id = r.json()["session_id"]
     print(f"Session: {session_id}")

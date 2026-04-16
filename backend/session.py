@@ -59,11 +59,22 @@ class SessionStore:
             return entry["data"]
 
     def get_or_create(self, sid: Optional[str], lang: str = "ko") -> tuple[str, dict]:
-        """세션이 있으면 반환, 없으면 생성."""
+        """세션이 있으면 반환, 없으면 생성.
+        클라이언트가 sid를 제공한 경우 해당 sid를 재사용해 생성 (backend 재시작 후 세션 복원용).
+        """
         if sid:
             data = self.get(sid)
             if data is not None:
                 return sid, data
+            # 클라이언트 sid로 새 엔트리 생성 (backend 재시작 후 clean-state 복원)
+            now = time.time()
+            with self._lock:
+                self._store[sid] = {
+                    "data": {"lang": lang, "messages": [], "user_profile": None},
+                    "created_at": now,
+                    "last_active": now,
+                }
+            return sid, self._store[sid]["data"]
         new_sid = self.create(lang)
         return new_sid, self.get(new_sid)
 

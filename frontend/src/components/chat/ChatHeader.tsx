@@ -1,7 +1,8 @@
 "use client";
-import { Menu, Globe, Bell, MessageSquare } from "lucide-react";
+import { Menu, Globe, MessageSquare } from "lucide-react";
 import type { Lang, UserProfile } from "@/lib/types";
 import { t } from "@/lib/i18n";
+import NotificationBell from "@/components/notifications/NotificationBell";
 
 interface ChatHeaderProps {
   lang: Lang;
@@ -10,9 +11,10 @@ interface ChatHeaderProps {
   onToggleLang: () => void;
   profile?: UserProfile | null;
   authNickname?: string | null;
+  onOpenFaq?: (faqId: string) => void;
 }
 
-export default function ChatHeader({ lang, title, onToggleSidebar, onToggleLang, profile, authNickname }: ChatHeaderProps) {
+export default function ChatHeader({ lang, title, onToggleSidebar, onToggleLang, profile, authNickname, onOpenFaq }: ChatHeaderProps) {
   const displayTitle = title || t(lang, "brand.name");
 
   // Avatar: nickname first char > department first 2 chars > "?"
@@ -59,10 +61,8 @@ export default function ChatHeader({ lang, title, onToggleSidebar, onToggleLang,
           <Globe className="w-3.5 h-3.5" /> {lang === "ko" ? "EN" : "KO"}
         </button>
 
-        <button className="p-2 hover:bg-slate-100 rounded-full relative transition-colors hidden md:block">
-          <Bell className="w-5 h-5 text-slate-600" />
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border-2 border-white" />
-        </button>
+        {/* 알림: 로그인 사용자에게만 표시, 모든 뷰포트 대응 */}
+        <NotificationBell onOpenFaq={onOpenFaq} />
 
         <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs hidden md:flex ${
           hasUser

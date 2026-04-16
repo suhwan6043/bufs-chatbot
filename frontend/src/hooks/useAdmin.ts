@@ -14,6 +14,8 @@ interface DashboardData {
 export interface LogEntry {
   timestamp: string; session_id: string; student_id: string; intent: string;
   question: string; answer: string; duration_ms: number; rating: string;
+  user_id?: number | null;
+  chat_message_id?: number | null;
 }
 export interface LogsResponse {
   total: number; today_count: number; avg_duration_ms: number; top_intent: string;
@@ -88,6 +90,8 @@ export interface FaqCreateBody {
   answer: string;
   category: string;
   source_question?: string;
+  source_user_id?: number | null;
+  source_chat_message_id?: number | null;
 }
 export interface FaqUpdateBody {
   question?: string;
@@ -253,6 +257,8 @@ export function useAdmin() {
   // FAQ 피드백 루프 — 미답변 질의 수집 → 관리자 큐레이션 → 증분 반영
   const fetchFaqList = useCallback((source: "all" | "admin" | "academic" = "all") =>
     authFetch<FaqListResponse>(`/api/admin/faq?source=${source}`), [authFetch]);
+  const fetchFaqCategories = useCallback(() =>
+    authFetch<{ categories: string[] }>("/api/admin/faq/categories"), [authFetch]);
   const createFaq = useCallback((body: FaqCreateBody) =>
     authFetch<FaqItem>("/api/admin/faq", { method: "POST", body: JSON.stringify(body) }), [authFetch]);
   const updateFaq = useCallback((faqId: string, body: FaqUpdateBody) =>
@@ -277,6 +283,6 @@ export function useAdmin() {
     fetchGraduation, saveGraduation, fetchGradOptions, fetchDeptCert, saveDeptCert,
     fetchEarlyGrad, saveEarlyGradSchedule, saveEarlyGradEligibility, saveEarlyGradCriteria, saveEarlyGradNotes,
     fetchSchedule, addSchedule, updateSchedule,
-    fetchFaqList, createFaq, updateFaq, deleteFaq, fetchUncovered,
+    fetchFaqList, fetchFaqCategories, createFaq, updateFaq, deleteFaq, fetchUncovered,
   };
 }

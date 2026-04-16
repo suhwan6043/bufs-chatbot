@@ -19,6 +19,14 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost,http://localhost:80,http://localhost:3000,https://maruvis.co.kr}
       - QUERY_ROUTER_SEQUENTIAL=1
       - CHROMA_PERSIST_DIR=/app/data/chromadb_new
+      # Phase B/C (2026-04-16): 증거 텍스트 슬라이싱 A/B 테스트·튜닝.
+      # EVIDENCE_SLICING_ENABLED=0 이면 완전 비활성화 (회귀 원인 격리용).
+      # 2026-04-16 A/B 결과: slicing OFF가 balanced Contains-F1 +5.1pp, 퇴행 0건.
+      # 기본 OFF로 고정. 재실험 시 EVIDENCE_SLICING_ENABLED=1 shell env로 override.
+      - EVIDENCE_SLICING_ENABLED=${EVIDENCE_SLICING_ENABLED:-0}
+      - EVIDENCE_SLICING_MIN_TEXT_LEN=${EVIDENCE_SLICING_MIN_TEXT_LEN:-1400}
+      - EVIDENCE_SLICING_MIN_SLICED_LEN=${EVIDENCE_SLICING_MIN_SLICED_LEN:-500}
+      - EVIDENCE_SLICING_CONTEXT_LINES=${EVIDENCE_SLICING_CONTEXT_LINES:-2}
     volumes:
       # 데이터 영속성 (ChromaDB, 그래프, 로그, PDF, 사용자 DB)
       - ../data:/app/data

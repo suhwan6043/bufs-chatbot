@@ -1,7 +1,7 @@
 "use client";
-import { useRef, useEffect, useState, use } from "react";
-import { useRouter } from "next/navigation";
-import type { Lang, TabId } from "@/lib/types";
+import { useRef, useEffect, useState, use, useCallback } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import type { Lang, TabId, ChatMessage as ChatMessageType } from "@/lib/types";
 import { useSession } from "@/hooks/useSession";
 import { useChat } from "@/hooks/useChat";
 import ChatHeader from "@/components/chat/ChatHeader";
@@ -16,19 +16,31 @@ import Sidebar from "@/components/layout/Sidebar";
 import MobileBottomBar from "@/components/chat/MobileBottomBar";
 import AcademicReport from "@/components/layout/AcademicReport";
 import { useAuth } from "@/hooks/useAuth";
+import { apiFetch } from "@/lib/api";
 
 export default function ChatPage({ params }: { params: Promise<{ lang: string }> }) {
   const { lang: rawLang } = use(params);
   const lang = (rawLang === "en" ? "en" : "ko") as Lang;
   const router = useRouter();
 
-  const { sessionId, session, loading, updateProfile } = useSession(lang);
+  const { sessionId, session, loading, updateProfile, refreshSession, resetSession } = useSession(lang);
   const { messages, isStreaming, streamText, sendMessage, clearMessages, setMessages } = useChat(sessionId);
   const { user, isLoggedIn, logout } = useAuth();
+
+  const searchParams = useSearchParams();
   const [sidebarOpen, setSidebarOpen] = useState(
     typeof window !== "undefined" ? window.innerWidth >= 1024 : false
   );
   const [activeTab, setActiveTab] = useState<TabId>("chat");
+
+  // 로그아웃: JWT blacklist + 서버 세션 purge + 쿠키 삭제 + 새 세션 생성 + 로컬 메시지 초기화.
+  // 이전 사용자의 성적표·대화가 UI에 남지 않도록 전 체인 정리.
+  const handleLogout = useCallback(async () => {
+    await logout({ sessionId });
+    clearMessages();
+    setActiveTab("chat");
+    await resetSession();
+  }, [logout, sessionId, resetSession, clearMessages]);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -54,6 +66,40 @@ export default function ChatPage({ params }: { params: Promise<{ lang: string }>
     setActiveTab(tab);
   };
 
+  /** 알림 Bell 클릭 → 해당 FAQ 답변을 합성 메시지로 삽입. */
+  const openFaqInChat = useCallback(async (faqId: string) => {
+    try {
+      const f = await apiFetch<{ id: string; category: string; question: string; answer: string }>(
+        `/api/chat/faq/${encodeURIComponent(faqId)}`,
+      );
+      if (!f.answer) return;
+      const heading = lang === "ko" ? "🔔 학사지원팀의 정정 답변" : "🔔 Corrected answer from the Academic Team";
+      const qLine = f.question ? `**Q.** ${f.question}\n\n` : "";
+      const msg: ChatMessageType = {
+        role: "assistant",
+        content: `${heading}\n\n${qLine}${f.answer}`,
+        rated: false,
+      };
+      setMessages((prev) => [...prev, msg]);
+      setActiveTab("chat");
+    } catch {
+      // 실패해도 무소음 — 알림 읽음 처리는 이미 bell 내부에서 수행됨
+    }
+  }, [lang, setMessages]);
+
+  /** ?faq=<id> 쿼리 감지 → 자동 오픈 + URL 정리 */
+  useEffect(() => {
+    const fid = searchParams?.get("faq");
+    if (fid) {
+      openFaqInChat(fid);
+      // 쿼리 정리 (뒤로가기 시 재실행 방지)
+      const url = new URL(window.location.href);
+      url.searchParams.delete("faq");
+      router.replace(url.pathname + (url.search || ""));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-white">
@@ -70,7 +116,7 @@ export default function ChatPage({ params }: { params: Promise<{ lang: string }>
   const headerTitle = activeTab === "report" ? "report.title" : undefined;
 
   return (
-    <div className="flex h-screen bg-white overflow-hidden">
+    <div className="flex h-dvh bg-white overflow-hidden">
       {/* Sidebar — visible on lg+, slide-in overlay on mobile */}
       <Sidebar
         lang={lang}
@@ -78,11 +124,12 @@ export default function ChatPage({ params }: { params: Promise<{ lang: string }>
         sessionId={sessionId}
         hasTranscript={session?.has_transcript}
         authUser={user ? { nickname: user.nickname, student_id: user.student_id, department: user.department } : null}
+        messages={messages}
         onSelectQuestion={sendMessage}
         onClearChat={clearMessages}
         onNewChat={handleNewChat}
         onTabChange={handleTabChange}
-        onLogout={logout}
+        onLogout={handleLogout}
         activeTab={activeTab}
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
@@ -97,6 +144,7 @@ export default function ChatPage({ params }: { params: Promise<{ lang: string }>
           onToggleLang={handleToggleLang}
           profile={session?.user_profile}
           authNickname={user?.nickname}
+          onOpenFaq={openFaqInChat}
         />
 
         {/* Tab content */}
@@ -144,6 +192,7 @@ export default function ChatPage({ params }: { params: Promise<{ lang: string }>
               sessionId={sessionId}
               hasTranscript={session?.has_transcript ?? false}
               onAskAI={handleAskFromReport}
+              onUploaded={refreshSession}
             />
           </main>
         )}
