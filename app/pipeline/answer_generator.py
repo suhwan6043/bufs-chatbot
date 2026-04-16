@@ -137,7 +137,21 @@ class AnswerGenerator:
         question_type: Optional[str] = None,
         intent: Optional[str] = None,
         entities: Optional[dict] = None,
+        history: Optional[list[dict]] = None,
     ) -> str:
+        # history는 role/content만 뽑아 최근 2쌍을 해시 — 멀티턴 답변의 고유성 보장
+        history_digest = ""
+        if history:
+            tail = [
+                (m.get("role", ""), (m.get("content") or "").strip())
+                for m in history
+                if m.get("role") in ("user", "assistant")
+            ][-4:]
+            if tail:
+                history_digest = hashlib.sha256(
+                    self._stable_dump(tail).encode("utf-8")
+                ).hexdigest()
+
         key_payload = {
             "question": question.strip(),
             "context_hash": hashlib.sha256(context.encode("utf-8")).hexdigest(),
@@ -150,6 +164,7 @@ class AnswerGenerator:
             "question_type": question_type or "",
             "intent": intent or "",
             "entities": entities or {},
+            "history_digest": history_digest,
         }
         key_material = self._stable_dump(key_payload)
         return hashlib.sha256(key_material.encode("utf-8")).hexdigest()
@@ -742,6 +757,59 @@ class AnswerGenerator:
         logger.info("쿼리 재작성: '%s' → '%s'", question[:60], rewritten[:60])
         return rewritten
 
+    @staticmethod
+    def _trim_history_for_llm(
+        history: Optional[list[dict]],
+        max_turns: int,
+        char_budget: int,
+    ) -> list[dict]:
+        """
+        LLM messages 배열에 삽입할 history를 가공.
+
+        - 최근 max_turns개 user/assistant 쌍만 유지
+        - 전체 글자수가 char_budget 초과 시 assistant 응답부터 축소
+        - 내부 메타(rated, rating 등) 필드는 제거, {role, content}만 유지
+        """
+        if not history or max_turns <= 0 or char_budget <= 0:
+            return []
+
+        pairs: list[tuple[str, str]] = []
+        current_user: Optional[str] = None
+        for msg in history:
+            role = msg.get("role")
+            content = (msg.get("content") or "").strip()
+            if not content:
+                continue
+            if role == "user":
+                current_user = content
+            elif role == "assistant" and current_user is not None:
+                pairs.append((current_user, content))
+                current_user = None
+
+        pairs = pairs[-max_turns:]
+        if not pairs:
+            return []
+
+        total = sum(len(u) + len(a) for u, a in pairs)
+        trimmed: list[tuple[str, str]] = []
+        for u, a in pairs:
+            if total <= char_budget:
+                trimmed.append((u, a))
+                continue
+            # assistant 응답부터 잘라내기
+            a_new = a
+            while total > char_budget and len(a_new) > 50:
+                cut = min(len(a_new) - 50, max(20, len(a_new) // 4))
+                total -= cut
+                a_new = a_new[: len(a_new) - cut] + "…"
+            trimmed.append((u, a_new))
+
+        out: list[dict] = []
+        for u, a in trimmed:
+            out.append({"role": "user", "content": u})
+            out.append({"role": "assistant", "content": a})
+        return out
+
     async def generate(
         self,
         question: str,
@@ -755,8 +823,13 @@ class AnswerGenerator:
         question_type: Optional[str] = None,
         intent: Optional[str] = None,
         entities: Optional[dict] = None,
+        history: Optional[list[dict]] = None,
     ) -> AsyncGenerator[str, None]:
-        """스트리밍으로 답변을 생성합니다."""
+        """스트리밍으로 답변을 생성합니다.
+
+        history: 직전 대화 턴(user/assistant pair 리스트). 없으면 단일 턴 모드.
+                 멀티턴 일관성 유지용이며, 검색용 재작성과는 별개.
+        """
         url = f"{self.base_url}/v1/chat/completions"
 
         if lang == "en":
@@ -784,12 +857,22 @@ class AnswerGenerator:
             intent=intent,
         )
 
+        # 멀티턴 history 주입 (설정 on + 실제 턴 존재 시)
+        conv_cfg = settings.conversation
+        messages = [{"role": "system", "content": system}]
+        if conv_cfg.history_enabled and history:
+            # token budget은 대략 글자수 2배 → char_budget = token_budget * 2
+            trimmed = self._trim_history_for_llm(
+                history,
+                max_turns=conv_cfg.max_history_turns,
+                char_budget=conv_cfg.history_token_budget * 2,
+            )
+            messages.extend(trimmed)
+        messages.append({"role": "user", "content": prompt})
+
         payload = {
             "model": self.model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": prompt},
-            ],
+            "messages": messages,
             "stream": True,
             "max_tokens": max_tokens,
             "temperature": settings.llm.temperature,
