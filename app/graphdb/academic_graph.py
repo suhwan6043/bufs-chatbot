@@ -870,7 +870,7 @@ class AcademicGraph:
             # 상위 1개 FAQ가 의미적으로 강하게 매칭된 경우에만 direct_answer 부여
             # context_merger가 이를 우선 사용하고 LLM이 FAQ 답을 뼈대로 사용.
             # 단, "어디서 확인/문의" 같은 리다이렉트 FAQ는 제외 — 구체 데이터를 가리면 안 됨.
-            if rank == 0 and raw_score >= strong_match_threshold and answer_text:
+            if rank == 0 and answer_text:
                 # 원본 stem 커버리지 게이트: bigram 부풀리기 방지
                 # expand_tokens의 bigram이 점수를 과대 계산하는 문제를 원본 어근 기준으로 보정
                 q_core = {s for s in q_stems if s not in FAQ_STOPWORDS and len(s) >= 2}
@@ -884,8 +884,24 @@ class AcademicGraph:
                     len(q_core & (faq_q_core | faq_a_core)) / len(q_core)
                     if q_core else 1.0
                 )
-                if stem_coverage < 0.75:
+                # 2026-04-16: FAQ 질문 자체 매칭률 — 어드민이 등록한 FAQ는 그 정확한
+                # 답변을 보여주려는 의도이므로, Q가 거의 일치하면 답변 본문 IDF score
+                # 무관하게 direct_answer 부여 (LLM 요약으로 5개 항목이 2개로 잘리는 등
+                # 회귀 방지). 단, q_core가 너무 짧으면(2개 이하) 잘못 매칭될 수 있어
+                # 3개 이상일 때만 적용. faq_a 무관하게 faq_q만 보는 게 핵심.
+                q_only_coverage = (
+                    len(q_core & faq_q_core) / len(q_core)
+                    if q_core else 0.0
+                )
+                strong_q_match = (len(q_core) >= 3 and q_only_coverage >= 0.9)
+
+                # 기존 score 게이트 OR 신규 Q 매칭 게이트, 둘 중 하나 통과하면 direct
+                passes_gate = (raw_score >= strong_match_threshold) or strong_q_match
+
+                if not passes_gate:
                     pass  # 커버리지 부족 → direct_answer 미부여
+                elif stem_coverage < 0.75 and not strong_q_match:
+                    pass  # 일반 게이트 통과해도 stem coverage 부족하면 미부여
                 elif _is_redirect_answer(answer_text, metadata):
                     metadata.setdefault("answer_type", "redirect")
                 else:
