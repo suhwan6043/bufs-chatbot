@@ -42,6 +42,22 @@ _blacklisted_tokens: set[str] = set()
 security = HTTPBearer(auto_error=False)
 
 
+def _client_ip(request: Request) -> str:
+    """실제 클라이언트 IP. nginx/CloudFlare 뒤에서도 개별 admin 구분하도록
+    X-Forwarded-For > X-Real-IP > request.client.host 우선순위.
+
+    이렇게 해야 같은 조직 nginx 뒤 여러 관리자의 브루트포스 카운터가 분리됨.
+    """
+    xff = request.headers.get("x-forwarded-for", "").strip()
+    if xff:
+        # 첫 번째(원본 클라이언트)만 신뢰 — 이후는 중간 프록시 체인
+        return xff.split(",")[0].strip()
+    xri = request.headers.get("x-real-ip", "").strip()
+    if xri:
+        return xri
+    return request.client.host if request.client else "unknown"
+
+
 # ── 감사 로그 ──
 def _audit(action: str, detail: str = "") -> None:
     log_dir = Path(settings.graph.graph_path).parent.parent / "logs"
@@ -105,8 +121,12 @@ async def require_admin(credentials: Optional[HTTPAuthorizationCredentials] = De
 
 @router.post("/login", response_model=AdminToken)
 async def admin_login(body: AdminLogin, request: Request):
-    """관리자 로그인 → JWT 토큰 발급."""
-    client_ip = request.client.host if request.client else "unknown"
+    """관리자 로그인 → JWT 토큰 발급.
+
+    nginx/Cloudflare 뒤에서도 X-Forwarded-For 기반으로 실제 클라이언트 IP를 식별하여
+    여러 관리자가 동시에 로그인해도 브루트포스 카운터가 섞이지 않음.
+    """
+    client_ip = _client_ip(request)
 
     # 기본 비밀번호 차단
     if settings.admin.password == _ADMIN_PW_DEFAULT:
