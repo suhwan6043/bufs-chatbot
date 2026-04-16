@@ -668,6 +668,18 @@ class AcademicGraph:
         if metadata:
             base.update({k: v for k, v in metadata.items() if v is not None})
         attrs = self._merge(base, {})
+
+        # ── 어드민 수정으로 사라진 필드·옛 토큰 stale 잔존 방지 ──────────
+        # networkx의 add_node는 기존 노드 attrs와 머지하므로, 새로 안 넘긴
+        # 필드(예: 어드민이 student_types 제거)가 옛 값으로 남아 검색 필터가
+        # stale 값으로 동작. 또한 옛 question/answer의 토큰이 _faq_token_index에
+        # 남아 stale 토큰으로도 매칭됨. update 시 명시적으로 정리.
+        if node_id in self.G.nodes:
+            for stale_key in ("student_types", "cohort_from", "cohort_to", "answer_type"):
+                self.G.nodes[node_id].pop(stale_key, None)
+            for tok_set in self._faq_token_index.values():
+                tok_set.discard(node_id)
+
         self.G.add_node(node_id, **attrs)
         self._index_add(node_id, "FAQ")
 
