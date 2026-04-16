@@ -247,6 +247,30 @@ class TranscriptRulesConfig:
 
 
 @dataclass
+class ConversationConfig:
+    """
+    멀티턴 대화 컨텍스트 설정.
+
+    원칙 2(비용·지연 최적화): follow-up 감지 → 조건부 재작성 → 윈도우 제한 history 주입.
+    원칙 4(하드코딩 금지): 모든 임계치·모델명·타임아웃을 환경변수로 오버라이드.
+    """
+    # ── history injection (생성 단계) ──
+    history_enabled: bool = os.getenv("CONV_HISTORY_ENABLED", "true").lower() == "true"
+    max_history_turns: int = int(os.getenv("CONV_MAX_HISTORY_TURNS", "2"))
+    history_token_budget: int = int(os.getenv("CONV_HISTORY_TOKEN_BUDGET", "500"))
+
+    # ── query rewriting (검색 단계) ──
+    rewrite_enabled: bool = os.getenv("CONV_REWRITE_ENABLED", "true").lower() == "true"
+    rewrite_model: str = os.getenv("CONV_REWRITE_MODEL", "gemma3:4b")
+    rewrite_timeout_sec: float = float(os.getenv("CONV_REWRITE_TIMEOUT_SEC", "0.8"))
+    rewrite_max_tokens: int = int(os.getenv("CONV_REWRITE_MAX_TOKENS", "80"))
+    rewrite_max_input_turns: int = int(os.getenv("CONV_REWRITE_MAX_INPUT_TURNS", "2"))
+
+    # ── follow-up 감지 ──
+    follow_up_max_words: int = int(os.getenv("CONV_FOLLOW_UP_MAX_WORDS", "5"))
+
+
+@dataclass
 class Settings:
     llm: LLMConfig = field(default_factory=LLMConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
@@ -261,6 +285,7 @@ class Settings:
     notifications: NotificationConfig = field(default_factory=NotificationConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
     transcript_rules: TranscriptRulesConfig = field(default_factory=TranscriptRulesConfig)
+    conversation: ConversationConfig = field(default_factory=ConversationConfig)
 
 
 settings = Settings()

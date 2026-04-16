@@ -290,7 +290,13 @@ def _serialize_results(results: list) -> list[dict]:
     return items
 
 
-def _build_generation_cache_kwargs(question: str, merged, analysis, student_context: str) -> dict:
+def _build_generation_cache_kwargs(
+    question: str,
+    merged,
+    analysis,
+    student_context: str,
+    history: list[dict] | None = None,
+) -> dict:
     return {
         "question": question,
         "context": merged.formatted_context,
@@ -303,6 +309,7 @@ def _build_generation_cache_kwargs(question: str, merged, analysis, student_cont
         "question_type": analysis.question_type.value if analysis.question_type else None,
         "intent": analysis.intent.value if analysis.intent else None,
         "entities": analysis.entities,
+        "history": history,
     }
 
 
@@ -380,20 +387,50 @@ async def chat_stream(
             )}
             return
 
-        # Stage 1: 질문 분석
+        # 멀티턴: follow-up 감지 + 쿼리 재작성 (retrieval/generation 양쪽에 사용)
+        from app.pipeline import follow_up_detector, query_rewriter
+        from app.config import settings as _settings
+        _conv_cfg = _settings.conversation
+        prior_messages = session_data.get("messages") or []
+        search_query = question  # retrieval·LLM에 실제로 건네는 쿼리 (잠재적으로 rewritten)
+        _t_fu = time.monotonic()
+        follow_up_signal = follow_up_detector.detect(question, prior_messages)
+        _ms_follow_up = int((time.monotonic() - _t_fu) * 1000)
+        _ms_rewrite = 0
+        if _conv_cfg.rewrite_enabled and follow_up_signal.is_follow_up:
+            _t_rw = time.monotonic()
+            try:
+                search_query = await query_rewriter.rewrite(
+                    question,
+                    prior_messages,
+                    skip_rule_stage=follow_up_signal.skip_rule_stage,
+                    lang=session_data.get("lang", "ko"),
+                )
+            except Exception as e:
+                logger.debug("query_rewriter 실패, 원본 사용: %s", e)
+                search_query = question
+            _ms_rewrite = int((time.monotonic() - _t_rw) * 1000)
+            if search_query != question:
+                logger.info(
+                    "follow-up[%s] rewrite: '%s' → '%s'",
+                    follow_up_signal.reason, question[:60], search_query[:60],
+                )
+
+        # Stage 1: 질문 분석 (rewritten이 있으면 rewritten 기반으로 분석 → intent/entity 정확도↑)
         _t1 = time.monotonic()
-        analysis = analyzer.analyze(question)
+        analysis = analyzer.analyze(search_query)
         lang = session_data.get("lang", "ko")
         if lang == "en":
             analysis.lang = "en"
         analysis, transcript_context, student_context = _enrich_analysis(
-            question, analysis, router_inst, session_data, user_id=user_id
+            search_query, analysis, router_inst, session_data, user_id=user_id
         )
         _ms_analyze = int((time.monotonic() - _t1) * 1000)
 
         # Stage 2: 검색 (glossary 정규화된 쿼리 사용 — 학식→학생식당 등)
+        # search_query는 이미 follow-up rewrite를 거친 상태 → 그 위에 glossary 레이어 적용
         _t2 = time.monotonic()
-        _search_query = analysis.normalized_query or question
+        _search_query = analysis.normalized_query or search_query
         search_results = router_inst.route_and_search(_search_query, analysis)
         _ms_search = int((time.monotonic() - _t2) * 1000)
 
@@ -402,7 +439,7 @@ async def chat_stream(
         merged = merger.merge(
             vector_results=search_results["vector_results"],
             graph_results=search_results["graph_results"],
-            question=question,
+            question=search_query,
             intent=analysis.intent,
             entities=analysis.entities,
             transcript_context=transcript_context,
@@ -420,11 +457,11 @@ async def chat_stream(
         ):
             try:
                 rewritten = await generator.rewrite_query(
-                    question=question,
+                    question=search_query,
                     lang=analysis.lang or "ko",
                     intent=analysis.intent.value if analysis.intent else None,
                 )
-                if rewritten and rewritten != question:
+                if rewritten and rewritten != search_query:
                     retry_results = router_inst.route_and_search(rewritten, analysis)
                     # 기존 결과와 병합 (중복 제거)
                     seen = set()
@@ -445,7 +482,7 @@ async def chat_stream(
                     merged_retry = merger.merge(
                         vector_results=combined_vector,
                         graph_results=combined_graph,
-                        question=question,
+                        question=search_query,
                         intent=analysis.intent,
                         entities=analysis.entities,
                         transcript_context=transcript_context,
@@ -503,7 +540,11 @@ async def chat_stream(
             return
 
         all_results = search_results["vector_results"] + search_results["graph_results"]
-        cache_kwargs = _build_generation_cache_kwargs(question, merged, analysis, student_context)
+        # history는 직전 대화만 (현재 user 메시지는 아직 prior_messages에 없음)
+        llm_history = prior_messages if _conv_cfg.history_enabled else None
+        cache_kwargs = _build_generation_cache_kwargs(
+            search_query, merged, analysis, student_context, history=llm_history,
+        )
         cached_answer = generator.get_cached_response(**cache_kwargs)
         if cached_answer:
             messages = session_data.get("messages", [])
@@ -533,7 +574,7 @@ async def chat_stream(
         full_answer = ""
         try:
             async for token in generator.generate(
-                question=question,
+                question=search_query,
                 context=merged.formatted_context,
                 student_id=analysis.student_id,
                 question_focus=analysis.entities.get("question_focus"),
@@ -544,6 +585,7 @@ async def chat_stream(
                 question_type=analysis.question_type.value if analysis.question_type else None,
                 intent=analysis.intent.value,
                 entities=analysis.entities,
+                history=llm_history,
             ):
                 if token == "\x00CLEAR\x00":
                     full_answer = ""
@@ -594,13 +636,13 @@ async def chat_stream(
                             "학사지원팀(051-509-5182)에 문의하시기 바랍니다."
                         )
                     else:
-                        # Step 3: 이분법 완전성 검증
-                        if not verify_completeness(question, full_answer, merged.formatted_context):
+                        # Step 3: 이분법 완전성 검증 — 재작성된 쿼리 기준
+                        if not verify_completeness(search_query, full_answer, merged.formatted_context):
                             logger.debug("verify_completeness failed, fill_from_context로 보완")
                         # Fix D: 누락 unit 보충
                         target_entity = analysis.entities.get("department") if analysis.entities else None
                         full_answer = fill_from_context(
-                            question, full_answer, merged.formatted_context,
+                            search_query, full_answer, merged.formatted_context,
                             target_entity=target_entity,
                         )
             except Exception as e:
@@ -645,10 +687,12 @@ async def chat_stream(
         # stage별 타이밍 로그
         _ms_total = int((time.monotonic() - _t0) * 1000)
         _timing_msg = (
-            f"PIPELINE_TIMING total={_ms_total}ms analyze={_ms_analyze}ms search={_ms_search}ms merge={_ms_merge}ms "
+            f"PIPELINE_TIMING total={_ms_total}ms follow_up={_ms_follow_up}ms rewrite={_ms_rewrite}ms "
+            f"analyze={_ms_analyze}ms search={_ms_search}ms merge={_ms_merge}ms "
             f"retry={_ms_retry}ms generate={_ms_gen}ms validate={_ms_val}ms "
             f"intent={analysis.intent.value if analysis.intent else '?'} "
-            f"qt={analysis.question_type.value if analysis.question_type else '?'}"
+            f"qt={analysis.question_type.value if analysis.question_type else '?'} "
+            f"follow_up={follow_up_signal.reason}"
         )
         print(_timing_msg, flush=True)
 
@@ -663,6 +707,8 @@ async def chat_stream(
             "intent": analysis.intent.value if analysis.intent else "",
             "duration_ms": _ms_total,
             "timing": {
+                "follow_up_ms": _ms_follow_up,
+                "rewrite_ms": _ms_rewrite,
                 "analyze_ms": _ms_analyze,
                 "search_ms": _ms_search,
                 "merge_ms": _ms_merge,
@@ -709,20 +755,40 @@ async def chat_sync(
     generator = get_generator()
     validator = get_validator()
 
-    analysis = analyzer.analyze(question)
+    # 멀티턴: follow-up 감지 + 재작성 (스트리밍 엔드포인트와 동일 로직)
+    from app.pipeline import follow_up_detector, query_rewriter
+    from app.config import settings as _settings
+    _conv_cfg = _settings.conversation
+    prior_messages = session_data.get("messages") or []
+    search_query = question
+    follow_up_signal = follow_up_detector.detect(question, prior_messages)
+    if _conv_cfg.rewrite_enabled and follow_up_signal.is_follow_up:
+        try:
+            search_query = await query_rewriter.rewrite(
+                question,
+                prior_messages,
+                skip_rule_stage=follow_up_signal.skip_rule_stage,
+                lang=session_data.get("lang", "ko"),
+            )
+        except Exception as e:
+            logger.debug("query_rewriter 실패 (sync), 원본 사용: %s", e)
+            search_query = question
+
+    analysis = analyzer.analyze(search_query)
     lang = session_data.get("lang", "ko")
     if lang == "en":
         analysis.lang = "en"
     analysis, transcript_context, student_context = _enrich_analysis(
-        question, analysis, router_inst, session_data, user_id=user_id
+        search_query, analysis, router_inst, session_data, user_id=user_id
     )
 
-    _search_query = analysis.normalized_query or question
+    # glossary 정규화된 쿼리 우선. follow-up rewrite된 search_query 위에 glossary 레이어.
+    _search_query = analysis.normalized_query or search_query
     search_results = router_inst.route_and_search(_search_query, analysis)
     merged = merger.merge(
         vector_results=search_results["vector_results"],
         graph_results=search_results["graph_results"],
-        question=question,
+        question=search_query,
         intent=analysis.intent,
         entities=analysis.entities,
         transcript_context=transcript_context,
@@ -761,7 +827,10 @@ async def chat_sync(
         )
 
     all_results = search_results["vector_results"] + search_results["graph_results"]
-    cache_kwargs = _build_generation_cache_kwargs(question, merged, analysis, student_context)
+    llm_history = prior_messages if _conv_cfg.history_enabled else None
+    cache_kwargs = _build_generation_cache_kwargs(
+        search_query, merged, analysis, student_context, history=llm_history,
+    )
     cached_answer = generator.get_cached_response(**cache_kwargs)
     if cached_answer:
         messages = session_data.get("messages", [])
@@ -781,7 +850,7 @@ async def chat_sync(
     # LLM 생성 (전체 수집)
     full_answer = ""
     async for token in generator.generate(
-        question=question,
+        question=search_query,
         context=merged.formatted_context,
         student_id=analysis.student_id,
         question_focus=analysis.entities.get("question_focus"),
@@ -792,6 +861,7 @@ async def chat_sync(
         question_type=analysis.question_type.value if analysis.question_type else None,
         intent=analysis.intent.value,
         entities=analysis.entities,
+        history=llm_history,
     ):
         if token == "\x00CLEAR\x00":
             full_answer = ""
@@ -828,11 +898,11 @@ async def chat_sync(
                         "학사지원팀(051-509-5182)에 문의하시기 바랍니다."
                     )
                 else:
-                    if not verify_completeness(question, full_answer, merged.formatted_context):
+                    if not verify_completeness(search_query, full_answer, merged.formatted_context):
                         logger.debug("verify_completeness failed (sync), fill_from_context로 보완")
                     target_entity = analysis.entities.get("department") if analysis.entities else None
                     full_answer = fill_from_context(
-                        question, full_answer, merged.formatted_context,
+                        search_query, full_answer, merged.formatted_context,
                         target_entity=target_entity,
                     )
         except Exception as e:
