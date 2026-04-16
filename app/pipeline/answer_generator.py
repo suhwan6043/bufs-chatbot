@@ -212,7 +212,9 @@ class AnswerGenerator:
         intent: Optional[str] = None,
     ) -> int:
         base_max = settings.llm.max_tokens
-        resolved = min(base_max, 256)
+        # 2026-04-16: 기본 cap 256 → 384 상향. broad 질의(질문 분류 누락) 시
+        # 답변이 한 문장 끝나기 전 truncated되는 회귀 방지. (이전 256 ≈ 한국어 150자)
+        resolved = min(base_max, 384)
 
         focus_caps = {
             "period": 224,
@@ -245,6 +247,16 @@ class AnswerGenerator:
             resolved = max(resolved, min(base_max, 320 if asks_method else 256))
         elif intent in {"GRADUATION_REQ", "EARLY_GRADUATION", "MAJOR_CHANGE"}:
             resolved = max(resolved, min(base_max, 384))
+
+        # 2026-04-16: multi-list 질의 감지 — "전부/모두/각각/자주 묻는/알려줘" 등
+        # 키워드가 있으면 여러 항목 나열형 답변이라 768 토큰까지 허용.
+        # question_type 분류가 누락된 broad 질문도 여기서 잡혀 잘림 방지.
+        multi_list_kw = (
+            "전부", "모두", "각각", "여러", "다양한",
+            "자주 묻는", "자주묻는", "알려줘", "정리해", "리스트", "목록", "list",
+        )
+        if any(kw in normalized_question for kw in multi_list_kw):
+            resolved = max(resolved, min(base_max, 768))
 
         if len(context) > 4000 and question_type == "overview":
             resolved = max(resolved, min(base_max, 768))
