@@ -181,6 +181,41 @@ AI 답변: {prediction}
 """
 
 
+_GEMINI_CLIENT = None
+
+
+def _get_gemini_client():
+    """Google Gemini SDK 클라이언트 lazy init. GOOGLE_API_KEY env 필수."""
+    global _GEMINI_CLIENT
+    if _GEMINI_CLIENT is None:
+        import os
+        from google import genai
+        _GEMINI_CLIENT = genai.Client(api_key=os.environ.get("GOOGLE_API_KEY", ""))
+    return _GEMINI_CLIENT
+
+
+def _parse_verdict(text: str) -> bool | None:
+    """judge 응답 → True/False/None.
+
+    부정 분기를 먼저 검사하여 substring 역전 방지:
+    - '정답이 아닙니다' → '아닙' 감지 → False (이전엔 '정답' 먼저 매칭 → True 오판)
+    - 'incorrect' → 부정 먼저 → False (이전엔 'correct' in 'incorrect' → True 오판)
+    """
+    v = text.strip()
+    # 부정 표현 먼저 (한국어)
+    if "아닙" in v or "아니" in v or "오답" in v:
+        return False
+    if "정답" in v:
+        return True
+    vl = v.lower()
+    # 부정 표현 먼저 (영어) — 'incorrect' 안의 'correct' substring 역전 방지
+    if any(k in vl for k in ("incorrect", "wrong", "false")):
+        return False
+    if any(k in vl for k in ("correct", "yes", "true")):
+        return True
+    return None
+
+
 def _judge_with_llm(
     judge_client: httpx.Client,
     judge_model: str,
@@ -189,36 +224,44 @@ def _judge_with_llm(
     prediction: str,
     max_retries: int = 2,
 ) -> bool | None:
-    """exaone에게 정답/오답 판정을 맡깁니다. None = 판정 실패."""
+    """정답/오답 판정. judge_model이 'gemini'로 시작하면 Gemini API, 그 외는 LM Studio."""
     prompt = JUDGE_PROMPT.format(
         question=question,
         ground_truth=ground_truth,
         prediction=prediction,
     )
+    use_gemini = judge_model.startswith("gemini")
+
     for attempt in range(max_retries):
         try:
-            resp = judge_client.post(
-                "/v1/chat/completions",
-                json={
-                    "model": judge_model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": 10,
-                    "temperature": 0.0,
-                },
-                timeout=60,
-            )
-            resp.raise_for_status()
-            verdict = resp.json()["choices"][0]["message"]["content"].strip()
-            if "정답" in verdict:
-                return True
-            if "오답" in verdict:
-                return False
-            # 한국어가 아닌 응답 처리 (correct/yes → True)
-            vl = verdict.lower()
-            if any(k in vl for k in ("correct", "yes", "true")):
-                return True
-            if any(k in vl for k in ("incorrect", "wrong", "no", "false")):
-                return False
+            if use_gemini:
+                from google.genai import types as _genai_types
+                client = _get_gemini_client()
+                resp = client.models.generate_content(
+                    model=judge_model,
+                    contents=prompt,
+                    config=_genai_types.GenerateContentConfig(
+                        temperature=0.0,
+                        max_output_tokens=10,
+                    ),
+                )
+                verdict = (resp.text or "").strip()
+            else:
+                resp = judge_client.post(
+                    "/v1/chat/completions",
+                    json={
+                        "model": judge_model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "max_tokens": 10,
+                        "temperature": 0.0,
+                    },
+                    timeout=60,
+                )
+                resp.raise_for_status()
+                verdict = resp.json()["choices"][0]["message"]["content"].strip()
+            v = _parse_verdict(verdict)
+            if v is not None:
+                return v
         except Exception as e:
             print(f"    [judge retry {attempt+1}] {e}", flush=True)
             time.sleep(2)
@@ -301,7 +344,7 @@ def evaluate_one(
 
 # ── 데이터셋 요약 ──
 
-def build_summary(records: list[dict]) -> dict:
+def build_summary(records: list[dict], judge_model: str = "unknown") -> dict:
     n = len(records)
     answerable = [r for r in records if r["answerable"]]
     unanswerable = [r for r in records if not r["answerable"]]
@@ -342,7 +385,7 @@ def build_summary(records: list[dict]) -> dict:
             "em_rate": round(em_total / n, 4) if n else 0.0,
             "answerable_em": round(em_ans / len(answerable), 4) if answerable else 0.0,
             "avg_token_f1": round(avg_tok_f1, 4),
-            "judge_model": "exaone-3.0-7.8b-instruct",
+            "judge_model": judge_model,
             "judge_evaluated": len(judged),
             "judge_failed": judge_fail,
             "overall_f1": round(overall_f1_judge, 4),
@@ -395,15 +438,28 @@ def main() -> None:
     )
     judge_client = httpx.Client(base_url=args.judge_url, timeout=90)
 
-    # LM Studio judge 모델 확인
-    try:
-        models_resp = judge_client.get("/v1/models", timeout=10)
-        model_ids = [m["id"] for m in models_resp.json().get("data", [])]
-        print(f"LM Studio 모델: {model_ids}")
-        if args.judge_model not in model_ids:
-            print(f"  ⚠ judge model '{args.judge_model}' 목록에 없음 — 계속 진행")
-    except Exception as e:
-        print(f"LM Studio 연결 확인 실패: {e}")
+    # Gemini judge면 LM Studio 확인 건너뛰고 SDK·API 키 점검
+    if args.judge_model.startswith("gemini"):
+        import os
+        if not os.environ.get("GOOGLE_API_KEY"):
+            print("⚠ GOOGLE_API_KEY 환경변수 미설정 — Gemini judge 호출 실패함")
+        else:
+            try:
+                _get_gemini_client()
+                print(f"Gemini judge 활성: {args.judge_model}")
+            except Exception as e:
+                print(f"⚠ Gemini SDK 초기화 실패: {e}")
+
+    # LM Studio judge 모델 확인 (Gemini judge면 skip)
+    if not args.judge_model.startswith("gemini"):
+        try:
+            models_resp = judge_client.get("/v1/models", timeout=10)
+            model_ids = [m["id"] for m in models_resp.json().get("data", [])]
+            print(f"LM Studio 모델: {model_ids}")
+            if args.judge_model not in model_ids:
+                print(f"  ⚠ judge model '{args.judge_model}' 목록에 없음 — 계속 진행")
+        except Exception as e:
+            print(f"LM Studio 연결 확인 실패: {e}")
 
     all_results = {}
 
@@ -465,7 +521,7 @@ def main() -> None:
             ret_str = f"R@5={'HIT' if rec['retrieval']['recall'] else 'MISS'}" if rec["retrieval"]["recall"] is not None else "R@5=N/A"
             print(f"{ret_str} judge={verdict_str} tok_f1={rec['token_f1']:.2f} {rec['elapsed_s']}s", flush=True)
 
-        summary = build_summary(records)
+        summary = build_summary(records, judge_model=args.judge_model)
         print_summary(dname, summary)
 
         # 저장
