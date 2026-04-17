@@ -84,6 +84,26 @@ class QueryRouter:
             logger.info("그래프 결과 없음 → 벡터 폴백 활성화")
             results["vector_results"] = self._search_vector(query, analysis)
 
+        # ── P3: 그래프 결과 Reranker 적용 (하이브리드 RAG 교차 검증) ──
+        # 그래프 handler가 부여한 고정 score(1.0~1.5) 대신 Cross-Encoder로
+        # 질문-답변 관련성을 재평가. direct_answer 청크는 이미 검증됐으므로 제외.
+        reranker = self.reranker
+        graph_results = results["graph_results"]
+        if reranker and len(graph_results) > 1:
+            non_direct = [r for r in graph_results if not r.metadata.get("direct_answer")]
+            direct = [r for r in graph_results if r.metadata.get("direct_answer")]
+            if len(non_direct) > 1:
+                try:
+                    reranked = reranker.rerank(
+                        query=query,
+                        results=non_direct,
+                        top_k=len(non_direct),
+                        analysis=analysis,
+                    )
+                    results["graph_results"] = direct + reranked
+                except Exception as e:
+                    logger.debug("graph rerank 실패 (무시): %s", e)
+
         logger.info(
             "라우팅: intent=%s, vector=%d, graph=%d",
             analysis.intent.value,

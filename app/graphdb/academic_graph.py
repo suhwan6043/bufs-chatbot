@@ -1233,6 +1233,20 @@ class AcademicGraph:
             if max_notices > 0:
                 results.extend(notice_results[:max_notices])
 
+        # ── P1: cohort 매칭 score 차등 (하이브리드 RAG 정형 데이터 활용) ──
+        # 그래프 handler가 여러 학번 그룹 노드를 반환할 때, 사용자 학번에
+        # 해당하는 노드를 우선시. 비매칭 노드는 score ×0.6으로 deboost.
+        if student_id:
+            _user_group = get_student_group(student_id)
+            for r in results:
+                _node_group = (
+                    r.metadata.get("적용학번그룹")
+                    or r.metadata.get("적용학번범위")
+                    or ""
+                )
+                if _node_group and _node_group != _user_group:
+                    r.score *= 0.6
+
         # ── EN 후처리: direct_answer를 영어로 변환 ──
         if _lang == "en":
             results = self._localize_results_en(results)
@@ -1434,6 +1448,12 @@ class AcademicGraph:
         meta["node_type"] = node_data.get("type", "학사 데이터")
         if len(sp) > 1:
             meta["source_pages"] = sp
+            meta["_source_pages"] = sp  # P0 출처 매칭 부스트용
+        # P1: cohort 매칭 score 차등용 — 적용학번그룹 메타 전파
+        for cohort_key in ("적용학번그룹", "적용학번범위"):
+            if node_data.get(cohort_key):
+                meta[cohort_key] = node_data[cohort_key]
+                break
         return SearchResult(
             text=text,
             score=score,
@@ -2944,26 +2964,37 @@ class AcademicGraph:
         if not parent_nid or parent_nid not in self.G.nodes:
             return []
 
-        # 1-hop: 부모 → 조건 노드 (successors)
+        # P2: 2-hop BFS — 부모 → 자식(조건) → 손자(조건) 탐색
+        # 1-hop은 기존 동작, 2-hop은 연쇄 조건 추론 (예: 졸업요건→전공이수→세부 제한)
+        _MAX_VISIT = 30  # 탐색 노드 수 제한 (비용 통제)
         matched = []
-        for succ in self.G.successors(parent_nid):
-            succ_data = self.G.nodes.get(succ, {})
-            if succ_data.get("type") != "조건":
-                continue
-            orig_key = succ_data.get("원본키", "")
-            val = succ_data.get("값", "")
-            # 원본키의 핵심 토큰이 질문에 모두 포함되면 매칭
-            # "재수강최고성적" → ["재수강", "최고성적"] or ["재수강", "최고", "성적"]
+        visited = set()
+
+        def _try_match(nid: str):
+            if nid in visited or len(visited) >= _MAX_VISIT:
+                return
+            visited.add(nid)
+            data = self.G.nodes.get(nid, {})
+            if data.get("type") != "조건":
+                return
+            orig_key = data.get("원본키", "")
+            val = data.get("값", "")
             key_norm = self._normalize_text(orig_key)
-            # 한글 2글자 이상 부분문자열 매칭 (키의 의미 단위가 질문에 포함)
             if key_norm and key_norm in q_norm:
                 matched.append((key_norm, val, orig_key))
             elif len(key_norm) >= 4:
-                # 긴 키는 앞 절반/뒤 절반으로 나눠서 양쪽 다 포함 확인
                 mid = len(key_norm) // 2
                 front, back = key_norm[:mid], key_norm[mid:]
                 if front in q_norm and back in q_norm:
                     matched.append((key_norm, val, orig_key))
+
+        # depth-1: 부모 → 직계 자식
+        for succ in self.G.successors(parent_nid):
+            _try_match(succ)
+            # depth-2: 자식 → 손자 (연쇄 조건)
+            if succ in self.G.nodes:
+                for grandchild in self.G.successors(succ):
+                    _try_match(grandchild)
 
         if not matched:
             return []

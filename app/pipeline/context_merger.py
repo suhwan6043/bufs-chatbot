@@ -275,6 +275,49 @@ class ContextMerger:
         all_results = _adaptive_cutoff(all_results, ratio=_cutoff_ratio)
         _post_cutoff_count = len(all_results)
 
+        # ── P0: 출처 매칭 부스트 (하이브리드 RAG 상호 검증) ─────────────
+        # 벡터 청크와 그래프 노드가 동일 PDF 페이지 출처를 공유하면
+        # 두 경로가 독립적으로 같은 근거를 가리킨다는 의미 → 신뢰도↑.
+        # RRF 후 score에 ×1.2 부스트하여 교차 확인된 결과를 상위로 올림.
+        _graph_pages: set[int] = set()
+        _vector_pages: set[int] = set()
+        for r in all_results:
+            src = r.metadata.get("source_type", "")
+            if src == "graph":
+                sp = r.metadata.get("_source_pages")
+                if isinstance(sp, (list, set)):
+                    _graph_pages.update(int(p) for p in sp if isinstance(p, (int, float)))
+                # page_number도 체크 (FAQ 등)
+                pn = r.metadata.get("page_number")
+                if isinstance(pn, (int, float)) and pn > 0:
+                    _graph_pages.add(int(pn))
+            elif src == "vector":
+                pn = r.metadata.get("page_number")
+                if isinstance(pn, (int, float)) and pn > 0:
+                    _vector_pages.add(int(pn))
+        # 교차 확인된 페이지 = 두 경로 모두에서 발견된 페이지
+        _corroborated_pages = _graph_pages & _vector_pages
+        if _corroborated_pages:
+            _CROSS_BOOST = 1.2
+            _boosted = 0
+            for r in all_results:
+                pn = r.metadata.get("page_number")
+                sp = r.metadata.get("_source_pages")
+                r_pages: set[int] = set()
+                if isinstance(pn, (int, float)) and pn > 0:
+                    r_pages.add(int(pn))
+                if isinstance(sp, (list, set)):
+                    r_pages.update(int(p) for p in sp if isinstance(p, (int, float)))
+                if r_pages & _corroborated_pages:
+                    r.score *= _CROSS_BOOST
+                    _boosted += 1
+            if _boosted:
+                all_results.sort(key=lambda r: r.score, reverse=True)
+                logger.debug(
+                    "cross-source boost: %d results boosted (corroborated pages=%s)",
+                    _boosted, _corroborated_pages,
+                )
+
         # 원칙 2: 엔티티 기반 필터 — 단일 토픽 쿼리에서 무관 청크 차단
         all_results = self._filter_by_entity(all_results, entities)
 
