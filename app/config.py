@@ -188,6 +188,24 @@ class ContextBudgetConfig:
 
     per_chunk_max도 n이 클수록 타이트하게 → 다양성 보장.
     """
+    # ── 컴포넌트별 토글 (A/B 평가 · 환각 원인 격리용) ──
+    # 팀원 eval에서 확인된 regression(특히 오답 거부율 -23.1pp) 분석을 위해
+    # 3개 컴포넌트를 독립적으로 on/off 할 수 있도록 분리.
+    # 1) cluster_preserve: pre-RRF 동등권위 클러스터 보존 (볼륨 증가 없음)
+    # 2) adaptive_budget:  결과 수 기반 예산 확장
+    # 3) fair_share:       다양성 모드 per_chunk_max 타이트화 (truncation 증가)
+    # field(default_factory=): 인스턴스 생성 시점에 env 평가 (테스트/런타임 변경 가능)
+    cluster_preserve_enabled: bool = field(
+        default_factory=lambda: os.getenv("CTX_CLUSTER_PRESERVE", "true").lower() == "true"
+    )
+    adaptive_budget_enabled: bool = field(
+        default_factory=lambda: os.getenv("CTX_ADAPTIVE_BUDGET", "true").lower() == "true"
+    )
+    fair_share_enabled: bool = field(
+        default_factory=lambda: os.getenv("CTX_FAIR_SHARE", "true").lower() == "true"
+    )
+
+    # ── 예산 공식 파라미터 ──
     # 결과 수가 이 이하일 땐 base 그대로 (3개까진 원래 설계 유지)
     baseline_chunk_count: int = int(os.getenv("CTX_BASELINE_CHUNK_COUNT", "3"))
     # 청크당 추가 토큰 (평균 청크 ~450자 × TOKENS_PER_CHAR 1.5 = 675 → 1/3 여유)

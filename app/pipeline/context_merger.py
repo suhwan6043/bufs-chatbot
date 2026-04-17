@@ -306,10 +306,14 @@ class ContextMerger:
         # 원칙 1: Handler가 방출한 "동등 권위 클러스터" 감지 (pre-RRF).
         # 예: 장학금 handler가 8가지 유형에 모두 score=1.0 부여 → 이후 RRF/cutoff가
         # rank만으로 차별하지 못하게 cluster_preserve 힌트로 전달.
-        _handler_cluster = max(
-            _detect_handler_cluster_size(graph_results),
-            _detect_handler_cluster_size(vector_results),
-        )
+        # 토글: CTX_CLUSTER_PRESERVE=false 시 비활성 (기존 cutoff만)
+        if settings.context_budget.cluster_preserve_enabled:
+            _handler_cluster = max(
+                _detect_handler_cluster_size(graph_results),
+                _detect_handler_cluster_size(vector_results),
+            )
+        else:
+            _handler_cluster = 0
 
         # RRF로 그래프·벡터 결과 병합 (rank 기반, 인텐트별 가중치 적용)
         all_results = _rrf_merge(graph_results, vector_results, gw, vw)
@@ -391,13 +395,15 @@ class ContextMerger:
         # 다중 카테고리 질문(예: "장학금 있어?" → 8가지 유형)에서 base(=1200)로는
         # 2개 청크밖에 못 담던 문제(진단: merged.graph_results 10→2)를 해결.
         # _post_cutoff_count는 adaptive_cutoff가 이미 노이즈를 제거한 신뢰 가능한 신호.
-        adapted_budget = _adaptive_budget(budget, _post_cutoff_count)
-        if adapted_budget != budget:
-            logger.debug(
-                "context budget adapted: %d → %d (n_post_cutoff=%d, intent=%s)",
-                budget, adapted_budget, _post_cutoff_count, intent,
-            )
-            budget = adapted_budget
+        # 토글: CTX_ADAPTIVE_BUDGET=false 시 base 그대로 (기존 동작)
+        if settings.context_budget.adaptive_budget_enabled:
+            adapted_budget = _adaptive_budget(budget, _post_cutoff_count)
+            if adapted_budget != budget:
+                logger.debug(
+                    "context budget adapted: %d → %d (n_post_cutoff=%d, intent=%s)",
+                    budget, adapted_budget, _post_cutoff_count, intent,
+                )
+                budget = adapted_budget
 
         # 토큰 제한 내에서 컨텍스트 구성
         context_parts = []
@@ -448,9 +454,15 @@ class ContextMerger:
         # per_chunk_max를 fair-share 기반으로 설정 → 모든 청크가 공평한 공간 확보.
         # 예) n=8, max_chars=1550 → fair_share=193, per_chunk_max=293 (여유 100).
         # 장학금 8가지 유형 같은 multi-category 질문에서 6-7개 청크를 수용 가능.
+        #
+        # 토글: CTX_FAIR_SHARE=false 시 기존 0.6×max_chars 사용 (truncation 감소 → 환각↓ 예상)
+        # 팀원 eval regression(오답 거부율 -23.1pp) 주범 의심 → 독립 토글 가능
         cfg_cb = settings.context_budget
         base_per_chunk_max = int(max_chars * 0.6)
-        if _post_cutoff_count >= cfg_cb.diversity_trigger_n:
+        if (
+            cfg_cb.fair_share_enabled
+            and _post_cutoff_count >= cfg_cb.diversity_trigger_n
+        ):
             fair_share = max_chars // _post_cutoff_count
             # fair_share + 여유 100자, 최소 250, 최대 diversity_chunk_cap
             per_chunk_max = min(

@@ -1,7 +1,11 @@
 """적응형 컨텍스트 예산 공식 단위 테스트."""
 
-from app.pipeline.context_merger import _adaptive_budget
+import os
+from unittest.mock import patch
+
+from app.pipeline.context_merger import _adaptive_budget, _detect_handler_cluster_size, _adaptive_cutoff
 from app.config import settings
+from app.models import SearchResult
 
 
 def test_budget_unchanged_when_few_results():
@@ -79,3 +83,67 @@ def test_budget_scholarship_case_expands_enough():
     # 8개 × ~450자 = 3600자 = 2400 token 필요
     # cap=3000 근처에 도달해서 최소 2600 이상 보장
     assert adapted >= 2400, f"SCHOLARSHIP n=10 budget={adapted} too small"
+
+
+# ── 컴포넌트별 토글 (A/B 평가용) ──
+
+def _mock_results(n: int, score: float = 1.0) -> list:
+    return [
+        SearchResult(text=f"r{i}", score=score, source="s", metadata={})
+        for i in range(n)
+    ]
+
+
+def test_cluster_detection_uniform_scores():
+    """같은 score의 결과 N개 → 클러스터 크기 N."""
+    assert _detect_handler_cluster_size(_mock_results(8, 1.0)) == 8
+    assert _detect_handler_cluster_size(_mock_results(3, 0.9)) == 3
+
+
+def test_cluster_detection_empty():
+    assert _detect_handler_cluster_size([]) == 0
+
+
+def test_adaptive_cutoff_with_cluster_preserve():
+    """cluster_preserve=N → 적어도 N개는 ratio와 무관하게 보존."""
+    # 8개 중 4개는 고점수, 나머지 4개는 노이즈
+    results = (
+        _mock_results(4, 0.8) + _mock_results(4, 0.05)
+    )
+    # cluster_preserve=0 (기본): cutoff로 저점수 제거
+    no_preserve = _adaptive_cutoff(results, ratio=0.70, cluster_preserve=0)
+    # cluster_preserve=8 (전체 보존): 모두 남음
+    with_preserve = _adaptive_cutoff(results, ratio=0.70, cluster_preserve=8)
+    assert len(with_preserve) >= len(no_preserve)
+    assert len(with_preserve) == 8
+
+
+def test_toggle_cluster_preserve_disabled():
+    """CTX_CLUSTER_PRESERVE=false 시 cluster_preserve 비활성 — 설정만 확인."""
+    with patch.dict(os.environ, {"CTX_CLUSTER_PRESERVE": "false"}):
+        from app.config import ContextBudgetConfig
+        cfg = ContextBudgetConfig()
+        assert cfg.cluster_preserve_enabled is False
+
+
+def test_toggle_adaptive_budget_disabled():
+    """CTX_ADAPTIVE_BUDGET=false 시 공식 자체는 불변 (호출측에서 스킵)."""
+    with patch.dict(os.environ, {"CTX_ADAPTIVE_BUDGET": "false"}):
+        from app.config import ContextBudgetConfig
+        cfg = ContextBudgetConfig()
+        assert cfg.adaptive_budget_enabled is False
+
+
+def test_toggle_fair_share_disabled():
+    """CTX_FAIR_SHARE=false 시 fair_share_enabled=False."""
+    with patch.dict(os.environ, {"CTX_FAIR_SHARE": "false"}):
+        from app.config import ContextBudgetConfig
+        cfg = ContextBudgetConfig()
+        assert cfg.fair_share_enabled is False
+
+
+def test_all_toggles_default_true():
+    """기본값은 모두 true (PR #8 기본 동작 유지, 기존 호환성)."""
+    assert settings.context_budget.cluster_preserve_enabled is True
+    assert settings.context_budget.adaptive_budget_enabled is True
+    assert settings.context_budget.fair_share_enabled is True
