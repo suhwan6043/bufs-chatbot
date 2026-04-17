@@ -61,7 +61,10 @@ _INTENT_WEIGHTS = {
     Intent.SCHOLARSHIP:      (0.8, 1.5),   # 그래프에 장학 노드 없음
     Intent.LEAVE_OF_ABSENCE: (1.0, 1.5),   # 벡터 PDF 우선
     Intent.COURSE_INFO:      (0.8, 1.5),   # 시간표 벡터 청크 우선
-    Intent.GENERAL:          (0.8, 1.5),   # Tier 1 벡터 우선
+    # P4 (2026-04-17): GENERAL 가중치 상향 — 범용 질의에서 그래프 기여도 회복.
+    # 이전: graph=0.8로 벡터에 완전히 묻힘 → 전반적 규정 질의에서 그래프 노드 미활용.
+    # 개선: graph=1.2, vector=1.3 → 동등 경쟁 + 벡터 약우선.
+    Intent.GENERAL:          (1.2, 1.3),   # Global 테마 요약에도 그래프 활용
 }
 _DEFAULT_WEIGHTS = (1.2, 1.2)  # Intent 미지정 시 기본: 동등 경쟁
 
