@@ -1120,47 +1120,27 @@ class AcademicGraph:
             logger.debug("CommunitySelector 사용 실패, 하드 분기로 동작: %s", e)
             allowed_node_types = None
 
-        if intent == "GRADUATION_REQ":
-            results.extend(
-                self._query_graduation(student_id, student_type, entities, question)
-            )
-
-        elif intent == "REGISTRATION":
-            results.extend(self._query_registration(student_id, entities, question))
-
-        elif intent == "SCHEDULE":
-            results.extend(self._query_schedule(question, entities))
-
-        elif intent == "COURSE_INFO":
-            results.extend(
-                self._query_course_info(
-                    entities.get("course_name", ""),
-                    entities.get("department", ""),
-                )
-            )
-
-        elif intent == "MAJOR_CHANGE":
-            # 교직 질문 시 교직 노드 우선 탐색 (전공이수방법은 보조)
-            if "교직" in question:
-                results.extend(
-                    self._query_teacher_training(entities.get("department", ""))
-                )
-            if student_id:
-                results.extend(self._query_major_methods(student_id))
-
-        elif intent == "EARLY_GRADUATION":
-            results.extend(self._query_early_graduation(student_id, question, entities=entities))
-
-        elif intent == "ALTERNATIVE":
-            results.extend(
-                self._query_alternatives(entities.get("course_name", ""))
-            )
-
-        elif intent == "SCHOLARSHIP":
-            results.extend(self._query_scholarship(entities, question))
-
-        elif intent == "LEAVE_OF_ABSENCE":
-            results.extend(self._query_leave_of_absence(entities, question))
+        # P5: intent → handler 동적 dispatch (4원칙 #1 유연한 스키마).
+        # 8개 if/elif 체인을 dict 매핑으로 전환. signature 일관화(s, sid, st, e, q).
+        # 새 intent 추가 시 이 dict에 한 줄만 추가하면 됨.
+        _INTENT_HANDLERS = {
+            "GRADUATION_REQ":   lambda s,sid,st,e,q: s._query_graduation(sid, st, e, q),
+            "REGISTRATION":     lambda s,sid,st,e,q: s._query_registration(sid, e, q),
+            "SCHEDULE":         lambda s,sid,st,e,q: s._query_schedule(q, e),
+            "COURSE_INFO":      lambda s,sid,st,e,q: s._query_course_info(
+                                    e.get("course_name", ""), e.get("department", "")),
+            "MAJOR_CHANGE":     lambda s,sid,st,e,q: s._handle_major_change(sid, e, q),
+            "EARLY_GRADUATION": lambda s,sid,st,e,q: s._query_early_graduation(
+                                    sid, q, entities=e),
+            "ALTERNATIVE":      lambda s,sid,st,e,q: s._query_alternatives(
+                                    e.get("course_name", "")),
+            "SCHOLARSHIP":      lambda s,sid,st,e,q: s._query_scholarship(e, q),
+            "LEAVE_OF_ABSENCE": lambda s,sid,st,e,q: s._query_leave_of_absence(e, q),
+        }
+        handler = _INTENT_HANDLERS.get(intent)
+        if handler:
+            _h_results = handler(self, student_id, student_type, entities, question) or []
+            results.extend(_h_results)
 
         # ── FAQ 그래프 검색 (모든 intent 공통) ──
         # 원칙 1: FAQ는 그래프 1급 시민 → direct_answer 플래그로 RRF 부스트
@@ -2491,6 +2471,22 @@ class AcademicGraph:
                         f"  · {course.get('과목명', '')} ({course.get('학점', '')}학점)"
                     )
         return [self._make_graph_result(text="\n".join(lines), node_data=None, score=1.0)]
+
+    def _handle_major_change(
+        self, student_id: str, entities: dict, question: str
+    ) -> List[SearchResult]:
+        """P5: MAJOR_CHANGE intent의 복합 분기 로직을 단일 handler로 묶음.
+        - 교직 질문 시 교직 노드 우선 탐색 (전공이수방법은 보조)
+        - 학번 있으면 전공이수방법 추가
+        """
+        results: List[SearchResult] = []
+        if "교직" in question:
+            results.extend(
+                self._query_teacher_training(entities.get("department", ""))
+            )
+        if student_id:
+            results.extend(self._query_major_methods(student_id))
+        return results
 
     def _query_teacher_training(self, dept: str = "") -> List[SearchResult]:
         """교직과정 노드 탐색."""
