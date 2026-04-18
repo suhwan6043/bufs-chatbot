@@ -2993,10 +2993,32 @@ class AcademicGraph:
             return []
 
         # P2: 2-hop BFS — 부모 → 자식(조건) → 손자(조건) 탐색
-        # 1-hop은 기존 동작, 2-hop은 연쇄 조건 추론 (예: 졸업요건→전공이수→세부 제한)
-        _MAX_VISIT = 30  # 탐색 노드 수 제한 (비용 통제)
+        # P15 (2026-04-18): 토픽-스코프 가지치기 (hub-splitting 가상 구현).
+        # 질문에서 학사-영역 카테고리를 추출해, 허브의 자식 가지 중 카테고리에
+        # 속하는 것만 내려간다. score는 건드리지 않고 노이즈만 제거 — 지금까지의
+        # 실패(확장/부스트 계열)와 정반대 방향.
+        # 게이트 fallback: 카테고리 추출 실패 시 기존 동작 유지.
+        _MAX_VISIT = 30
         matched = []
         visited = set()
+
+        _CATEGORY_KEYWORDS = {
+            "교양", "전공", "부전공", "복수전공", "융합전공", "마이크로전공",
+            "학점", "시험", "논문", "인증", "조기", "토익", "토플", "토픽",
+            "NOMAD", "취업", "졸업인증", "글로벌",
+        }
+        _topic_cats = {c for c in _CATEGORY_KEYWORDS if c in question}
+
+        def _gate_pass(succ_data: dict) -> bool:
+            # 토픽이 없으면 게이트 비활성 (기존 동작)
+            if not _topic_cats:
+                return True
+            key_text = " ".join([
+                str(succ_data.get("구분", "") or ""),
+                str(succ_data.get("원본키", "") or ""),
+                str(succ_data.get("카테고리", "") or ""),
+            ])
+            return any(c in key_text for c in _topic_cats)
 
         def _try_match(nid: str):
             if nid in visited or len(visited) >= _MAX_VISIT:
@@ -3008,22 +3030,25 @@ class AcademicGraph:
             orig_key = data.get("원본키", "")
             val = data.get("값", "")
             key_norm = self._normalize_text(orig_key)
+            # 직접 매칭은 게이트 관계없이 통과 (fallback 안전장치)
             if key_norm and key_norm in q_norm:
                 matched.append((key_norm, val, orig_key))
-            elif len(key_norm) >= 4:
+                return
+            if len(key_norm) >= 4:
                 mid = len(key_norm) // 2
                 front, back = key_norm[:mid], key_norm[mid:]
                 if front in q_norm and back in q_norm:
                     matched.append((key_norm, val, orig_key))
 
-        # P9 (2026-04-18): 핵심 관계(포함한다/조건) 매칭 시 score 상향만.
-        # 이전 P7은 평균 가중치 곱으로 score 하락 가능성이 있어 회귀 발생 → 롤백.
-        # 이번에는 최소값 1.2 유지, 핵심 엣지 감지 시 +0.1 boost만 적용.
+        # P9: 핵심 관계 감지 (score 상향용, 변경 없음)
         _CORE_RELATIONS = {"포함한다", "조건"}
         has_core_edge = False
 
-        # depth-1: 부모 → 직계 자식
+        # depth-1: 부모 → 직계 자식 (토픽 게이트 통과 시에만 descend)
         for succ in self.G.successors(parent_nid):
+            succ_data = self.G.nodes.get(succ, {}) or {}
+            if not _gate_pass(succ_data):
+                continue
             _try_match(succ)
             try:
                 rel1 = (self.G.edges.get((parent_nid, succ), {}) or {}).get("relation") \
@@ -3032,9 +3057,12 @@ class AcademicGraph:
                     has_core_edge = True
             except Exception:
                 pass
-            # depth-2: 자식 → 손자 (연쇄 조건)
+            # depth-2: 자식 → 손자 (연쇄 조건, 게이트 적용)
             if succ in self.G.nodes:
                 for grandchild in self.G.successors(succ):
+                    gc_data = self.G.nodes.get(grandchild, {}) or {}
+                    if not _gate_pass(gc_data):
+                        continue
                     _try_match(grandchild)
                     try:
                         rel2 = (self.G.edges.get((succ, grandchild), {}) or {}).get("relation") \
