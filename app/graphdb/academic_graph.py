@@ -1145,6 +1145,22 @@ class AcademicGraph:
             _h_results = handler(self, student_id, student_type, entities, question) or []
             results.extend(_h_results)
 
+        # EN/KO 공통: 주제형 intent라도 "기간/일정"을 묻는 경우 학사일정 그래프를 보강.
+        # 예: "secondary major application period"는 MAJOR_CHANGE 용어를 포함하지만
+        # 실제 근거는 학사일정 p.5에 있다.
+        if entities.get("question_focus") == "period" and intent in {
+            "REGISTRATION", "MAJOR_CHANGE", "LEAVE_OF_ABSENCE",
+            "SCHOLARSHIP", "COURSE_INFO",
+        }:
+            schedule_results = self._query_schedule(question, entities)
+            if schedule_results:
+                seen_keys = {(r.source, r.page_number, r.text[:80]) for r in results}
+                for result in schedule_results:
+                    key = (result.source, result.page_number, result.text[:80])
+                    if key not in seen_keys:
+                        results.insert(0, result)
+                        seen_keys.add(key)
+
         # ── FAQ 그래프 검색 (모든 intent 공통) ──
         # 원칙 1: FAQ는 그래프 1급 시민 → direct_answer 플래그로 RRF 부스트
         # 원칙 2: FAQ 커뮤니티만 O(M) 스캔 (전체 그래프 순회 X)

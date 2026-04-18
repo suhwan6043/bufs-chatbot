@@ -51,6 +51,26 @@ def test_schedule_match_returns_direct_answer():
     assert "2026년 5월 18일부터 5월 29일까지" in results[0].metadata["direct_answer"]
 
 
+def test_period_focus_topic_intent_includes_schedule_result():
+    graph = make_graph()
+    graph.add_schedule(
+        "온라인 휴/복학 신청",
+        "2026-2",
+        {"시작일": "2026-07-06", "종료일": "2026-08-30", "비고": ""},
+    )
+
+    results = graph.query_to_search_results(
+        student_id="2023",
+        intent="LEAVE_OF_ABSENCE",
+        entities={"question_focus": "period"},
+        question="휴학 복학 신청기간 학사일정",
+    )
+
+    assert results
+    assert "온라인 휴/복학 신청" in results[0].text
+    assert "2026년 7월 6일부터 8월 30일까지" in results[0].metadata["direct_answer"]
+
+
 def test_graduation_comparison_returns_direct_answer():
     graph = make_graph()
     graph.add_graduation_req("2024_2025", "내국인", {"복수전공이수학점": 30})

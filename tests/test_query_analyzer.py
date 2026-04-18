@@ -439,6 +439,22 @@ def test_en_grade_sel_pnp(analyzer):
     assert result.requires_graph is False
 
 
+def test_en_grade_sel_period_keeps_graph_for_schedule(analyzer):
+    result = analyzer.analyze(
+        "When is the pass/fail conversion application period for the 2026 spring semester?"
+    )
+    assert result.intent == Intent.REGISTRATION
+    assert result.requires_graph is True
+    assert result.entities.get("question_focus") == "period"
+
+
+def test_en_where_class_schedule_is_location_not_period(analyzer):
+    result = analyzer.analyze("Where can the class schedule be checked?")
+    assert result.entities.get("question_focus") == "location"
+    assert "수업시간표" in result.ko_query
+    assert "신청기간" not in result.ko_query
+
+
 # ── Medium 격차 해소 검증 ─────────────────────────────────────────────────────
 
 def test_en_registration_deadline_entity(analyzer):
@@ -513,3 +529,39 @@ def test_en_question_focus_rule_list(analyzer):
     """Low #11: 'requirements' → question_focus='rule_list'"""
     result = analyzer.analyze("what are the requirements for early graduation?")
     assert result.entities.get("question_focus") == "rule_list"
+
+
+def test_en_period_terms_are_added_to_ko_query(analyzer):
+    result = analyzer.analyze(
+        "When is the secondary major application period for the 2026 spring semester?"
+    )
+    assert result.entities.get("question_focus") == "period"
+    assert "신청기간" in result.ko_query
+
+
+def test_en_changed_starting_from_academic_year_is_not_period(analyzer):
+    result = analyzer.analyze(
+        "What changed in the primary major credit requirement starting from the 2026 academic year?"
+    )
+    assert result.entities.get("question_focus") != "period"
+    assert result.intent == Intent.MAJOR_CHANGE
+
+
+def test_en_leave_register_courses_prefers_registration(analyzer):
+    result = analyzer.analyze("Can a student on leave of absence register for courses?")
+    assert result.intent == Intent.REGISTRATION
+    assert "수강신청" in result.ko_query
+
+
+def test_en_plural_scholarship_aliases(analyzer):
+    result = analyzer.analyze("Where do you apply for national scholarships?")
+    assert result.intent == Intent.SCHOLARSHIP
+    assert "국가장학금" in result.ko_query
+
+
+def test_en_alternative_same_name_aliases(analyzer):
+    result = analyzer.analyze(
+        "If a student takes a course with the same name twice, is the credit recognized?"
+    )
+    assert result.intent == Intent.ALTERNATIVE
+    assert "동일과목" in result.ko_query
