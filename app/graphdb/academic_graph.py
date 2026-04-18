@@ -962,6 +962,36 @@ class AcademicGraph:
             edge_data.update(data)
         self.G.add_edge(source, target, **edge_data)
 
+    def ensure_subhub(self, parent_nid: str, category: str) -> str:
+        """작업 3 (2026-04-18): fan-out 허브를 카테고리별 sub-hub로 분할.
+
+        parent_nid 아래에 category(조건 노드의 `원본키`) 기준 sub-hub 노드를
+        생성하거나 기존 것을 반환. 인제스트에서 `parent → cond` 직접 엣지를
+        `parent → subhub → cond`로 우회시킬 때 호출한다.
+
+        원칙 1(유연한 스키마): category는 데이터(원본키)에서 자동 유도 —
+        새 카테고리 추가 시 자동 sub-hub 생성.
+        원칙 4(하드코딩 금지): 카테고리 리스트 불필요.
+
+        Returns: sub-hub 노드 ID.
+        """
+        if not parent_nid or not category:
+            return parent_nid or ""
+        # ID 네임스페이스: subhub_{category}_{parent_nid}
+        # 특수문자 방어: parent_nid와 category는 이미 구조화돼 있으나 공백 제거.
+        safe_cat = str(category).strip().replace(" ", "_")
+        subhub_id = f"subhub_{safe_cat}_{parent_nid}"
+        if subhub_id not in self.G.nodes:
+            self.G.add_node(
+                subhub_id,
+                type="서브허브",
+                구분=safe_cat,
+                parent=parent_nid,
+            )
+            # parent → subhub: 카테고리 관계
+            self.G.add_edge(parent_nid, subhub_id, relation="카테고리")
+        return subhub_id
+
     # ── 조회 메서드 ───────────────────────────────────────────
 
     def get_graduation_req(
