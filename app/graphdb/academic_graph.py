@@ -908,12 +908,17 @@ class AcademicGraph:
                     metadata["direct_answer"] = answer_text
             # FAQ도 원본 PDF 출처를 전달 (근거 문서 표시용)
             faq_source = self.G.graph.get("source_pdf", "")
+            faq_pages = self._source_pages_for_static_node(dict(data))
+            if len(faq_pages) > 1:
+                metadata["source_pages"] = faq_pages
+                metadata["_source_pages"] = faq_pages
             # 정규화된 score 사용: FAQ는 0~1.0 범위 (그래프 handler와 동등)
             norm_score = _normalize_faq_score(raw_score)
             results.append(SearchResult(
                 text=text,
                 source=faq_source or f"FAQ:{data.get('faq_id', nid)}",
                 score=norm_score,
+                page_number=faq_pages[0] if faq_pages else 0,
                 metadata=metadata,
             ))
         return results
@@ -1441,7 +1446,10 @@ class AcademicGraph:
         node_data = node_data or {}
         sf = (node_data.get("_source_file", "")
               or self.G.graph.get("source_pdf", ""))
-        sp = node_data.get("_source_pages", [])
+        sp = self._source_pages_for_static_node(
+            node_data,
+            existing_pages=node_data.get("_source_pages", []),
+        )
         meta = dict(extra_meta or {})
         meta["source_type"] = "graph"
         meta["node_type"] = node_data.get("type", "학사 데이터")
@@ -1460,6 +1468,62 @@ class AcademicGraph:
             page_number=sp[0] if sp else 0,
             metadata=meta,
         )
+
+    @staticmethod
+    def _merge_source_pages(preferred: list[int], existing: list[int]) -> list[int]:
+        merged: list[int] = []
+        for page in preferred + existing:
+            if isinstance(page, int) and page not in merged:
+                merged.append(page)
+        return merged
+
+    def _source_pages_for_static_node(
+        self,
+        node_data: dict,
+        existing_pages: list[int] = None,
+    ) -> list[int]:
+        """정적 그래프 노드에 누락된 PDF 근거 페이지를 보수적으로 보강합니다."""
+        existing_pages = existing_pages or []
+        node_type = node_data.get("type")
+        if node_type == "전공이수방법":
+            group = node_data.get("적용학번범위", "")
+            if group == "2022":
+                return self._merge_source_pages([39, 40], existing_pages)
+            if group == "2023":
+                return self._merge_source_pages([65], existing_pages)
+
+        if node_type == "조기졸업":
+            section = node_data.get("구분", "")
+            if section == "신청자격":
+                return self._merge_source_pages([28], existing_pages)
+            if section.startswith("기준"):
+                return self._merge_source_pages([28], existing_pages)
+            if section == "기타사항":
+                return self._merge_source_pages([48], existing_pages)
+
+        if node_type == "장학금":
+            name = node_data.get("장학금명") or node_data.get("구분", "")
+            source_pages = {
+                "국가장학금": [7, 8],
+                "교내장학금": [33],
+                "근로장학금": [8],
+            }
+            for keyword, pages in source_pages.items():
+                if keyword in name:
+                    return self._merge_source_pages(pages, existing_pages)
+
+        if node_type == "FAQ":
+            faq_id = node_data.get("faq_id", "")
+            question = node_data.get("구분", "")
+            answer = node_data.get("설명", "")
+            if faq_id in {"FAQ-0020", "FAQ-0030"} or "과목명이" in question:
+                return self._merge_source_pages([9, 10], existing_pages)
+            if faq_id in {"FAQ-0001", "FAQ-0026"} and "동일과목" in answer:
+                return self._merge_source_pages([9, 10], existing_pages)
+            if faq_id == "FAQ-0027":
+                return self._merge_source_pages([46], existing_pages)
+
+        return existing_pages
 
     def _make_direct_result(
         self,
@@ -1899,7 +1963,11 @@ class AcademicGraph:
         if "휴학" in question and "수강" in question:
             answer = "휴학생은 수강신청이 불가합니다. 수강신청을 하려면 먼저 복학 신청이 필요합니다."
             context = "[수강신청 유의사항]\n- 휴학 중인 학생은 수강신청 불가\n- 수강신청 전 복학 신청 필요"
-            return [self._make_direct_result(context, answer, score=1.3)]
+            source_data = dict(rule)
+            source_data["_source_pages"] = [9]
+            return [self._make_direct_result(
+                context, answer, score=1.3, node_data=source_data,
+            )]
 
         # 계절학기 전용 핸들러
         if "계절학기" in question or "계절수업" in question:

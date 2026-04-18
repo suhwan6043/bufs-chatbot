@@ -195,6 +195,16 @@ def test_en_cohort_extraction_year_student(analyzer):
     assert result.student_id == "2021"
 
 
+def test_en_cohort_extraction_admitted_in_year(analyzer):
+    result = analyzer.analyze("students admitted in 2022 graduating through method 1")
+    assert result.student_id == "2022"
+
+
+def test_en_cohort_admitted_or_later_not_collapsed(analyzer):
+    result = analyzer.analyze("students admitted in 2024 or later changing their major")
+    assert result.student_id is None
+
+
 def test_en_cohort_no_false_positive(analyzer):
     """Gap 3 오탐 방지: 연도 단독은 student_id로 추출 안 됨"""
     result = analyzer.analyze("the 2020 academic calendar shows holidays")
@@ -446,6 +456,14 @@ def test_en_grade_sel_period_keeps_graph_for_schedule(analyzer):
     assert result.intent == Intent.REGISTRATION
     assert result.requires_graph is True
     assert result.entities.get("question_focus") == "period"
+
+
+def test_en_alternative_retake_question_keeps_alternative_intent(analyzer):
+    result = analyzer.analyze(
+        "Why is it important to verify alternative and equivalent courses before applying for a course retake?"
+    )
+    assert result.intent == Intent.ALTERNATIVE
+    assert result.requires_graph is True
 
 
 def test_en_where_class_schedule_is_location_not_period(analyzer):

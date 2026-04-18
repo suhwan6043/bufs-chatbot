@@ -149,6 +149,10 @@ class QueryAnalyzer:
         r"|\b(20[12]\d)\s+(?:student|cohort|enrollment|year)\b",
         re.IGNORECASE,
     )
+    EN_ADMITTED_COHORT_PATTERN = re.compile(
+        r"\badmitted\s+in\s+(20[12]\d)\b(?!\s+(?:or|and)\s+later)",
+        re.IGNORECASE,
+    )
 
     STUDENT_TYPE_PATTERNS = {
         "외국인": re.compile(r"외국인|유학생|외국인학생"),
@@ -525,6 +529,10 @@ class QueryAnalyzer:
         m = self.EN_COHORT_PATTERN.search(question)
         if m:
             student_id = m.group(1) or m.group(2)
+        if student_id is None:
+            m_admitted = self.EN_ADMITTED_COHORT_PATTERN.search(question)
+            if m_admitted:
+                student_id = m_admitted.group(1)
         # Low #9: 2자리 코호트 ("22 cohort" → 2022)
         if student_id is None:
             m_short = self.EN_COHORT_SHORT_PATTERN.search(question)
@@ -688,10 +696,19 @@ class QueryAnalyzer:
             Intent.TRANSCRIPT,  # Low #12: TRANSCRIPT 추가
             Intent.GENERAL,
         )
+        # 재수강 문맥이어도 대체/동일과목 자체를 묻는 질문은 ALTERNATIVE로 유지한다.
+        # "retake"가 포함되면 성적계열 규칙에 빨려 들어가 PDF/FAQ 근거가 누락될 수 있다.
+        is_alt_retake_q = (
+            any(kw in q_lower for kw in ("alternative course", "equivalent course", "same course"))
+            and "retake" in q_lower
+        )
+        if is_alt_retake_q:
+            intent = Intent.ALTERNATIVE
+
         # High #3: 성적선택제(P/NP) / 성적포기 → REGISTRATION + 그래프 OFF
         # EN "pass/fail conversion" → 글로서리에서 "성적평가 선택제도" 추출 →
         # "성적평가"가 GRADUATION_REQ에 먼저 매칭되는 오분류 수정
-        if any(kw in q_lower for kw in self._EN_GRADE_SEL_KW):
+        if any(kw in q_lower for kw in self._EN_GRADE_SEL_KW) and not is_alt_retake_q:
             intent = Intent.REGISTRATION
             requires_graph = entities.get("question_focus") == "period"
 
