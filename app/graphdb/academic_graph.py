@@ -3016,13 +3016,33 @@ class AcademicGraph:
                 if front in q_norm and back in q_norm:
                     matched.append((key_norm, val, orig_key))
 
+        # P9 (2026-04-18): 핵심 관계(포함한다/조건) 매칭 시 score 상향만.
+        # 이전 P7은 평균 가중치 곱으로 score 하락 가능성이 있어 회귀 발생 → 롤백.
+        # 이번에는 최소값 1.2 유지, 핵심 엣지 감지 시 +0.1 boost만 적용.
+        _CORE_RELATIONS = {"포함한다", "조건"}
+        has_core_edge = False
+
         # depth-1: 부모 → 직계 자식
         for succ in self.G.successors(parent_nid):
             _try_match(succ)
+            try:
+                rel1 = (self.G.edges.get((parent_nid, succ), {}) or {}).get("relation") \
+                    or (self.G.edges.get((parent_nid, succ), {}) or {}).get("type")
+                if rel1 in _CORE_RELATIONS:
+                    has_core_edge = True
+            except Exception:
+                pass
             # depth-2: 자식 → 손자 (연쇄 조건)
             if succ in self.G.nodes:
                 for grandchild in self.G.successors(succ):
                     _try_match(grandchild)
+                    try:
+                        rel2 = (self.G.edges.get((succ, grandchild), {}) or {}).get("relation") \
+                            or (self.G.edges.get((succ, grandchild), {}) or {}).get("type")
+                        if rel2 in _CORE_RELATIONS:
+                            has_core_edge = True
+                    except Exception:
+                        pass
 
         if not matched:
             return []
@@ -3031,8 +3051,9 @@ class AcademicGraph:
         for cname, val, key in matched:
             lines.append(f"- {key or cname}: {val}")
 
+        final_score = 1.2 + (0.1 if has_core_edge else 0.0)
         return [self._make_graph_result(
-            text="\n".join(lines), node_data=None, score=1.2,
+            text="\n".join(lines), node_data=None, score=final_score,
         )]
 
     def _query_sub_sections_via_edge(
