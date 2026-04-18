@@ -951,10 +951,13 @@ class AcademicGraph:
         학번 + 학생유형 기반 졸업요건 조회.
         major 지정 시: 전공별 노드 우선 조회 → 없으면 공통 노드 폴백
         """
+        # P8 (2026-04-17): int 입력 방어. student_id가 int로 들어오면
+        # len() 호출 시 TypeError 발생하던 버그 수정.
+        sid_str = str(student_id) if student_id is not None else ""
         group = (
-            get_student_group(student_id)
-            if len(student_id) == 4 and student_id.isdigit()
-            else student_id
+            get_student_group(sid_str)
+            if len(sid_str) == 4 and sid_str.isdigit()
+            else sid_str
         )
         # 전공별 노드 우선 조회
         if major:
@@ -1648,6 +1651,35 @@ class AcademicGraph:
                     )
                     results.append(
                         self._make_direct_result(context, answer, score=1.3, node_data=method)
+                    )
+                    return results
+
+        # P8 (2026-04-17): 학번 특정 졸업학점 direct_answer 승격.
+        # 조건: 4자리 학번 + 비교 아님 + "졸업" + "학점"/"요건" + 전공/인증 키워드 없음
+        # 목적: graph cohort 노드의 정확한 수치를 LLM 프롬프트 상단에 주입 → 환각 방지.
+        _sid_str = str(student_id) if student_id else ""
+        if (
+            _sid_str.isdigit()
+            and len(_sid_str) == 4
+            and not student_groups
+            and not entities.get("major_method")
+            and not entities.get("graduation_cert")
+            and not entities.get("department")
+            and "졸업" in question
+            and ("학점" in question or "요건" in question)
+        ):
+            try:
+                _grad = self.get_graduation_req(_sid_str, student_type or "내국인")
+            except Exception:
+                _grad = None
+            if _grad:
+                _total = _grad.get("졸업학점")
+                if _total:
+                    _label = self._group_label(get_student_group(_sid_str))
+                    _answer = f"{_label} {student_type or '내국인'} 학생의 졸업학점은 {_total}학점입니다."
+                    _ctx = self._fmt_graduation(_sid_str, student_type or "내국인", _grad)
+                    results.append(
+                        self._make_direct_result(_ctx, _answer, score=1.4, node_data=_grad)
                     )
                     return results
 
