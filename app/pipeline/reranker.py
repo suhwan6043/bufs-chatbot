@@ -118,28 +118,19 @@ class Reranker:
         # sc02 (장학금 12학점 vs 15학점) 해결. domestic과 guide의 bonus 차이(4%p)는
         # 단일 청크 경합 시 PDF 우선을 유도하되, guide에만 있는 URL/신청처 정보는
         # 여전히 top-K에 포함될 정도로 절제된 prior.
+        # 2026-04-18 수정: Tier 1 고정 부스트 제거 (사용자 지시).
+        # 이전: domestic +22%, guide +18% 고정 가산 — 질문 종류와 무관하게 일괄 적용되어
+        # 가이드북이 정답인 케이스에서도 학사안내 PDF가 우선되는 경직성 발생.
+        # 이제 Tier 1 청크는 BGE Cross-Encoder raw score만으로 경쟁한다.
+        # 보존: tier2_bonus(FAQ/pinned), url_*_bonus(asks_url 전용).
         _TIER1_DOMESTIC = "domestic"
         _TIER1_GUIDE = "guide"
         top_raw = max(raw_scores) if len(raw_scores) else 0.0
-        tier1_domestic_bonus = abs(top_raw) * 0.22 if top_raw != 0 else 0.0
-        tier1_guide_bonus = abs(top_raw) * 0.18 if top_raw != 0 else 0.0
-        tier2_bonus = abs(top_raw) * 0.05 if top_raw != 0 else 0.0  # 0.10 → 0.05
-        # Phase 2 Step B (2026-04-12): URL-aware boost (2단계).
-        # (1) Tier 1 청크에 URL이 있으면 소폭(+4%p) 추가 가산 — 같은 Tier 내 URL 우선.
-        # (2) Tier 3+ 청크에 URL이 있으면 Tier 1 guide 수준(+18%)으로 격상 —
-        #     notice_attachment(KOSAF 공지), scholarship 등이 domestic과 경쟁 가능하게 함.
-        # sc01: retrieval top-3에 KOSAF notice_attachment가 있으나 Tier 3이라 밀림 → 격상.
-        url_add_bonus = abs(top_raw) * 0.04 if top_raw != 0 else 0.0  # Tier 1 URL 추가
-        url_promotion_bonus = tier1_guide_bonus  # Tier 3+ URL 격상
+        tier2_bonus = abs(top_raw) * 0.05 if top_raw != 0 else 0.0
+        # URL-aware boost: Tier 1 청크에 URL이 있으면 +4%p, Tier 3+는 +18%로 격상.
+        url_add_bonus = abs(top_raw) * 0.04 if top_raw != 0 else 0.0
+        url_promotion_bonus = abs(top_raw) * 0.18 if top_raw != 0 else 0.0
         asks_url = bool(analysis and analysis.entities.get("asks_url"))
-
-        # Phase 3 Step 2 (2026-04-12): Tier 1 내 source_rank tiebreak.
-        # 동일 doc_type(대부분 domestic) 내에서 학사안내 PDF(rank=1)와
-        # 신입생 가이드북(rank=2)이 경합할 때, 학사안내를 우선하도록 소폭 가산.
-        # 사용자 지시: "상반되는 데이터가 있다면 2026-1학기 학사안내가 우선적용"
-        # 2%p는 Phase 2의 domestic/guide 차이(4%p)보다 작은 수준으로, 같은 질문에
-        # 학사안내가 top-1/2에 배치되되 가이드북이 top-3~5로 함께 포함되는 선.
-        source_rank_bonus = abs(top_raw) * 0.02 if top_raw != 0 else 0.0
 
         boosted_scored = []
         for raw, (_, r) in zip(raw_scores, valid):
@@ -147,21 +138,11 @@ class Reranker:
             dt = r.metadata.get("doc_type", "")
             is_tier1 = dt in (_TIER1_DOMESTIC, _TIER1_GUIDE)
             url_has = asks_url and bool(_URL_IN_CHUNK_PATTERN.search(r.text or ""))
-            rank = int(r.metadata.get("source_rank", 2) or 2)
 
-            if dt == _TIER1_DOMESTIC:
-                s += tier1_domestic_bonus
+            if is_tier1:
+                # Tier 1 고정 부스트 제거. URL 가산만 유지.
                 if url_has:
                     s += url_add_bonus
-                # Tier 1 domestic 내 source_rank=1(학사안내)에 소폭 가산
-                if rank == 1:
-                    s += source_rank_bonus
-            elif dt == _TIER1_GUIDE:
-                s += tier1_guide_bonus
-                if url_has:
-                    s += url_add_bonus
-                if rank == 1:
-                    s += source_rank_bonus
             elif dt == "faq":
                 s += tier2_bonus
             elif dt == "notice" and r.metadata.get("is_pinned"):
