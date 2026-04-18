@@ -699,13 +699,33 @@ class AcademicGraph:
         return node_id
 
     def _get_faq_idf(self) -> dict[str, float]:
-        """FAQ 코퍼스에서 IDF 가중치를 계산합니다 (캐시 사용).
+        """FAQ(및 통합 코퍼스) IDF 가중치를 반환합니다 (캐시 사용).
 
-        원칙 1(유연한 스키마): FAQ 노드가 변경되면 재계산.
-        원칙 2(비용·지연 최적화): 첫 호출 시 1회 계산 후 캐시.
+        작업 2-B (2026-04-18): data/idf_corpus.json (FAQ + 그래프 조건 + 벡터
+        청크 통합 IDF)이 있으면 우선 사용. 없으면 FAQ 전용 IDF로 fallback.
+
+        원칙 1: 인제스트 시 build_corpus_idf.py 실행으로 자동 갱신.
+        원칙 2: 첫 호출 시 1회 로드 후 캐시.
         """
         if self._faq_idf_cache is not None:
             return self._faq_idf_cache
+
+        # 통합 IDF 디스크 로드 (우선)
+        try:
+            from pathlib import Path
+            import json
+            idf_path = Path(__file__).resolve().parents[2] / "data" / "idf_corpus.json"
+            if idf_path.exists():
+                with idf_path.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+                idf = data.get("idf") or {}
+                if idf:
+                    self._faq_idf_cache = idf
+                    return self._faq_idf_cache
+        except Exception:
+            pass
+
+        # Fallback: FAQ 전용 IDF (구버전 동작)
         from app.pipeline.ko_tokenizer import compute_faq_idf
         faq_texts = []
         for nid in self._type_index.get("FAQ", []):
