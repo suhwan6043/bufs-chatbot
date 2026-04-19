@@ -135,13 +135,33 @@ class ChromaStore:
         try:
             results = self.collection.query(**kwargs)
         except Exception as e:
-            if where_filter and "Error finding id" in str(e):
-                logger.warning("ChromaDB 필터 쿼리 실패 (InternalError), 필터 없이 재시도: %s", e)
+            err_str = str(e)
+            # hnswlib "ef or M too small" — 필터 매칭이 적을 때 발생. 필터 없이 재시도.
+            if where_filter and (
+                "Error finding id" in err_str
+                or "ef or M is too small" in err_str
+                or "contigious" in err_str  # hnswlib 오타 포함
+            ):
+                logger.warning(
+                    "ChromaDB 필터 쿼리 실패, 필터 없이 재시도: %s", err_str[:120]
+                )
                 fallback_kwargs = {
                     "query_embeddings": [query_embedding],
                     "n_results": fetch_n,
                 }
-                results = self.collection.query(**fallback_kwargs)
+                try:
+                    results = self.collection.query(**fallback_kwargs)
+                except Exception as e2:
+                    # 필터 없이도 실패 → n_results 축소 재시도
+                    err2 = str(e2)
+                    if "ef or M is too small" in err2 or "contigious" in err2:
+                        logger.warning(
+                            "ChromaDB 재시도도 실패, n_results=3로 축소: %s", err2[:120]
+                        )
+                        fallback_kwargs["n_results"] = 3
+                        results = self.collection.query(**fallback_kwargs)
+                    else:
+                        raise
             else:
                 raise
 
