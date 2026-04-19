@@ -269,6 +269,17 @@ class ConversationConfig:
     # ── follow-up 감지 ──
     follow_up_max_words: int = int(os.getenv("CONV_FOLLOW_UP_MAX_WORDS", "5"))
 
+    # ── 단턴 쿼리 리라이팅 (recall@5 개선 실험) ──
+    single_turn_rewrite_enabled: bool = os.getenv(
+        "SINGLE_TURN_REWRITE_ENABLED", "false"
+    ).lower() == "true"
+    single_turn_rewrite_model: str = os.getenv(
+        "SINGLE_TURN_REWRITE_MODEL", os.getenv("CONV_REWRITE_MODEL", "gemma3:4b")
+    )
+    single_turn_rewrite_timeout_sec: float = float(
+        os.getenv("SINGLE_TURN_REWRITE_TIMEOUT_SEC", "0.8")
+    )
+
 
 @dataclass
 class Settings:

@@ -40,8 +40,18 @@ class ChromaStore:
         if self._collection is None:
             self._collection = self.client.get_or_create_collection(
                 name=settings.chroma.collection_name,
-                metadata={"hnsw:space": settings.chroma.distance_metric},
+                metadata={
+                    "hnsw:space": settings.chroma.distance_metric,
+                    # 필터 쿼리에서 hnswlib "ef too small" 에러 방지: ef_search 상향.
+                    "hnsw:search_ef": 100,
+                    "hnsw:construction_ef": 200,
+                },
             )
+            # 기존 컬렉션이면 metadata 업데이트 (collection 생성 후 search_ef modify)
+            try:
+                self._collection.modify(metadata={"hnsw:search_ef": 100})
+            except Exception:
+                pass
         return self._collection
 
     def add_chunks(self, chunks: List[Chunk]) -> None:

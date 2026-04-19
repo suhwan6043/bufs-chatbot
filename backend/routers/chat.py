@@ -415,6 +415,27 @@ async def chat_stream(
                     "follow-up[%s] rewrite: '%s' → '%s'",
                     follow_up_signal.reason, question[:60], search_query[:60],
                 )
+        elif (
+            not follow_up_signal.is_follow_up
+            and getattr(_conv_cfg, "single_turn_rewrite_enabled", False)
+        ):
+            # 단턴 쿼리 정규화 (recall@5 개선 실험). 실패 시 원본 유지.
+            from app.pipeline import single_turn_rewriter
+            _t_rw = time.monotonic()
+            try:
+                rewritten = await single_turn_rewriter.rewrite(
+                    question, lang=session_data.get("lang", "ko")
+                )
+                if rewritten:
+                    search_query = rewritten
+            except Exception as e:
+                logger.debug("single_turn_rewriter 실패, 원본 사용: %s", e)
+            _ms_rewrite = int((time.monotonic() - _t_rw) * 1000)
+            if search_query != question:
+                logger.info(
+                    "single-turn rewrite: '%s' → '%s'",
+                    question[:60], search_query[:60],
+                )
 
         # Stage 1: 질문 분석 (rewritten이 있으면 rewritten 기반으로 분석 → intent/entity 정확도↑)
         _t1 = time.monotonic()
