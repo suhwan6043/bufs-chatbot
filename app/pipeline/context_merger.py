@@ -104,7 +104,7 @@ _RRF_K = 10
 # 실측 분포 기준(q040/q057/q058):
 #   vector→graph 전환 지점에서 비율이 0.73→0.51로 급락 (gap 명확)
 # 정답 유지 문항(q042)은 상위 5개가 0.786 이상으로 이 cutoff를 통과.
-_ADAPTIVE_CUT_RATIO = 0.70
+_ADAPTIVE_CUT_RATIO = 0.65
 _ADAPTIVE_MIN_KEEP = 3
 
 # Phase 4 (2026-04-12): Intent별 adaptive cutoff 완화.
