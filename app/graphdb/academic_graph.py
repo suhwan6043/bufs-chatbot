@@ -2611,14 +2611,21 @@ class AcademicGraph:
         results: List[SearchResult] = []
         question_norm = self._normalize_text(question)
         q_lower = (question or "").lower()
+        # "신청" 단독은 절차·자격도 의미하므로 period 감지에서 제외 (e02/e05 회귀 방지).
+        # period는 명시적 시간 키워드 + 영문 "when"만 인정.
         is_period_q = (
             entities.get("question_focus") == "period"
-            or any(kw in question_norm for kw in ("기간", "언제", "일정", "마감", "신청"))
-            or any(kw in q_lower for kw in ("period", "when", "schedule", "apply", "application"))
+            or any(kw in question_norm for kw in ("기간", "언제", "일정", "마감", "며칠", "날짜"))
+            or any(kw in q_lower for kw in ("period", "when", "schedule"))
         )
+        # 자격·요건·학기수 질문 감지 → eligibility 노드 우선
+        is_eligibility_q = any(kw in question_norm for kw in (
+            "자격", "요건", "기준", "평점", "몇학기", "몇 학기", "학기등록", "학기를등록",
+            "등록한재학생", "등록재학생", "조건",
+        )) or any(kw in q_lower for kw in ("eligibility", "qualification", "requirement"))
 
         # ① 신청기간 (학사일정 노드 활용)
-        if is_period_q:
+        if is_period_q and not is_eligibility_q:
             matches = self._find_schedule_matches(question or "조기졸업신청기간언제")
             if not matches:
                 # trigger_map 미적중 시 인덱스 탐색
@@ -2660,12 +2667,13 @@ class AcademicGraph:
                     answer += f" 신청방법: {method}"
                 results.append(self._schedule_to_result(first, answer, score=1.3))
 
-        # ② 신청자격
+        # ② 신청자격 — 자격 질문이면 top score로 우선 반환
         if "early_grad_신청자격" in self.G.nodes:
             elig = dict(self.G.nodes["early_grad_신청자격"])
+            elig_score = 1.35 if is_eligibility_q else 1.15
             results.append(self._make_graph_result(
                 text=self._fmt_early_graduation_eligibility(elig),
-                node_data=elig, score=1.15,
+                node_data=elig, score=elig_score,
             ))
 
         # ③ 학번별 졸업기준
@@ -2760,6 +2768,12 @@ class AcademicGraph:
         """
         results: List[SearchResult] = []
         question_norm = self._normalize_text(question)
+
+        # 휴복학 교집합 질문(환불·OCU·수강료·수강정정) → 휴복학 direct answer 건너뜀.
+        # 휴학 키워드가 포착했지만 실질 질문이 환불·OCU·등록금이면 vector/graph 일반검색에 위임.
+        _BYPASS_KW = ("환불", "ocu", "수강료", "등록금", "수강정정")
+        if any(kw in question_norm for kw in _BYPASS_KW):
+            return results
 
         # 휴복학 "기간/언제" 질문 → 학사일정에서 휴/복학 신청 기간 탐색
         # "어떻게/방법/절차" 등 방법 질문은 제외 → 날짜가 아닌 절차를 원함
