@@ -854,7 +854,11 @@ class AnswerGenerator:
         history: 직전 대화 턴(user/assistant pair 리스트). 없으면 단일 턴 모드.
                  멀티턴 일관성 유지용이며, 검색용 재작성과는 별개.
         """
-        url = f"{self.base_url}/v1/chat/completions"
+        use_ollama_native = (settings.llm.api_type == "ollama")
+        if use_ollama_native:
+            url = f"{self.base_url}/api/chat"
+        else:
+            url = f"{self.base_url}/v1/chat/completions"
 
         if lang == "en":
             # KO 컨텍스트에서 학사 용어를 추출하여 Term Guide로 주입
@@ -894,28 +898,62 @@ class AnswerGenerator:
             messages.extend(trimmed)
         messages.append({"role": "user", "content": prompt})
 
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "stream": True,
-            "max_tokens": max_tokens,
-            "temperature": settings.llm.temperature,
-            "top_p": settings.llm.top_p,
-            "repeat_penalty": settings.llm.repeat_penalty,
-            # thinking 비활성화 (Ollama/LM Studio 공용)
-            "think": False,
-        }
+        if use_ollama_native:
+            # Ollama 네이티브 /api/chat 페이로드
+            # think:false가 실제로 동작 (OpenAI-compat /v1/chat/completions와 달리)
+            payload = {
+                "model": self.model,
+                "messages": messages,
+                "stream": True,
+                "think": False,
+                "options": {
+                    "num_predict": max_tokens,
+                    "temperature": settings.llm.temperature,
+                    "top_p": settings.llm.top_p,
+                    "repeat_penalty": settings.llm.repeat_penalty,
+                },
+            }
+        else:
+            payload = {
+                "model": self.model,
+                "messages": messages,
+                "stream": True,
+                "max_tokens": max_tokens,
+                "temperature": settings.llm.temperature,
+                "top_p": settings.llm.top_p,
+                "repeat_penalty": settings.llm.repeat_penalty,
+                "think": False,
+            }
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 async with client.stream("POST", url, json=payload) as response:
                     response.raise_for_status()
 
-                    if False:  # One-Pass 비활성화 — skip-translate로 전환
+                    if use_ollama_native:
+                        # Ollama 네이티브 스트림: 줄마다 {"message":{"content":"..."},"done":bool}
+                        content_started = False
+                        async for line in response.aiter_lines():
+                            if not line:
+                                continue
+                            try:
+                                data = json.loads(line)
+                            except json.JSONDecodeError:
+                                continue
+                            if data.get("done"):
+                                break
+                            token = data.get("message", {}).get("content", "")
+                            if not token:
+                                continue
+                            if not content_started:
+                                content_started = True
+                                yield "\x00CLEAR\x00"
+                            yield token
+                    elif False:  # One-Pass 비활성화 — skip-translate로 전환
                         async for chunk in self._stream_one_pass(response):
                             yield chunk
                     else:
-                        # KO 경로.
+                        # OpenAI-compat 경로.
                         # /no_think를 무시하고 "Thinking Process"를 content 필드에 그대로
                         # 흘려보내는 모델(tabby qwen-3.5-9B 등) 대응:
                         #  - 초반 256자 안에 thinking 마커 감지 시 "버퍼 모드"로 전환 →
@@ -1119,10 +1157,13 @@ class AnswerGenerator:
         return full
 
     async def health_check(self) -> bool:
-        """Ollama 서버 상태를 확인합니다."""
+        """LLM 서버 상태를 확인합니다."""
         try:
             async with httpx.AsyncClient(timeout=5) as client:
-                resp = await client.get(f"{self.base_url}/v1/models")
+                if settings.llm.api_type == "ollama":
+                    resp = await client.get(f"{self.base_url}/api/tags")
+                else:
+                    resp = await client.get(f"{self.base_url}/v1/models")
                 return resp.status_code == 200
         except Exception:
             return False

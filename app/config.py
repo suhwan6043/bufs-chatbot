@@ -39,6 +39,8 @@ class LLMConfig:
     timeout: int = int(_env_llm("LLM_TIMEOUT", "OLLAMA_TIMEOUT", "60"))
     response_cache_ttl_seconds: int = int(os.getenv("LLM_RESPONSE_CACHE_TTL", "3600"))
     response_cache_max_entries: int = int(os.getenv("LLM_RESPONSE_CACHE_MAX_SIZE", "256"))
+    # "ollama" → 네이티브 /api/chat (think:false 실제 동작), "openai" → /v1/chat/completions
+    api_type: str = os.getenv("LLM_API_TYPE", "openai")
 
 
 @dataclass
