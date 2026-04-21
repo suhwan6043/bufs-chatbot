@@ -214,9 +214,10 @@ class AnswerGenerator:
         intent: Optional[str] = None,
     ) -> int:
         base_max = settings.llm.max_tokens
-        # 2026-04-16: 기본 cap 256 → 384 상향. broad 질의(질문 분류 누락) 시
-        # 답변이 한 문장 끝나기 전 truncated되는 회귀 방지. (이전 256 ≈ 한국어 150자)
-        resolved = min(base_max, 384)
+        # thinking 모델(Ollama qwen3.5 등)은 reasoning에 수백~수천 토큰을 쓴 뒤
+        # content를 생성한다. 384 캡을 두면 thinking만 하다 잘린다.
+        # base_max(.env LLM_MAX_TOKENS) 전체를 기본값으로 사용.
+        resolved = base_max
 
         focus_caps = {
             "period": 224,
@@ -641,7 +642,7 @@ class AnswerGenerator:
                 continue
             delta = data["choices"][0].get("delta", {})
             # reasoning_content / thinking 필드 폐기 (Qwen3 / Ollama native)
-            if delta.get("reasoning_content") or delta.get("thinking"):
+            if delta.get("reasoning_content") or delta.get("thinking") or delta.get("reasoning"):
                 continue
             token = delta.get("content", "")
             if not token:
@@ -940,8 +941,8 @@ class AnswerGenerator:
                                 break
                             data = json.loads(data_str)
                             delta = data["choices"][0].get("delta", {})
-                            # thinking/reasoning 필드 → 폐기
-                            if delta.get("reasoning_content") or delta.get("thinking"):
+                            # thinking/reasoning 필드 → 폐기 (Ollama=reasoning, tabby=reasoning_content)
+                            if delta.get("reasoning_content") or delta.get("thinking") or delta.get("reasoning"):
                                 continue
                             token = delta.get("content", "")
                             if not token:
