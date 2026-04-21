@@ -38,6 +38,14 @@ _COMPARISON_EN = (" difference", " compare", " vs ", " versus ")
 _ELLIPTIC_KO = ("그럼", "그럼요", "그러면", "그리고", "또", "그런데", "근데")
 _ELLIPTIC_EN = ("then ", "and ", "but ", "also ")
 
+# ── 부정형 반문 (이전 턴 맥락에 의존하는 짧은 의문문) ──
+# 실사용자 증상 케이스: Turn1 "수강취소 ...?" → Turn2 "기간이 아닐때는 못해?"
+# 현재 질문에 주어가 있어도 이 키워드 + 짧은 질문이면 follow-up으로 격상.
+_NEGATION_SHORT_KO = (
+    "못해", "못 해", "못하", "안돼", "안 돼", "안되", "안 되",
+    "없나", "없어", "없을까", "불가", "안되나",
+)
+
 
 @dataclass(frozen=True)
 class FollowUpSignal:
@@ -129,6 +137,13 @@ def detect(
     )
     if elliptic and word_count <= max_words:
         return FollowUpSignal(True, True, f"elliptic_short:{elliptic}")
+
+    # 4.5) 부정형 반문 + 짧은 질문 → follow-up (주어 유무 무관)
+    # 예: "기간이 아닐때는 못해?" — 주어 "기간" 있지만 이전 턴 주제(수강취소)에 의존.
+    if word_count <= max_words * 2:
+        neg = _contains_any(q, _NEGATION_SHORT_KO)
+        if neg:
+            return FollowUpSignal(True, True, f"negation_short:{neg}")
 
     # 5) 주어 생략 + 매우 짧은 한국어 질문
     if word_count <= max_words and not _has_subject_ko(q) and re.search(r"[가-힣]", q):

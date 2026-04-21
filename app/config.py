@@ -262,6 +262,9 @@ class ConversationConfig:
     # ── query rewriting (검색 단계) ──
     rewrite_enabled: bool = os.getenv("CONV_REWRITE_ENABLED", "true").lower() == "true"
     rewrite_model: str = os.getenv("CONV_REWRITE_MODEL", "gemma3:4b")
+    # rewriter 전용 LLM 엔드포인트 — 빈 값이면 메인 LLM(settings.llm.base_url)로 폴백.
+    # 경량 모델(gemma3:4b)이 Ollama에만 있을 때 Ollama URL로 분리 가능.
+    rewrite_base_url: str = os.getenv("CONV_REWRITE_BASE_URL", "")
     rewrite_timeout_sec: float = float(os.getenv("CONV_REWRITE_TIMEOUT_SEC", "0.8"))
     rewrite_max_tokens: int = int(os.getenv("CONV_REWRITE_MAX_TOKENS", "80"))
     rewrite_max_input_turns: int = int(os.getenv("CONV_REWRITE_MAX_INPUT_TURNS", "2"))

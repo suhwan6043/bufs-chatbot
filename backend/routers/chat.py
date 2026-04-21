@@ -529,6 +529,16 @@ async def chat_stream(
 
         # direct_answer 단락 응답 (KO only)
         if merged.direct_answer and analysis.lang != "en":
+            # 멀티턴 컨텍스트 보존: direct_answer도 session history에 append.
+            messages = session_data.get("messages", [])
+            messages.append({"role": "user", "content": question})
+            messages.append({
+                "role": "assistant",
+                "content": merged.direct_answer,
+                "rated": False,
+                "rating": None,
+            })
+            session_store.update(sid, "messages", messages)
             yield {"event": "done", "data": json.dumps({
                 "answer": merged.direct_answer,
                 "source_urls": [{"title": u.get("title", ""), "url": u.get("url", "")} for u in (merged.source_urls or [])],
@@ -817,6 +827,12 @@ async def chat_sync(
         )
 
     if merged.direct_answer and analysis.lang != "en":
+        # 멀티턴 컨텍스트 보존: direct_answer도 세션 history에 저장해야
+        # 다음 턴 follow-up 감지·rewrite가 이전 주제를 참조할 수 있다.
+        messages = session_data.get("messages", [])
+        messages.append({"role": "user", "content": question})
+        messages.append({"role": "assistant", "content": merged.direct_answer, "rated": False, "rating": None})
+        session_store.update(sid, "messages", messages)
         _try_log(question, merged.direct_answer, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
         return ChatResponse(
             answer=merged.direct_answer,

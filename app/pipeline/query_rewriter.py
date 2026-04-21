@@ -197,7 +197,8 @@ async def llm_rewrite(
         system = _SYSTEM_PROMPT_KO
         user_body = f"[이전 대화]\n{history_text}\n\n[사용자의 마지막 질문]\n{query}\n\n[자립적으로 재작성된 질문]:"
 
-    url = f"{settings.llm.base_url}/v1/chat/completions"
+    base = conv_cfg.rewrite_base_url or settings.llm.base_url
+    url = f"{base}/v1/chat/completions"
     payload = {
         "model": conv_cfg.rewrite_model,
         "messages": [
