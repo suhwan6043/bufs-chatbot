@@ -14,8 +14,8 @@ services:
       - "8000:8000"
     env_file: ../.env
     environment:
-      # Docker 내부에서 호스트의 LLM 서버 접근 (LM Studio 기본)
-      - LLM_BASE_URL=http://host.docker.internal:1234
+      # LLM_BASE_URL은 .env에서 제어 (LM Studio local / tabby 원격 등).
+      # compose override 고정값을 두지 않음 — .env가 덮여쓸 수 있어야 함.
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost,http://localhost:80,http://localhost:3000,https://maruvis.co.kr}
       - QUERY_ROUTER_SEQUENTIAL=1
       - CHROMA_PERSIST_DIR=/app/data/chromadb_new
