@@ -74,6 +74,8 @@ The [Context] is written in Korean. You MUST read and understand it directly.
 # ── KO 시스템 프롬프트 (기존 유지) ──────────────────────────────────────────
 SYSTEM_PROMPT = """/no_think
 Respond with ONLY the final answer in Korean. No reasoning, no English.
+절대 'Thinking Process', 'Analyze', 'Reasoning', 분석 과정, 영어 해설, 내부 추론을 출력하지 마세요.
+오직 최종 한국어 답변 한 덩어리만 출력하세요. 답변이 아닌 모든 텍스트는 금지입니다.
 
 당신은 부산외국어대학교(BUFS) 학사 안내 AI입니다.
 
@@ -644,6 +646,15 @@ class AnswerGenerator:
             token = delta.get("content", "")
             if not token:
                 continue
+            # EOS 토큰 누출 방지
+            token = (
+                token
+                .replace("<|im_end|>", "")
+                .replace("<|endoftext|>", "")
+                .replace("<|end_of_turn|>", "")
+            )
+            if not token:
+                continue
 
             buffer += token
 
@@ -903,9 +914,24 @@ class AnswerGenerator:
                         async for chunk in self._stream_one_pass(response):
                             yield chunk
                     else:
-                        # KO 경로: think=True 이므로 thinking은 별도 필드로 분리됨.
-                        # reasoning_content / thinking 필드만 필터하고 content를 바로 출력.
+                        # KO 경로.
+                        # /no_think를 무시하고 "Thinking Process"를 content 필드에 그대로
+                        # 흘려보내는 모델(tabby qwen-3.5-9B 등) 대응:
+                        #  - 초반 256자 안에 thinking 마커 감지 시 "버퍼 모드"로 전환 →
+                        #    스트림 끝까지 누적 후 strip 로직 돌려 최종 답변만 한 번에 yield.
+                        #  - 마커 미감지 시 기존처럼 토큰 단위 실시간 스트리밍.
+                        _THINK_MARKERS = (
+                            "Thinking Process", "Analyze the Request",
+                            "Analyze the Context", "분석 과정", "생각 과정",
+                        )
+                        _BUF_PROBE = 256       # 초반 탐색 크기
+                        _END_MARKERS = (
+                            "Final Answer", "최종 답변", "**답변**", "답변:", "답변：",
+                        )
                         content_started = False
+                        probe_buf = ""
+                        buffered_mode = None   # None=미결정, True=버퍼, False=스트림
+                        full_buf = ""
                         async for line in response.aiter_lines():
                             if not line or not line.startswith("data: "):
                                 continue
@@ -918,11 +944,62 @@ class AnswerGenerator:
                             if delta.get("reasoning_content") or delta.get("thinking"):
                                 continue
                             token = delta.get("content", "")
-                            if token:
+                            if not token:
+                                continue
+                            # EOS 토큰 누출 방지 (tabby/exllama 일부 모델이 content에 삽입)
+                            token = (
+                                token
+                                .replace("<|im_end|>", "")
+                                .replace("<|endoftext|>", "")
+                                .replace("<|end_of_turn|>", "")
+                            )
+                            if not token:
+                                continue
+                            full_buf += token
+                            if buffered_mode is None:
+                                probe_buf += token
+                                if any(m in probe_buf for m in _THINK_MARKERS):
+                                    buffered_mode = True
+                                elif len(probe_buf) >= _BUF_PROBE:
+                                    buffered_mode = False
+                                    # 지금까지 누적을 한 번에 내보냄
+                                    if not content_started:
+                                        content_started = True
+                                        yield "\x00CLEAR\x00"
+                                    yield probe_buf
+                                    probe_buf = ""
+                                # 아직 결정 전: 아무것도 내보내지 않음
+                            elif buffered_mode is False:
                                 if not content_started:
                                     content_started = True
                                     yield "\x00CLEAR\x00"
                                 yield token
+                            # buffered_mode is True → full_buf만 누적, yield 없음
+
+                        # 스트림 종료 — 버퍼 모드면 최종 strip 후 한 번에 방출
+                        if buffered_mode is True:
+                            out = full_buf
+                            m = None
+                            for end_m in _END_MARKERS:
+                                idx = out.find(end_m)
+                                if idx >= 0:
+                                    m = idx + len(end_m)
+                                    break
+                            if m is not None:
+                                out = out[m:].lstrip(" :：\n")
+                            else:
+                                out = (
+                                    "죄송합니다. 답변을 생성하지 못했습니다.\n"
+                                    "학사지원팀(051-509-5182)에 문의하시기 바랍니다."
+                                )
+                            if not content_started:
+                                yield "\x00CLEAR\x00"
+                            yield out
+                        elif buffered_mode is None and probe_buf:
+                            # 짧은 답변(256자 미만)으로 종료 → probe_buf 방출
+                            if not content_started:
+                                yield "\x00CLEAR\x00"
+                            yield probe_buf
 
         except httpx.ConnectError:
             logger.error("Ollama 서버 연결 실패. Ollama를 실행해주세요.")
@@ -971,6 +1048,24 @@ class AnswerGenerator:
         else:
             # Fallback(CLEAR 없음): thinking 마커만 제거
             full = full.replace("\u23f3 _규정 원문 분석 중..._\n\n", "")
+
+        # tabby-served qwen 류가 /no_think를 무시하고 영문 추론 블록을 출력하는 경우
+        # 대응. "Thinking Process" / "Analyze the Request" / "Analyze the Context"가
+        # 응답에 섞여있으면 최종 답변 마커 뒤로 컷, 없으면 안전하게 refusal로 폴백.
+        import re as _re
+        if ("Thinking Process" in full
+                or "Analyze the Request" in full
+                or "Analyze the Context" in full):
+            m = _re.search(r"(?:Final Answer|최종 답변|\*\*답변\*\*|답변\s*[:：])\s*", full)
+            if m:
+                full = full[m.end():]
+            else:
+                # 마커 없음 → 본 모델이 사고 과정에 토큰 다 써서 유효 답변 없음.
+                # 환각·누출 방지 위해 안전 폴백.
+                full = (
+                    "죄송합니다. 답변을 생성하지 못했습니다.\n"
+                    "학사지원팀(051-509-5182)에 문의하시기 바랍니다."
+                )
 
         full = full.strip()
 
