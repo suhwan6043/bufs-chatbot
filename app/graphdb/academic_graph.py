@@ -699,13 +699,33 @@ class AcademicGraph:
         return node_id
 
     def _get_faq_idf(self) -> dict[str, float]:
-        """FAQ 코퍼스에서 IDF 가중치를 계산합니다 (캐시 사용).
+        """FAQ(및 통합 코퍼스) IDF 가중치를 반환합니다 (캐시 사용).
 
-        원칙 1(유연한 스키마): FAQ 노드가 변경되면 재계산.
-        원칙 2(비용·지연 최적화): 첫 호출 시 1회 계산 후 캐시.
+        작업 2-B (2026-04-18): data/idf_corpus.json (FAQ + 그래프 조건 + 벡터
+        청크 통합 IDF)이 있으면 우선 사용. 없으면 FAQ 전용 IDF로 fallback.
+
+        원칙 1: 인제스트 시 build_corpus_idf.py 실행으로 자동 갱신.
+        원칙 2: 첫 호출 시 1회 로드 후 캐시.
         """
         if self._faq_idf_cache is not None:
             return self._faq_idf_cache
+
+        # 통합 IDF 디스크 로드 (우선)
+        try:
+            from pathlib import Path
+            import json
+            idf_path = Path(__file__).resolve().parents[2] / "data" / "idf_corpus.json"
+            if idf_path.exists():
+                with idf_path.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+                idf = data.get("idf") or {}
+                if idf:
+                    self._faq_idf_cache = idf
+                    return self._faq_idf_cache
+        except Exception:
+            pass
+
+        # Fallback: FAQ 전용 IDF (구버전 동작)
         from app.pipeline.ko_tokenizer import compute_faq_idf
         faq_texts = []
         for nid in self._type_index.get("FAQ", []):
@@ -941,6 +961,36 @@ class AcademicGraph:
         if data:
             edge_data.update(data)
         self.G.add_edge(source, target, **edge_data)
+
+    def ensure_subhub(self, parent_nid: str, category: str) -> str:
+        """작업 3 (2026-04-18): fan-out 허브를 카테고리별 sub-hub로 분할.
+
+        parent_nid 아래에 category(조건 노드의 `원본키`) 기준 sub-hub 노드를
+        생성하거나 기존 것을 반환. 인제스트에서 `parent → cond` 직접 엣지를
+        `parent → subhub → cond`로 우회시킬 때 호출한다.
+
+        원칙 1(유연한 스키마): category는 데이터(원본키)에서 자동 유도 —
+        새 카테고리 추가 시 자동 sub-hub 생성.
+        원칙 4(하드코딩 금지): 카테고리 리스트 불필요.
+
+        Returns: sub-hub 노드 ID.
+        """
+        if not parent_nid or not category:
+            return parent_nid or ""
+        # ID 네임스페이스: subhub_{category}_{parent_nid}
+        # 특수문자 방어: parent_nid와 category는 이미 구조화돼 있으나 공백 제거.
+        safe_cat = str(category).strip().replace(" ", "_")
+        subhub_id = f"subhub_{safe_cat}_{parent_nid}"
+        if subhub_id not in self.G.nodes:
+            self.G.add_node(
+                subhub_id,
+                type="서브허브",
+                구분=safe_cat,
+                parent=parent_nid,
+            )
+            # parent → subhub: 카테고리 관계
+            self.G.add_edge(parent_nid, subhub_id, relation="카테고리")
+        return subhub_id
 
     # ── 조회 메서드 ───────────────────────────────────────────
 
@@ -2561,14 +2611,21 @@ class AcademicGraph:
         results: List[SearchResult] = []
         question_norm = self._normalize_text(question)
         q_lower = (question or "").lower()
+        # "신청" 단독은 절차·자격도 의미하므로 period 감지에서 제외 (e02/e05 회귀 방지).
+        # period는 명시적 시간 키워드 + 영문 "when"만 인정.
         is_period_q = (
             entities.get("question_focus") == "period"
-            or any(kw in question_norm for kw in ("기간", "언제", "일정", "마감", "신청"))
-            or any(kw in q_lower for kw in ("period", "when", "schedule", "apply", "application"))
+            or any(kw in question_norm for kw in ("기간", "언제", "일정", "마감", "며칠", "날짜"))
+            or any(kw in q_lower for kw in ("period", "when", "schedule"))
         )
+        # 자격·요건·학기수 질문 감지 → eligibility 노드 우선
+        is_eligibility_q = any(kw in question_norm for kw in (
+            "자격", "요건", "기준", "평점", "몇학기", "몇 학기", "학기등록", "학기를등록",
+            "등록한재학생", "등록재학생", "조건",
+        )) or any(kw in q_lower for kw in ("eligibility", "qualification", "requirement"))
 
         # ① 신청기간 (학사일정 노드 활용)
-        if is_period_q:
+        if is_period_q and not is_eligibility_q:
             matches = self._find_schedule_matches(question or "조기졸업신청기간언제")
             if not matches:
                 # trigger_map 미적중 시 인덱스 탐색
@@ -2610,12 +2667,13 @@ class AcademicGraph:
                     answer += f" 신청방법: {method}"
                 results.append(self._schedule_to_result(first, answer, score=1.3))
 
-        # ② 신청자격
+        # ② 신청자격 — 자격 질문이면 top score로 우선 반환
         if "early_grad_신청자격" in self.G.nodes:
             elig = dict(self.G.nodes["early_grad_신청자격"])
+            elig_score = 1.35 if is_eligibility_q else 1.15
             results.append(self._make_graph_result(
                 text=self._fmt_early_graduation_eligibility(elig),
-                node_data=elig, score=1.15,
+                node_data=elig, score=elig_score,
             ))
 
         # ③ 학번별 졸업기준
@@ -2710,6 +2768,12 @@ class AcademicGraph:
         """
         results: List[SearchResult] = []
         question_norm = self._normalize_text(question)
+
+        # 휴복학 교집합 질문(환불·OCU·수강료·수강정정) → 휴복학 direct answer 건너뜀.
+        # 휴학 키워드가 포착했지만 실질 질문이 환불·OCU·등록금이면 vector/graph 일반검색에 위임.
+        _BYPASS_KW = ("환불", "ocu", "수강료", "등록금", "수강정정")
+        if any(kw in question_norm for kw in _BYPASS_KW):
+            return results
 
         # 휴복학 "기간/언제" 질문 → 학사일정에서 휴/복학 신청 기간 탐색
         # "어떻게/방법/절차" 등 방법 질문은 제외 → 날짜가 아닌 절차를 원함

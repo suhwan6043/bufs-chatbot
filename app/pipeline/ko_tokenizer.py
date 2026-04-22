@@ -211,3 +211,44 @@ def compute_faq_idf(faq_texts: list[str]) -> dict[str, float]:
 
     # IDF = log(N / df) + 1.0 (smooth IDF, 최소 1.0 보장)
     return {token: log(doc_count / freq) + 1.0 for token, freq in df.items()}
+
+
+def compute_corpus_idf(
+    corpus_texts: list[str],
+    min_token_len: int = 2,
+    min_df: int = 2,
+) -> dict[str, float]:
+    """멀티-소스 통합 코퍼스(FAQ + 그래프 노드 + 벡터 청크)에서 IDF 계산.
+
+    작업 2-A (2026-04-18): FAQ 전용 IDF가 그래프·PDF 토큰 분포와 불일치하여
+    의미 교차검증(P13)이 회귀한 문제를 해결하기 위해 통합 IDF 도입.
+
+    원칙 1: 새 소스 추가 시 코퍼스에 포함만 하면 자동 재계산.
+    원칙 2: 인제스트 1회 실행 → 디스크에 영속화 (data/idf_corpus.json).
+    원칙 4: 가중치·임계치는 데이터 기반.
+
+    Args:
+        corpus_texts: 모든 소스 텍스트 리스트 (중복 무관, 문서 단위)
+        min_token_len: 최소 토큰 길이 (기본 2자)
+        min_df: 최소 문서 빈도 — 1회만 등장하는 희귀어는 노이즈로 간주 제외
+
+    Returns: {토큰: IDF 가중치}
+    """
+    from math import log
+
+    doc_count = max(len(corpus_texts), 1)
+    df: dict[str, int] = {}
+    for text in corpus_texts:
+        if not text:
+            continue
+        unique_tokens = set(stems(text))
+        for token in unique_tokens:
+            if len(token) >= min_token_len:
+                df[token] = df.get(token, 0) + 1
+
+    # min_df 필터로 극희귀어 제외 (오탈자·고유명사 불규칙 출현 방지)
+    return {
+        token: log(doc_count / freq) + 1.0
+        for token, freq in df.items()
+        if freq >= min_df
+    }

@@ -57,7 +57,7 @@ class RerankerConfig:
     device: str = os.getenv("RERANKER_DEVICE", "cpu")
     enabled: bool = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
     top_k: int = int(os.getenv("RERANKER_TOP_K", "10"))
-    candidate_k: int = int(os.getenv("RERANKER_CANDIDATE_K", "30"))
+    candidate_k: int = int(os.getenv("RERANKER_CANDIDATE_K", "50"))
 
 
 @dataclass
@@ -274,6 +274,65 @@ class ConversationConfig:
     # ── follow-up 감지 ──
     follow_up_max_words: int = int(os.getenv("CONV_FOLLOW_UP_MAX_WORDS", "5"))
 
+    # ── 단턴 쿼리 리라이팅 (recall@5 개선 실험) ──
+    single_turn_rewrite_enabled: bool = os.getenv(
+        "SINGLE_TURN_REWRITE_ENABLED", "false"
+    ).lower() == "true"
+    single_turn_rewrite_model: str = os.getenv(
+        "SINGLE_TURN_REWRITE_MODEL", os.getenv("CONV_REWRITE_MODEL", "gemma3:4b")
+    )
+    single_turn_rewrite_timeout_sec: float = float(
+        os.getenv("SINGLE_TURN_REWRITE_TIMEOUT_SEC", "0.8")
+    )
+
+
+@dataclass
+class ContextBudgetConfig:
+    """
+    적응형 컨텍스트 예산 설정.
+
+    원칙 1(유연한 스키마 진화): intent별 고정 dict 대신 결과 수 기반 공식으로 스케일.
+    원칙 2(비용·지연 최적화): 적게 찾히면 적게, 많이 찾히면 비례 확장.
+    원칙 4(하드코딩 금지): 모든 튜닝 상수 환경변수 오버라이드.
+
+    공식: budget(n) = min(base + max(0, min(n, baseline_k+max_extra) - baseline_k) * per_chunk_bonus,
+                          base × cap_ratio)
+    - n ≤ baseline_k: base 그대로 (현행 동작 유지)
+    - n > baseline_k: 청크당 per_chunk_bonus 토큰씩 추가
+    - 최대 base × cap_ratio로 상한
+
+    per_chunk_max도 n이 클수록 타이트하게 → 다양성 보장.
+    """
+    # ── 컴포넌트별 토글 (A/B 평가 · 환각 원인 격리용) ──
+    # 팀원 eval에서 확인된 regression(특히 오답 거부율 -23.1pp) 분석을 위해
+    # 3개 컴포넌트를 독립적으로 on/off 할 수 있도록 분리.
+    # 1) cluster_preserve: pre-RRF 동등권위 클러스터 보존 (볼륨 증가 없음)
+    # 2) adaptive_budget:  결과 수 기반 예산 확장
+    # 3) fair_share:       다양성 모드 per_chunk_max 타이트화 (truncation 증가)
+    # field(default_factory=): 인스턴스 생성 시점에 env 평가 (테스트/런타임 변경 가능)
+    cluster_preserve_enabled: bool = field(
+        default_factory=lambda: os.getenv("CTX_CLUSTER_PRESERVE", "true").lower() == "true"
+    )
+    adaptive_budget_enabled: bool = field(
+        default_factory=lambda: os.getenv("CTX_ADAPTIVE_BUDGET", "true").lower() == "true"
+    )
+    fair_share_enabled: bool = field(
+        default_factory=lambda: os.getenv("CTX_FAIR_SHARE", "true").lower() == "true"
+    )
+
+    # ── 예산 공식 파라미터 ──
+    # 결과 수가 이 이하일 땐 base 그대로 (3개까진 원래 설계 유지)
+    baseline_chunk_count: int = int(os.getenv("CTX_BASELINE_CHUNK_COUNT", "3"))
+    # 청크당 추가 토큰 (평균 청크 ~450자 × TOKENS_PER_CHAR 1.5 = 675 → 1/3 여유)
+    per_chunk_bonus: int = int(os.getenv("CTX_PER_CHUNK_BONUS", "225"))
+    # n-baseline의 최대 반영 수 (9개 이상은 cap에 걸리도록)
+    max_extra_chunks: int = int(os.getenv("CTX_MAX_EXTRA_CHUNKS", "8"))
+    # 상한 (base × cap_ratio)
+    cap_ratio: float = float(os.getenv("CTX_CAP_RATIO", "2.5"))
+    # 다양성 모드 트리거 임계 (n이 이 이상이면 per_chunk_max 타이트하게)
+    diversity_trigger_n: int = int(os.getenv("CTX_DIVERSITY_TRIGGER_N", "6"))
+    # 다양성 모드에서 단일 청크 최대 글자수 (budget 비례가 아닌 절대값)
+    diversity_chunk_cap: int = int(os.getenv("CTX_DIVERSITY_CHUNK_CAP", "500"))
 
 @dataclass
 class Settings:
@@ -291,6 +350,7 @@ class Settings:
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
     transcript_rules: TranscriptRulesConfig = field(default_factory=TranscriptRulesConfig)
     conversation: ConversationConfig = field(default_factory=ConversationConfig)
+    context_budget: ContextBudgetConfig = field(default_factory=ContextBudgetConfig)
 
 
 settings = Settings()

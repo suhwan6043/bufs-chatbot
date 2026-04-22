@@ -27,6 +27,7 @@ import logging
 import re
 from typing import List, Optional
 
+from app.config import settings
 from app.models import SearchResult, MergedContext, Intent, QuestionType
 from app.pipeline.answer_units import aligns as _answer_unit_aligns
 
@@ -103,7 +104,7 @@ _RRF_K = 10
 # 실측 분포 기준(q040/q057/q058):
 #   vector→graph 전환 지점에서 비율이 0.73→0.51로 급락 (gap 명확)
 # 정답 유지 문항(q042)은 상위 5개가 0.786 이상으로 이 cutoff를 통과.
-_ADAPTIVE_CUT_RATIO = 0.70
+_ADAPTIVE_CUT_RATIO = 0.65
 _ADAPTIVE_MIN_KEEP = 3
 
 # Phase 4 (2026-04-12): Intent별 adaptive cutoff 완화.
@@ -116,10 +117,35 @@ _INTENT_CUTOFF_RATIO: dict = {
 }
 
 
+def _detect_handler_cluster_size(
+    results: List[SearchResult],
+    equal_threshold: float = 0.95,
+) -> int:
+    """
+    Graph handler가 동일 권위로 방출한 결과 개수 추정 (pre-RRF).
+
+    Handler가 카테고리형 다중 노드를 방출할 때(예: 장학금 8유형), 각 노드에
+    동일한 score(보통 1.0)를 부여. 이를 "같은 클러스터"로 감지해 후속 cutoff가
+    rank 순서만으로 차별하지 못하게 하는 신호.
+
+    원칙 1(유연한 스키마): handler 구현을 바꾸지 않고 결과 스코어 분포로 자체 감지.
+    """
+    if not results:
+        return 0
+    top = max((getattr(r, "score", 0.0) or 0.0) for r in results)
+    if top <= 0:
+        return 0
+    return sum(
+        1 for r in results
+        if (getattr(r, "score", 0.0) or 0.0) >= top * equal_threshold
+    )
+
+
 def _adaptive_cutoff(
     results: List[SearchResult],
     ratio: float = _ADAPTIVE_CUT_RATIO,
     min_keep: int = _ADAPTIVE_MIN_KEEP,
+    cluster_preserve: int = 0,
 ) -> List[SearchResult]:
     """상위 점수 대비 일정 비율 미만 청크를 컷.
 
@@ -127,11 +153,14 @@ def _adaptive_cutoff(
     원칙 1(유연한 스키마): 하드 "페이지당 N개" 제한 대신 데이터 분포 기반.
 
     - min_keep개는 무조건 보존 (reranker와 동일 원칙)
+    - cluster_preserve: 사전 감지된 "동등 권위 클러스터" 크기. 이만큼은 ratio와
+      무관하게 보존 (카테고리형 다중 노드 방어).
     - 1등 점수가 0 이하이면 cutoff 비활성 (안전)
     - transcript 청크(score≈10.0)처럼 인위적으로 부스트된 결과는 ratio 기준에서
       제외: 첫 번째 "일반 RRF 점수" 청크를 기준으로 삼는다.
     """
-    if len(results) <= min_keep:
+    effective_min_keep = max(min_keep, cluster_preserve)
+    if len(results) <= effective_min_keep:
         return results
 
     # transcript 등 부스트된 선두 청크 건너뛰기 (score ≥ 1.0은 RRF 정상값보다 훨씬 큼)
@@ -151,12 +180,40 @@ def _adaptive_cutoff(
         return results
 
     # min_keep은 ref_idx 이후 기준으로 보장
-    effective_min = max(min_keep, ref_idx + min_keep)
+    effective_min = max(effective_min_keep, ref_idx + effective_min_keep)
     for i in range(effective_min, len(results)):
         s = getattr(results[i], "score", 0.0) or 0.0
         if (s / ref_score) < ratio:
             return results[:i]
     return results
+
+
+def _adaptive_budget(base_budget: int, n_relevant: int) -> int:
+    """
+    결과 수 기반 적응형 컨텍스트 예산 공식.
+
+    원칙 1(유연한 스키마): intent별 고정값 대신 데이터(retrieved count)에 스케일.
+    원칙 2(비용·지연): 적게 찾히면 적게, 많이 찾히면 비례 확장.
+
+    공식:
+      n ≤ baseline_k:   budget = base
+      n > baseline_k:   budget = base + min(n - baseline_k, max_extra) × per_chunk_bonus
+      상한:             budget ≤ base × cap_ratio
+
+    예 (base=1200, baseline=3, bonus=225, max_extra=8, cap=2.5):
+      n=3 → 1200
+      n=5 → 1650
+      n=8 → 2325
+      n=10 → 2775
+      n=15 → 3000 (cap에 걸림)
+    """
+    cfg = settings.context_budget
+    baseline = cfg.baseline_chunk_count
+    if n_relevant <= baseline:
+        return base_budget
+    extra = min(n_relevant - baseline, cfg.max_extra_chunks)
+    expanded = base_budget + extra * cfg.per_chunk_bonus
+    return min(expanded, int(base_budget * cfg.cap_ratio))
 
 
 def _rrf_merge(
@@ -267,6 +324,18 @@ class ContextMerger:
         _pre_rrf_vector_top = max((r.score for r in vector_results), default=0.0)
         _pre_rrf_graph_top = max((r.score for r in graph_results), default=0.0)
 
+        # 원칙 1: Handler가 방출한 "동등 권위 클러스터" 감지 (pre-RRF).
+        # 예: 장학금 handler가 8가지 유형에 모두 score=1.0 부여 → 이후 RRF/cutoff가
+        # rank만으로 차별하지 못하게 cluster_preserve 힌트로 전달.
+        # 토글: CTX_CLUSTER_PRESERVE=false 시 비활성 (기존 cutoff만)
+        if settings.context_budget.cluster_preserve_enabled:
+            _handler_cluster = max(
+                _detect_handler_cluster_size(graph_results),
+                _detect_handler_cluster_size(vector_results),
+            )
+        else:
+            _handler_cluster = 0
+
         # RRF로 그래프·벡터 결과 병합 (rank 기반, 인텐트별 가중치 적용)
         all_results = _rrf_merge(graph_results, vector_results, gw, vw)
         _pre_cutoff_count = len(all_results)
@@ -274,8 +343,13 @@ class ContextMerger:
         # Adaptive Score-Gap Thresholding — 1등 대비 ratio 미만은 노이즈로 컷
         # (medium 실패 진단: q040/q057/q058은 vector→graph 전환점에서 급락)
         # Phase 4: intent별 완화 비율 적용 (EARLY_GRADUATION/MAJOR_CHANGE → 0.60)
+        # Handler cluster: 같은 권위의 다중 카테고리 노드는 cutoff 무시하고 보존
         _cutoff_ratio = _INTENT_CUTOFF_RATIO.get(intent, _ADAPTIVE_CUT_RATIO)
-        all_results = _adaptive_cutoff(all_results, ratio=_cutoff_ratio)
+        all_results = _adaptive_cutoff(
+            all_results,
+            ratio=_cutoff_ratio,
+            cluster_preserve=_handler_cluster,
+        )
         _post_cutoff_count = len(all_results)
 
         # ── P0: 출처 매칭 부스트 (하이브리드 RAG 상호 검증) ─────────────
@@ -381,6 +455,20 @@ class ContextMerger:
                 intent, len(_hits), len(all_results),
             )
 
+        # 원칙 1+2: 적응형 예산 — cutoff 통과 청크 수 기반으로 base 예산 스케일.
+        # 다중 카테고리 질문(예: "장학금 있어?" → 8가지 유형)에서 base(=1200)로는
+        # 2개 청크밖에 못 담던 문제(진단: merged.graph_results 10→2)를 해결.
+        # _post_cutoff_count는 adaptive_cutoff가 이미 노이즈를 제거한 신뢰 가능한 신호.
+        # 토글: CTX_ADAPTIVE_BUDGET=false 시 base 그대로 (기존 동작)
+        if settings.context_budget.adaptive_budget_enabled:
+            adapted_budget = _adaptive_budget(budget, _post_cutoff_count)
+            if adapted_budget != budget:
+                logger.debug(
+                    "context budget adapted: %d → %d (n_post_cutoff=%d, intent=%s)",
+                    budget, adapted_budget, _post_cutoff_count, intent,
+                )
+                budget = adapted_budget
+
         # 토큰 제한 내에서 컨텍스트 구성
         context_parts = []
         total_chars = 0
@@ -425,7 +513,28 @@ class ContextMerger:
         # 단일 청크가 예산을 독점하지 못하도록 상한 설정.
         # 상위 Rank 결과가 예산을 전부 먹어서 Rank 3~5의 정답 청크가
         # 들어가지 못하는 CAT_B/CAT_C 실패 패턴 방어.
-        per_chunk_max = int(max_chars * 0.6)
+        #
+        # 다양성 모드: post-cutoff 결과가 diversity_trigger_n 이상이면
+        # per_chunk_max를 fair-share 기반으로 설정 → 모든 청크가 공평한 공간 확보.
+        # 예) n=8, max_chars=1550 → fair_share=193, per_chunk_max=293 (여유 100).
+        # 장학금 8가지 유형 같은 multi-category 질문에서 6-7개 청크를 수용 가능.
+        #
+        # 토글: CTX_FAIR_SHARE=false 시 기존 0.6×max_chars 사용 (truncation 감소 → 환각↓ 예상)
+        # 팀원 eval regression(오답 거부율 -23.1pp) 주범 의심 → 독립 토글 가능
+        cfg_cb = settings.context_budget
+        base_per_chunk_max = int(max_chars * 0.6)
+        if (
+            cfg_cb.fair_share_enabled
+            and _post_cutoff_count >= cfg_cb.diversity_trigger_n
+        ):
+            fair_share = max_chars // _post_cutoff_count
+            # fair_share + 여유 100자, 최소 250, 최대 diversity_chunk_cap
+            per_chunk_max = min(
+                cfg_cb.diversity_chunk_cap,
+                max(fair_share + 100, 250),
+            )
+        else:
+            per_chunk_max = base_per_chunk_max
 
         # 중복 청크 감지용 — 같은 PDF가 여러 소스 파일로 인제스트된 경우
         # (예: "2026학년도1학기학사안내.pdf" + "2026학년도 1학기 학사 안내_0123.pdf")

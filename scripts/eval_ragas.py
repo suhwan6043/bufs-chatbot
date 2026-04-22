@@ -475,7 +475,7 @@ async def evaluate_dataset(
             item = pr["item"]
             pipe = pr["pipe"]
             q = item["question"]
-            reference = item.get("answer", "")
+            reference = item.get("ground_truth") or item.get("answer", "")
 
             if pr["skipped"]:
                 results.append({**item, "skipped": True})

@@ -40,8 +40,18 @@ class ChromaStore:
         if self._collection is None:
             self._collection = self.client.get_or_create_collection(
                 name=settings.chroma.collection_name,
-                metadata={"hnsw:space": settings.chroma.distance_metric},
+                metadata={
+                    "hnsw:space": settings.chroma.distance_metric,
+                    # 필터 쿼리에서 hnswlib "ef too small" 에러 방지: ef_search 상향.
+                    "hnsw:search_ef": 100,
+                    "hnsw:construction_ef": 200,
+                },
             )
+            # 기존 컬렉션이면 metadata 업데이트 (collection 생성 후 search_ef modify)
+            try:
+                self._collection.modify(metadata={"hnsw:search_ef": 100})
+            except Exception:
+                pass
         return self._collection
 
     def add_chunks(self, chunks: List[Chunk]) -> None:
@@ -125,13 +135,33 @@ class ChromaStore:
         try:
             results = self.collection.query(**kwargs)
         except Exception as e:
-            if where_filter and "Error finding id" in str(e):
-                logger.warning("ChromaDB 필터 쿼리 실패 (InternalError), 필터 없이 재시도: %s", e)
+            err_str = str(e)
+            # hnswlib "ef or M too small" — 필터 매칭이 적을 때 발생. 필터 없이 재시도.
+            if where_filter and (
+                "Error finding id" in err_str
+                or "ef or M is too small" in err_str
+                or "contigious" in err_str  # hnswlib 오타 포함
+            ):
+                logger.warning(
+                    "ChromaDB 필터 쿼리 실패, 필터 없이 재시도: %s", err_str[:120]
+                )
                 fallback_kwargs = {
                     "query_embeddings": [query_embedding],
                     "n_results": fetch_n,
                 }
-                results = self.collection.query(**fallback_kwargs)
+                try:
+                    results = self.collection.query(**fallback_kwargs)
+                except Exception as e2:
+                    # 필터 없이도 실패 → n_results 축소 재시도
+                    err2 = str(e2)
+                    if "ef or M is too small" in err2 or "contigious" in err2:
+                        logger.warning(
+                            "ChromaDB 재시도도 실패, n_results=3로 축소: %s", err2[:120]
+                        )
+                        fallback_kwargs["n_results"] = 3
+                        results = self.collection.query(**fallback_kwargs)
+                    else:
+                        raise
             else:
                 raise
 
