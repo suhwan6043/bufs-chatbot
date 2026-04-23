@@ -106,18 +106,44 @@ def pdf_stats(path: Path) -> dict:
     return {"exists": True, "count": len(files), "total_size": sum(files.values()), "files": files}
 
 
+def dir_summary(path: Path, pattern: str = "*") -> dict:
+    """임의 디렉터리의 파일 수·총 크기·상위 파일 리스트."""
+    if not path.exists():
+        return {"exists": False}
+    files = sorted(p for p in path.rglob(pattern) if p.is_file())
+    total = sum(p.stat().st_size for p in files)
+    return {
+        "exists": True,
+        "count": len(files),
+        "total_size": total,
+        "top_files": {p.relative_to(path).as_posix(): p.stat().st_size for p in files[:10]},
+    }
+
+
 def main():
     report = {
-        "chromadb": chromadb_stats(DATA / "chromadb"),
+        # ChromaDB — 레거시 + 현재 운영(chromadb_new)
+        "chromadb_legacy": chromadb_stats(DATA / "chromadb"),
+        "chromadb_new": chromadb_stats(DATA / "chromadb_new"),
         "graph": graph_stats(DATA / "graphs"),
         "crawl_meta": crawl_meta_stats(DATA / "crawl_meta"),
+        # 정적 리소스
         "faq_academic": file_fingerprint(DATA / "faq_academic.json"),
         "faq_combined": file_fingerprint(DATA / "faq_combined.json"),
+        "faq_admin": file_fingerprint(DATA / "faq_admin.json"),
         "scholarships": file_fingerprint(DATA / "scholarships.json"),
         "early_graduation": file_fingerprint(DATA / "early_graduation.json"),
+        "schema_discovered_fields": file_fingerprint(DATA / "schema_discovered_fields.json"),
+        # 파일 기반 컬렉션
         "pdfs_root": pdf_stats(DATA / "pdfs"),
         "pdfs_crawled": pdf_stats(DATA / "pdfs" / "crawled"),
         "portal": pdf_stats(DATA / "portal"),
+        "attachments": dir_summary(DATA / "attachments"),
+        "extracted": dir_summary(DATA / "extracted"),
+        "contacts": dir_summary(DATA / "contacts"),
+        "feedback": dir_summary(DATA / "feedback"),
+        "eval": dir_summary(DATA / "eval"),
+        "eval_multilingual": dir_summary(DATA / "eval_multilingual"),
     }
     print(json.dumps(report, indent=2, ensure_ascii=False))
 
