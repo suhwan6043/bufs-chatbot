@@ -967,3 +967,58 @@ terms:
     en: Tuition Refund
     aliases_ko: [등록금 반환, 수업료환불, 수업료 반환기준]
     aliases_en: [tuition refund policy, refund policy, fee refund schedule, tuition reimbursement]
+
+  # ════════════════════════════════════════════════════════════
+  # 출결·수업 (P1-2 추가 2026-04-23)
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 출석
+    en: Attendance
+    aliases_ko: [출결, 출석률, 출석 점수]
+    aliases_en: [attendance, class attendance, attendance rate, attendance score, attending class]
+
+  # ════════════════════════════════════════════════════════════
+  # 성적·학점 (P1-2 추가)
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 성적표
+    en: Academic Transcript
+    aliases_ko: [성적증명서, 성적조회, 학업성적]
+    aliases_en: [transcript, academic transcript, academic report, grade report, grade transcript, official transcript]
+
+  - ko: 학점포기
+    en: Credit Abandonment
+    aliases_ko: [부분 성적포기, 성적포기, 학점 포기]
+    aliases_en: [credit abandonment, credit forfeiture, partial credit waiver, grade waiver]
+
+  # ════════════════════════════════════════════════════════════
+  # 복·휴학 (P1-2 추가)
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 복학신청
+    en: Readmission Application
+    aliases_ko: [복학 신청, 복학 절차, 복학원]
+    aliases_en: [readmission application, re-enrollment application, return-to-study application, return-to-school application, readmission process]
+
+  # ════════════════════════════════════════════════════════════
+  # 등록·수업연한 (P1-2 추가)
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 분할납부
+    en: Installment Payment
+    aliases_ko: [등록금 분할납부, 학비 분할, 분납]
+    aliases_en: [installment payment, tuition installment, split payment, partial payment, installment plan, payment in installments]
+
+  - ko: 수업연한초과자
+    en: Student with Extended Study Period
+    aliases_ko: [9학기 이상, 초과학기자, 수업연한 초과]
+    aliases_en: [extended study period, overtime student, student exceeding normal study period, ninth semester or later, extended enrollment]
+
+  # ════════════════════════════════════════════════════════════
+  # 대체 이수 (P1-2 추가)
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 대체이수
+    en: Substitute Credit
+    aliases_ko: [대체 과목 이수, 대체 수강, 대체이수 과목]
+    aliases_en: [substitute credit, alternative credit, replacement course, substitute course completion]
