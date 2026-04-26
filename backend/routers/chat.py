@@ -102,6 +102,87 @@ def _get_contact_footer(intent, entities: dict, question: str) -> str:
     return ""
 
 
+# ── Clarification 게이트 헬퍼 ────────────────────────────────────────────────
+# 필수 정보(학번/학과/유형/성적표) 누락 시 되묻기 처리. 팀원 작성 프로필 주입 블록
+# 뒤에 실행되어, 프로필이 여전히 부족하면 short-circuit. 1회 제한(세션당 필드당).
+def _handle_clarification_reply(
+    session_data: dict, question: str, lang: str,
+) -> tuple[str, bool]:
+    """
+    이전 턴이 clarification이었으면 현 턴 응답에서 필드 추출 → 프로필 업데이트.
+
+    Returns:
+        (effective_question, profile_updated)
+        - effective_question: 원질문 재실행 대상이면 그 값, 아니면 원 question
+        - profile_updated: 프로필 변경됐는지
+    """
+    from app.pipeline import clarification as _clr
+    if not _clr.ENABLED:
+        return question, False
+    pending = session_data.get("pending_clarification") or {}
+    if not pending:
+        return question, False
+    last_asked = pending.get("fields") or []
+    if not last_asked:
+        return question, False
+    extracted = _clr.detect_clarification_reply(question, last_asked, lang=lang)
+    if not extracted:
+        # 응답 아님 — pending 해제 (무한 대기 방지)
+        session_data.pop("pending_clarification", None)
+        return question, False
+    # 프로필 병합
+    profile = dict(session_data.get("user_profile") or {})
+    for k, v in extracted.items():
+        if k in ("student_id", "department", "student_type") and v:
+            profile[k] = v
+    session_data["user_profile"] = profile
+    # 원질문 복원
+    original_q = pending.get("original_question")
+    session_data.pop("pending_clarification", None)
+    if original_q:
+        logger.info("clarification reply 적용: extracted=%s → 원질문 재실행", extracted)
+        return original_q, True
+    return question, True
+
+
+def _check_clarification_gate(
+    analysis, session_data: dict, question: str, lang: str,
+    transcript_present: bool,
+) -> tuple[Optional[str], list[str]]:
+    """
+    누락 필수 필드 확인 + clarification 메시지 구성.
+
+    Returns:
+        (clarification_message_or_None, already_asked_fields)
+        - clarification_message: short-circuit으로 반환할 텍스트 (None이면 통과)
+        - already_asked_fields: soft 경고 주입 대상 필드 (clarification_message와 배타)
+    """
+    from app.pipeline import clarification as _clr
+    if not _clr.ENABLED:
+        return None, []
+    profile = session_data.get("user_profile") or {}
+    log = session_data.get("clarification_log") or {}
+    missing = _clr.check_required_fields(
+        analysis, profile, log, transcript_present=transcript_present,
+    )
+    if missing:
+        # short-circuit 준비 — 로그 갱신 + pending 저장
+        new_log = _clr.update_log(log, missing)
+        session_data["clarification_log"] = new_log
+        session_data["pending_clarification"] = {
+            "fields": missing,
+            "original_question": question,
+        }
+        msg = _clr.build_clarification_message(analysis.intent, lang, missing)
+        return msg, []
+    # 통과 — soft 경고 대상 확인
+    already = _clr.get_already_asked_missing(
+        analysis, profile, log, transcript_present=transcript_present,
+    )
+    return None, already
+
+
+
 def _enrich_analysis(question: str, analysis, router_inst, session_data: dict,
                       user_id: Optional[int] = None):
     """
@@ -360,6 +441,14 @@ async def chat_stream(
         # JWT 토큰이 있으면 user_id 추출 (비로그인은 None — 개인 DB 저장 스킵)
         user_id = _resolve_user_id(access_token)
 
+        # [Clarification] 이전 턴이 되묻기였으면 응답에서 필드 추출 → 원질문 재실행
+        _current_lang = session_data.get("lang", "ko")
+        effective_question, _profile_updated = _handle_clarification_reply(
+            session_data, question, _current_lang,
+        )
+        # 하류 파이프라인은 effective_question 기준으로 동작 (재실행 시 원질문 사용)
+        question = effective_question
+
         # 연락처 단락 처리
         contact_answer = _format_contact_answer(question)
         if contact_answer:
@@ -426,6 +515,22 @@ async def chat_stream(
             search_query, analysis, router_inst, session_data, user_id=user_id
         )
         _ms_analyze = int((time.monotonic() - _t1) * 1000)
+
+        # [Clarification] 필수 필드 누락 시 short-circuit, 또는 soft 경고 플래그
+        _transcript_present = transcript_context is not None and bool(transcript_context.strip() if transcript_context else False)
+        _clarify_msg, _soft_warn_fields = _check_clarification_gate(
+            analysis, session_data, question, lang, _transcript_present,
+        )
+        if _clarify_msg:
+            _try_log_simple(question, _clarify_msg, sid, "CLARIFICATION", _t0, user_id=user_id)
+            yield {"event": "done", "data": json.dumps({
+                "answer": _clarify_msg,
+                "source_urls": [],
+                "results": [],
+                "intent": "CLARIFICATION",
+                "duration_ms": int((time.monotonic() - _t0) * 1000),
+            }, ensure_ascii=False)}
+            return
 
         # Stage 2: 검색 (glossary 정규화된 쿼리 사용 — 학식→학생식당 등)
         # search_query는 이미 follow-up rewrite를 거친 상태 → 그 위에 glossary 레이어 적용
@@ -582,6 +687,18 @@ async def chat_stream(
         # Stage 5: LLM 스트리밍 생성
         _t5 = time.monotonic()
         full_answer = ""
+        # [Clarification] soft 경고 문구 준비 — LLM 스트림 맨 앞에 주입
+        _soft_warn_text = ""
+        if _soft_warn_fields:
+            from app.pipeline import clarification as _clr
+            _soft_warn_text = _clr.build_soft_warning(_soft_warn_fields, analysis.lang or "ko")
+        _soft_warn_emitted = False
+        # KO 경로: CLEAR 없음 → 즉시 warning 토큰 yield
+        if _soft_warn_text and analysis.lang != "en":
+            _pref = _soft_warn_text + "\n\n"
+            full_answer += _pref
+            yield {"event": "token", "data": json.dumps({"token": _pref}, ensure_ascii=False)}
+            _soft_warn_emitted = True
         try:
             async for token in generator.generate(
                 question=search_query,
@@ -600,6 +717,12 @@ async def chat_stream(
                 if token == "\x00CLEAR\x00":
                     full_answer = ""
                     yield {"event": "clear", "data": "{}"}
+                    # EN 경로: CLEAR 직후 warning 주입 (한 번만)
+                    if _soft_warn_text and not _soft_warn_emitted:
+                        _pref = _soft_warn_text + "\n\n"
+                        full_answer += _pref
+                        yield {"event": "token", "data": json.dumps({"token": _pref}, ensure_ascii=False)}
+                        _soft_warn_emitted = True
                     continue
                 full_answer += token
                 yield {"event": "token", "data": json.dumps(
@@ -752,6 +875,13 @@ async def chat_sync(
     sid, session_data = session_store.get_or_create(session_id)
     user_id = _resolve_user_id(access_token)
 
+    # [Clarification] 이전 턴이 되묻기였으면 응답에서 필드 추출 → 원질문 재실행
+    _current_lang = session_data.get("lang", "ko")
+    effective_question, _profile_updated = _handle_clarification_reply(
+        session_data, question, _current_lang,
+    )
+    question = effective_question
+
     # 연락처 단락
     contact = _format_contact_answer(question)
     if contact:
@@ -791,6 +921,19 @@ async def chat_sync(
     analysis, transcript_context, student_context = _enrich_analysis(
         search_query, analysis, router_inst, session_data, user_id=user_id
     )
+
+    # [Clarification] 필수 필드 누락 시 short-circuit
+    _transcript_present_sync = transcript_context is not None and bool(transcript_context.strip() if transcript_context else False)
+    _clarify_msg_sync, _soft_warn_fields_sync = _check_clarification_gate(
+        analysis, session_data, question, lang, _transcript_present_sync,
+    )
+    if _clarify_msg_sync:
+        _try_log_simple(question, _clarify_msg_sync, sid, "CLARIFICATION", _t0, user_id=user_id)
+        return ChatResponse(
+            answer=_clarify_msg_sync,
+            intent="CLARIFICATION",
+            duration_ms=int((time.monotonic() - _t0) * 1000),
+        )
 
     # glossary 정규화된 쿼리 우선. follow-up rewrite된 search_query 위에 glossary 레이어.
     _search_query = analysis.normalized_query or search_query
@@ -891,6 +1034,13 @@ async def chat_sync(
         else:
             full_answer = "죄송합니다. 응답을 생성하지 못했습니다. 다시 시도해 주세요."
         logger.warning("LLM 빈 응답 (sync): question='%s'", question[:50])
+
+    # [Clarification] soft 경고 prepend (이미 물었던 필드 누락 유지 케이스)
+    if _soft_warn_fields_sync:
+        from app.pipeline import clarification as _clr
+        _warn = _clr.build_soft_warning(_soft_warn_fields_sync, analysis.lang or "ko")
+        if _warn:
+            full_answer = _warn + "\n\n" + full_answer
 
     # ~ 이스케이프 (마크다운 취소선 방지)
     full_answer = re.sub(r'(?<!~)~(?!~)', r'\~', full_answer)

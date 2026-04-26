@@ -38,6 +38,7 @@ import collections
 import io
 import json
 import logging
+import os
 import re
 import sys
 import time
@@ -840,6 +841,11 @@ async def run(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    # 평가 중에는 Clarification 게이트(되묻기)를 비활성화한다.
+    # ground_truth가 학번·학과 명시된 완결 답변 전제라, clarification 메시지가 오면
+    # F1·Recall이 인위적으로 낮게 찍힌다. 평가용 환경변수로 off.
+    os.environ.setdefault("CLARIFICATION_ENABLED", "false")
+
     parser = argparse.ArgumentParser(description="다국어 RAG 평가")
     parser.add_argument(
         "--lang", choices=["ko", "en"], default=None,
