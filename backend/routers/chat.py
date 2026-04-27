@@ -14,6 +14,7 @@ from typing import AsyncGenerator, Optional
 from fastapi import APIRouter, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
+from app.config import settings
 from backend.dependencies import (
     get_analyzer,
     get_chat_logger,
@@ -296,7 +297,28 @@ def _build_generation_cache_kwargs(
     analysis,
     student_context: str,
     history: list[dict] | None = None,
+    is_follow_up: bool = False,
 ) -> dict:
+    """
+    2026-04-22 (플랜 wild-splashing-volcano Phase C.4):
+    `share_across_sessions` 를 여기서 결정한다.
+
+    규칙:
+      - follow-up 질문이 아니고
+      - 로그인 사용자의 개인 컨텍스트가 없으며 (student_context 빈 문자열)
+      - 학번 특수화가 없는 경우
+      → 세션 간 cache hit 허용.
+
+    그 외(멀티턴 대화 · 개인화 답변)는 기존 동작 유지 — 세션별 키 격리.
+    """
+    has_personal_context = bool((student_context or "").strip())
+    has_student_id = bool((analysis.student_id or "").strip())
+    share_across_sessions = (
+        not is_follow_up
+        and not has_personal_context
+        and not has_student_id
+    )
+
     return {
         "question": question,
         "context": merged.formatted_context,
@@ -310,6 +332,7 @@ def _build_generation_cache_kwargs(
         "intent": analysis.intent.value if analysis.intent else None,
         "entities": analysis.entities,
         "history": history,
+        "share_across_sessions": share_across_sessions,
     }
 
 
@@ -527,8 +550,14 @@ async def chat_stream(
             _try_log(question, msg, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
             return
 
-        # direct_answer 단락 응답 (KO only)
-        if merged.direct_answer and analysis.lang != "en":
+        # M7 (2026-04-27): direct_answer 단락 응답(LLM 우회)은 기본 OFF.
+        # direct_answer는 컨텍스트의 일부로만 사용되고, LLM이 항상 생성한다.
+        # .env DIRECT_ANSWER_BYPASS_LLM=true 시 (구) 우회 동작 복구.
+        if (
+            settings.pipeline.direct_answer_bypass_llm
+            and merged.direct_answer
+            and analysis.lang != "en"
+        ):
             # 멀티턴 컨텍스트 보존: direct_answer도 session history에 append.
             messages = session_data.get("messages", [])
             messages.append({"role": "user", "content": question})
@@ -554,6 +583,7 @@ async def chat_stream(
         llm_history = prior_messages if _conv_cfg.history_enabled else None
         cache_kwargs = _build_generation_cache_kwargs(
             search_query, merged, analysis, student_context, history=llm_history,
+            is_follow_up=follow_up_signal.is_follow_up,
         )
         cached_answer = generator.get_cached_response(**cache_kwargs)
         if cached_answer:
@@ -733,6 +763,23 @@ async def chat_stream(
 
 # ── 논스트리밍 폴백 ──
 
+def _log_chat_sync_timing(*, t0, path, follow_up_ms=0, rewrite_ms=0,
+                          analyze_ms=0, search_ms=0, merge_ms=0,
+                          generate_ms=0, validate_ms=0, intent="?",
+                          question_type="?", follow_up_reason="?"):
+    """chat_stream의 PIPELINE_TIMING 형식 + endpoint=sync, path 라벨로 분기 표시."""
+    total_ms = int((time.monotonic() - t0) * 1000)
+    print(
+        f"PIPELINE_TIMING total={total_ms}ms follow_up={follow_up_ms}ms "
+        f"rewrite={rewrite_ms}ms analyze={analyze_ms}ms search={search_ms}ms "
+        f"merge={merge_ms}ms retry=0ms generate={generate_ms}ms validate={validate_ms}ms "
+        f"intent={intent} qt={question_type} follow_up={follow_up_reason} "
+        f"endpoint=sync path={path}",
+        flush=True,
+    )
+    return total_ms
+
+
 @router.post("", response_model=ChatResponse)
 async def chat_sync(
     request: Request,
@@ -749,6 +796,8 @@ async def chat_sync(
     set_skip_log(_is_test)
 
     _t0 = time.monotonic()
+    _ms_follow_up = _ms_rewrite = _ms_analyze = 0
+    _ms_search = _ms_merge = _ms_gen = _ms_val = 0
     sid, session_data = session_store.get_or_create(session_id)
     user_id = _resolve_user_id(access_token)
 
@@ -756,8 +805,8 @@ async def chat_sync(
     contact = _format_contact_answer(question)
     if contact:
         _try_log_simple(question, contact, sid, "CONTACT", _t0, user_id=user_id)
-        return ChatResponse(answer=contact, intent="CONTACT",
-                            duration_ms=int((time.monotonic() - _t0) * 1000))
+        total_ms = _log_chat_sync_timing(t0=_t0, path="contact", intent="CONTACT")
+        return ChatResponse(answer=contact, intent="CONTACT", duration_ms=total_ms)
 
     analyzer = get_analyzer()
     router_inst = get_router()
@@ -771,8 +820,11 @@ async def chat_sync(
     _conv_cfg = _settings.conversation
     prior_messages = session_data.get("messages") or []
     search_query = question
+    _t1 = time.monotonic()
     follow_up_signal = follow_up_detector.detect(question, prior_messages)
+    _ms_follow_up = int((time.monotonic() - _t1) * 1000)
     if _conv_cfg.rewrite_enabled and follow_up_signal.is_follow_up:
+        _t2 = time.monotonic()
         try:
             search_query = await query_rewriter.rewrite(
                 question,
@@ -783,7 +835,9 @@ async def chat_sync(
         except Exception as e:
             logger.debug("query_rewriter 실패 (sync), 원본 사용: %s", e)
             search_query = question
+        _ms_rewrite = int((time.monotonic() - _t2) * 1000)
 
+    _t3 = time.monotonic()
     analysis = analyzer.analyze(search_query)
     lang = session_data.get("lang", "ko")
     if lang == "en":
@@ -791,10 +845,14 @@ async def chat_sync(
     analysis, transcript_context, student_context = _enrich_analysis(
         search_query, analysis, router_inst, session_data, user_id=user_id
     )
+    _ms_analyze = int((time.monotonic() - _t3) * 1000)
 
     # glossary 정규화된 쿼리 우선. follow-up rewrite된 search_query 위에 glossary 레이어.
     _search_query = analysis.normalized_query or search_query
+    _t4 = time.monotonic()
     search_results = router_inst.route_and_search(_search_query, analysis)
+    _ms_search = int((time.monotonic() - _t4) * 1000)
+    _t5 = time.monotonic()
     merged = merger.merge(
         vector_results=search_results["vector_results"],
         graph_results=search_results["graph_results"],
@@ -804,6 +862,10 @@ async def chat_sync(
         transcript_context=transcript_context,
         question_type=analysis.question_type,
     )
+    _ms_merge = int((time.monotonic() - _t5) * 1000)
+
+    _intent_str = analysis.intent.value if analysis.intent else "?"
+    _qt_str = analysis.question_type.value if analysis.question_type else "?"
 
     if not merged.formatted_context.strip():
         if analysis.lang == "en":
@@ -820,13 +882,26 @@ async def chat_sync(
                 "- 질문에 학번을 포함했는지 (예: 2023학번)"
             )
         _try_log(question, msg, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
+        total_ms = _log_chat_sync_timing(
+            t0=_t0, path="empty_context",
+            follow_up_ms=_ms_follow_up, rewrite_ms=_ms_rewrite,
+            analyze_ms=_ms_analyze, search_ms=_ms_search, merge_ms=_ms_merge,
+            intent=_intent_str, question_type=_qt_str,
+            follow_up_reason=follow_up_signal.reason,
+        )
         return ChatResponse(
             answer=msg,
             intent=analysis.intent.value if analysis.intent else "",
-            duration_ms=int((time.monotonic() - _t0) * 1000),
+            duration_ms=total_ms,
         )
 
-    if merged.direct_answer and analysis.lang != "en":
+    # M7 (2026-04-27): 논스트리밍 경로도 동일 — direct_answer LLM 우회 기본 OFF.
+    # .env DIRECT_ANSWER_BYPASS_LLM=true 시 (구) 우회 동작 복구.
+    if (
+        settings.pipeline.direct_answer_bypass_llm
+        and merged.direct_answer
+        and analysis.lang != "en"
+    ):
         # 멀티턴 컨텍스트 보존: direct_answer도 세션 history에 저장해야
         # 다음 턴 follow-up 감지·rewrite가 이전 주제를 참조할 수 있다.
         messages = session_data.get("messages", [])
@@ -834,18 +909,26 @@ async def chat_sync(
         messages.append({"role": "assistant", "content": merged.direct_answer, "rated": False, "rating": None})
         session_store.update(sid, "messages", messages)
         _try_log(question, merged.direct_answer, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
+        total_ms = _log_chat_sync_timing(
+            t0=_t0, path="direct_answer",
+            follow_up_ms=_ms_follow_up, rewrite_ms=_ms_rewrite,
+            analyze_ms=_ms_analyze, search_ms=_ms_search, merge_ms=_ms_merge,
+            intent=_intent_str, question_type=_qt_str,
+            follow_up_reason=follow_up_signal.reason,
+        )
         return ChatResponse(
             answer=merged.direct_answer,
             source_urls=[SourceURL(title=u.get("title", ""), url=u.get("url", ""))
                          for u in (merged.source_urls or [])],
             intent=analysis.intent.value if analysis.intent else "",
-            duration_ms=int((time.monotonic() - _t0) * 1000),
+            duration_ms=total_ms,
         )
 
     all_results = search_results["vector_results"] + search_results["graph_results"]
     llm_history = prior_messages if _conv_cfg.history_enabled else None
     cache_kwargs = _build_generation_cache_kwargs(
         search_query, merged, analysis, student_context, history=llm_history,
+        is_follow_up=follow_up_signal.is_follow_up,
     )
     cached_answer = generator.get_cached_response(**cache_kwargs)
     if cached_answer:
@@ -854,16 +937,24 @@ async def chat_sync(
         messages.append({"role": "assistant", "content": cached_answer, "rated": False, "rating": None})
         session_store.update(sid, "messages", messages)
         _try_log(question, cached_answer, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
+        total_ms = _log_chat_sync_timing(
+            t0=_t0, path="cached",
+            follow_up_ms=_ms_follow_up, rewrite_ms=_ms_rewrite,
+            analyze_ms=_ms_analyze, search_ms=_ms_search, merge_ms=_ms_merge,
+            intent=_intent_str, question_type=_qt_str,
+            follow_up_reason=follow_up_signal.reason,
+        )
         return ChatResponse(
             answer=cached_answer,
             source_urls=[SourceURL(title=u.get("title", ""), url=u.get("url", ""))
                          for u in (merged.source_urls or [])],
             results=[SearchResultItem(**r) for r in _serialize_results(all_results)],
             intent=analysis.intent.value if analysis.intent else "",
-            duration_ms=int((time.monotonic() - _t0) * 1000),
+            duration_ms=total_ms,
         )
 
     # LLM 생성 (전체 수집)
+    _t6 = time.monotonic()
     full_answer = ""
     async for token in generator.generate(
         question=search_query,
@@ -883,6 +974,7 @@ async def chat_sync(
             full_answer = ""
             continue
         full_answer += token
+    _ms_gen = int((time.monotonic() - _t6) * 1000)
 
     # 빈 응답 방어
     if not full_answer.strip():
@@ -895,6 +987,7 @@ async def chat_sync(
     # ~ 이스케이프 (마크다운 취소선 방지)
     full_answer = re.sub(r'(?<!~)~(?!~)', r'\~', full_answer)
 
+    _t7 = time.monotonic()
     # Phase 4 품질 게이트 (KO only)
     if analysis.lang != "en" and full_answer.strip():
         try:
@@ -936,6 +1029,7 @@ async def chat_sync(
             full_answer += f"\n\n---\n*검증 경고:*\n{warning_text}"
     except Exception:
         pass
+    _ms_val = int((time.monotonic() - _t7) * 1000)
 
     # 연락처 꼬리말
     footer = _get_contact_footer(analysis.intent, analysis.entities, question)
@@ -953,13 +1047,21 @@ async def chat_sync(
     # 로그
     _try_log(question, full_answer, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
 
+    total_ms = _log_chat_sync_timing(
+        t0=_t0, path="generated",
+        follow_up_ms=_ms_follow_up, rewrite_ms=_ms_rewrite,
+        analyze_ms=_ms_analyze, search_ms=_ms_search, merge_ms=_ms_merge,
+        generate_ms=_ms_gen, validate_ms=_ms_val,
+        intent=_intent_str, question_type=_qt_str,
+        follow_up_reason=follow_up_signal.reason,
+    )
     return ChatResponse(
         answer=full_answer,
         source_urls=[SourceURL(title=u.get("title", ""), url=u.get("url", ""))
                      for u in (merged.source_urls or [])],
         results=[SearchResultItem(**r) for r in _serialize_results(all_results)],
         intent=analysis.intent.value if analysis.intent else "",
-        duration_ms=int((time.monotonic() - _t0) * 1000),
+        duration_ms=total_ms,
     )
 
 
