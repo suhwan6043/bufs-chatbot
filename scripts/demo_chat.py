@@ -21,10 +21,26 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 import time
 import textwrap
 import requests
+
+
+# 답변에서 검증 경고 블록 제거 — 시연 출력 정리용
+# 백엔드가 답변 본문에 추가하는 "*검증 경고:*" ~ 다음 "---" 사이 블록을 통째로 제거
+_VALIDATION_WARNING_RE = re.compile(
+    r"\n*---\s*\n+\*검증 경고:\*.*?(?=\n+---|\Z)",
+    re.DOTALL,
+)
+
+
+def _strip_validation_warnings(text: str) -> str:
+    """답변에서 검증 경고 섹션 제거 (LLM 답변 품질엔 영향 없음, 시연 노이즈 정리)."""
+    if not text:
+        return text
+    return _VALIDATION_WARNING_RE.sub("", text).rstrip()
 
 
 # ============================================================
@@ -187,7 +203,7 @@ def run_one(profile: dict, question: str) -> dict:
     # ── 답변 ──
     print()
     print("[답변]")
-    answer = data.get("answer") or "(빈 응답)"
+    answer = _strip_validation_warnings(data.get("answer") or "(빈 응답)")
     for line in answer.splitlines() or [""]:
         print(f"  {line}")
 
@@ -226,10 +242,10 @@ def _print_help() -> None:
         {chr(10).join(f'  [{i}] {q}' for i, q in enumerate(QUESTIONS))}
 
         사용법:
-          python scripts/demo_chat.py                       (PROFILE_INDEX={PROFILE_INDEX}, QUESTION_INDEX={QUESTION_INDEX} 사용)
-          python scripts/demo_chat.py 2 5                   (PROFILES[2] × QUESTIONS[5])
-          python scripts/demo_chat.py 1 "직접 입력한 질문"
-          python scripts/demo_chat.py --all                 (모든 조합)
+          python3 scripts/demo_chat.py                       (PROFILE_INDEX={PROFILE_INDEX}, QUESTION_INDEX={QUESTION_INDEX} 사용)
+          python3 scripts/demo_chat.py 2 5                   (PROFILES[2] × QUESTIONS[5])
+          python3 scripts/demo_chat.py 1 "직접 입력한 질문"
+          python3 scripts/demo_chat.py --all                 (모든 조합)
           python scripts/demo_chat.py --list                (이 도움말)
     """))
 
