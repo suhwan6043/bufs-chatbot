@@ -1,0 +1,66 @@
+{
+  "timestamp": "20260427_151851",
+  "tag": "v2_baseline_search",
+  "datasets": {
+    "balanced_test_set": {
+      "retrieval": {
+        "recall_at_5": 0.3226,
+        "mrr_at_5": 0.1468,
+        "evaluated": 31,
+        "total_answerable": 31
+      },
+      "generation": {
+        "total": 39,
+        "overall_contains_f1": 0.7179,
+        "em_rate": 0.0,
+        "answerable_contains_f1": 0.6452,
+        "unanswerable_contains_f1": 1.0,
+        "answerable_n": 31,
+        "unanswerable_n": 8,
+        "answerable_correct": 20,
+        "unanswerable_correct": 8,
+        "avg_token_f1": 0.2753
+      }
+    },
+    "rag_eval_dataset_2026_1": {
+      "retrieval": {
+        "recall_at_5": 0.4,
+        "mrr_at_5": 0.32,
+        "evaluated": 50,
+        "total_answerable": 50
+      },
+      "generation": {
+        "total": 50,
+        "overall_contains_f1": 0.9,
+        "em_rate": 0.0,
+        "answerable_contains_f1": 0.9,
+        "unanswerable_contains_f1": 0.0,
+        "answerable_n": 50,
+        "unanswerable_n": 0,
+        "answerable_correct": 45,
+        "unanswerable_correct": 0,
+        "avg_token_f1": 0.3308
+      }
+    },
+    "user_eval_dataset_50": {
+      "retrieval": {
+        "recall_at_5": 0.381,
+        "mrr_at_5": 0.3021,
+        "evaluated": 63,
+        "total_answerable": 70
+      },
+      "generation": {
+        "total": 75,
+        "overall_contains_f1": 0.8267,
+        "em_rate": 0.0,
+        "answerable_contains_f1": 0.8286,
+        "unanswerable_contains_f1": 0.8,
+        "answerable_n": 70,
+        "unanswerable_n": 5,
+        "answerable_correct": 58,
+        "unanswerable_correct": 4,
+        "avg_token_f1": 0.3145
+      }
+    }
+  }
+}

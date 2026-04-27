@@ -38,6 +38,7 @@ import collections
 import io
 import json
 import logging
+import os
 import re
 import sys
 import time
@@ -264,6 +265,49 @@ def _pred_is_not_answerable(pred: str) -> bool:
 _GRAPH_ONLY_INTENTS = {"SCHEDULE", "ALTERNATIVE"}
 
 
+def _coerce_page(value: Any) -> Optional[int]:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    return None
+
+
+def _result_pages(result: Any) -> set[int]:
+    pages: set[int] = set()
+
+    page = _coerce_page(getattr(result, "page_number", None))
+    if page is not None:
+        pages.add(page)
+
+    metadata = getattr(result, "metadata", None) or {}
+    for key in ("page_number", "source_page"):
+        page = _coerce_page(metadata.get(key))
+        if page is not None:
+            pages.add(page)
+
+    for key in ("source_pages", "_source_pages", "evidence_pages"):
+        raw_pages = metadata.get(key)
+        if isinstance(raw_pages, (list, tuple, set)):
+            for raw_page in raw_pages:
+                page = _coerce_page(raw_page)
+                if page is not None:
+                    pages.add(page)
+
+    return pages
+
+
+def _first_hit_rank(results: list, evidence_pages: set[int], k: int) -> Optional[int]:
+    for rank, result in enumerate(results[:k], start=1):
+        if _result_pages(result) & evidence_pages:
+            return rank
+    return None
+
+
 def _retrieval_metrics(
     vector_results: list,
     evidence_pages: List[int],
@@ -272,41 +316,46 @@ def _retrieval_metrics(
     k: int = 5,
 ) -> Dict[str, Optional[float]]:
     """
-    Recall@k, MRR@k 계산.
+    하이브리드 Recall@k, MRR@k 계산.
 
-    그래프 전용 intent (SCHEDULE, ALTERNATIVE):
-      - vector 검색을 수행하지 않으므로 page-hit 기준 계산 불가
-      - 대신 그래프 결과가 1개 이상이면 Recall=MRR=1.0 으로 기록
-      - retrieval_source="graph" 로 표시
-
-    그 외 intent:
-      - evidence_pages 가 비어 있으면 None 반환 (계산 제외)
-      - vector top-k 의 page 번호로 hit 판정
-      - retrieval_source="vector" 로 표시
+    그래프 전용 intent에서 evidence_page가 없는 레거시 항목은 기존처럼 그래프 결과
+    존재 여부로 계산한다. evidence_page가 있는 항목은 모든 intent에서 vector/graph
+    양쪽 top-k 페이지를 독립적으로 확인한다.
     """
-    if intent in _GRAPH_ONLY_INTENTS:
+    graph_results = graph_results or []
+    evidence_page_set = {
+        page for raw_page in evidence_pages
+        if (page := _coerce_page(raw_page)) is not None
+    }
+
+    if intent in _GRAPH_ONLY_INTENTS and not evidence_page_set:
         hit = bool(graph_results)
         val = 1.0 if hit else 0.0
         return {"recall_at_k": val, "mrr_at_k": val, "retrieval_source": "graph"}
 
-    if not evidence_pages:
-        return {"recall_at_k": None, "mrr_at_k": None, "retrieval_source": "vector"}
+    if not evidence_page_set:
+        retrieval_source = "hybrid" if graph_results else "vector"
+        return {"recall_at_k": None, "mrr_at_k": None, "retrieval_source": retrieval_source}
 
-    top_k = vector_results[:k]
-    retrieved_pages = [getattr(r, "page_number", 0) for r in top_k]
+    vector_rank = _first_hit_rank(vector_results, evidence_page_set, k)
+    graph_rank = _first_hit_rank(graph_results, evidence_page_set, k)
+    best_rank = min(rank for rank in (vector_rank, graph_rank) if rank is not None) if (
+        vector_rank is not None or graph_rank is not None
+    ) else None
 
-    # Recall@k: 적어도 하나의 evidence_page 가 top-k 에 존재하면 1
-    hit = any(p in retrieved_pages for p in evidence_pages)
-    recall = 1.0 if hit else 0.0
+    recall = 1.0 if best_rank is not None else 0.0
+    mrr = 1.0 / best_rank if best_rank is not None else 0.0
 
-    # MRR@k: 첫 번째 관련 문서의 역순위
-    mrr = 0.0
-    for rank, page in enumerate(retrieved_pages, start=1):
-        if page in evidence_pages:
-            mrr = 1.0 / rank
-            break
+    if vector_rank is not None and graph_rank is not None:
+        retrieval_source = "hybrid"
+    elif graph_rank is not None:
+        retrieval_source = "graph"
+    elif vector_rank is not None:
+        retrieval_source = "vector"
+    else:
+        retrieval_source = "hybrid" if graph_results else "vector"
 
-    return {"recall_at_k": recall, "mrr_at_k": mrr, "retrieval_source": "vector"}
+    return {"recall_at_k": recall, "mrr_at_k": mrr, "retrieval_source": retrieval_source}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -792,6 +841,11 @@ async def run(args: argparse.Namespace) -> None:
 
 
 def main() -> None:
+    # 평가 중에는 Clarification 게이트(되묻기)를 비활성화한다.
+    # ground_truth가 학번·학과 명시된 완결 답변 전제라, clarification 메시지가 오면
+    # F1·Recall이 인위적으로 낮게 찍힌다. 평가용 환경변수로 off.
+    os.environ.setdefault("CLARIFICATION_ENABLED", "false")
+
     parser = argparse.ArgumentParser(description="다국어 RAG 평가")
     parser.add_argument(
         "--lang", choices=["ko", "en"], default=None,

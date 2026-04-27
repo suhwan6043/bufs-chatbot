@@ -22,7 +22,7 @@ terms:
   - ko: 제1전공
     en: Primary Major
     aliases_ko: [주전공, 1전공]
-    aliases_en: [primary major, first major, main major]
+    aliases_en: [primary major, first major, main major, primary major credit requirement]
 
   - ko: 제2전공
     en: Secondary Major
@@ -37,7 +37,7 @@ terms:
   - ko: 부전공
     en: Minor
     aliases_ko: [부전]
-    aliases_en: [minor, sub-major]
+    aliases_en: [minor, minors, sub-major]
 
   - ko: 마이크로전공
     en: Micro Major
@@ -62,7 +62,8 @@ terms:
   - ko: 전공 변경
     en: Change of Major
     aliases_ko: [전과]
-    aliases_en: [change major, switch major, transfer major]
+    aliases_en: [change major, change their major, change my major,
+                 switch major, switch their major, transfer major]
 
   - ko: 전공탐색과정
     en: Major Exploration Program
@@ -155,7 +156,9 @@ terms:
   - ko: 비교과지수
     en: Extracurricular Activity Index
     aliases_ko: [비교과 점수, 비교과지수]
-    aliases_en: [extracurricular index, non-academic activity points]
+    aliases_en: [extracurricular index, non-academic activity points,
+                 non-curricular program, non-curricular program hours,
+                 extracurricular program hours]
 
   - ko: 조기졸업
     en: Early Graduation
@@ -183,7 +186,8 @@ terms:
   - ko: 수강신청
     en: Course Registration
     aliases_ko: [수강 신청, 강의 신청]
-    aliases_en: [course registration, class registration, enrollment, add-drop]
+    aliases_en: [course registration, class registration, enrollment, add-drop,
+                 register for courses, register for classes]
 
   - ko: 장바구니 신청
     en: Pre-Registration Wishlist
@@ -203,7 +207,8 @@ terms:
   - ko: 재수강
     en: Course Retake
     aliases_ko: [재이수]
-    aliases_en: [retake, course retake, repeat course]
+    aliases_en: [retake, retaken course, retaking a course,
+                 course retake, repeat course]
 
   - ko: 수강 취소
     en: Course Withdrawal
@@ -288,7 +293,7 @@ terms:
   - ko: 편입생
     en: Transfer Student
     aliases_ko: [편입]
-    aliases_en: [transfer student, transfer]
+    aliases_en: [transfer student, transfer students, transfer]
 
   - ko: 내국인
     en: Domestic Student
@@ -308,6 +313,11 @@ terms:
     en: Academic Calendar
     aliases_ko: [학사 일정]
     aliases_en: [academic calendar, school schedule, semester schedule]
+
+  - ko: 수업시간표
+    en: Class Schedule
+    aliases_ko: [강의시간표, 시간표]
+    aliases_en: [class schedule, course schedule, timetable]
 
   - ko: 수강신청 기간
     en: Course Registration Period
@@ -366,7 +376,8 @@ terms:
   - ko: 국가장학금
     en: Government Scholarship
     aliases_ko: [국장]
-    aliases_en: [government scholarship, national scholarship]
+    aliases_en: [government scholarship, government scholarships,
+                 national scholarship, national scholarships]
 
   # ════════════════════════════════════════════════════════════
   # 대체 / 동일 과목
@@ -375,12 +386,16 @@ terms:
   - ko: 대체과목
     en: Substitute Course
     aliases_ko: [대체 과목]
-    aliases_en: [substitute course, equivalent course, replacement course]
+    aliases_en: [substitute course, substitute courses,
+                 equivalent course, equivalent courses,
+                 alternative course, alternative courses,
+                 replacement course, replacement courses]
 
   - ko: 동일과목
     en: Identical Course
     aliases_ko: [동일 과목]
-    aliases_en: [identical course, same course]
+    aliases_en: [identical course, identical courses,
+                 same course, same courses, same name, duplicate course]
 
   - ko: 폐지과목
     en: Discontinued Course
@@ -499,7 +514,9 @@ terms:
   - ko: 교내장학금
     en: University Scholarship
     aliases_ko: [학내 장학금]
-    aliases_en: [university scholarship, internal scholarship, institutional scholarship]
+    aliases_en: [university scholarship, university scholarships,
+                 internal scholarship, internal scholarships,
+                 institutional scholarship, institutional scholarships]
 
   - ko: 성적우수장학금
     en: Academic Excellence Scholarship
@@ -509,7 +526,8 @@ terms:
   - ko: 근로장학금
     en: Work-Study Scholarship
     aliases_ko: [근로장학, 교내근로]
-    aliases_en: [work-study scholarship, student work scholarship, work-study program]
+    aliases_en: [work-study scholarship, student work scholarship,
+                 work-study program, TA scholarship, teaching assistant scholarship]
 
   - ko: 외부장학금
     en: External Scholarship
@@ -949,3 +967,58 @@ terms:
     en: Tuition Refund
     aliases_ko: [등록금 반환, 수업료환불, 수업료 반환기준]
     aliases_en: [tuition refund policy, refund policy, fee refund schedule, tuition reimbursement]
+
+  # ════════════════════════════════════════════════════════════
+  # 출결·수업 (P1-2 추가 2026-04-23)
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 출석
+    en: Attendance
+    aliases_ko: [출결, 출석률, 출석 점수]
+    aliases_en: [attendance, class attendance, attendance rate, attendance score, attending class]
+
+  # ════════════════════════════════════════════════════════════
+  # 성적·학점 (P1-2 추가)
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 성적표
+    en: Academic Transcript
+    aliases_ko: [성적증명서, 성적조회, 학업성적]
+    aliases_en: [transcript, academic transcript, academic report, grade report, grade transcript, official transcript]
+
+  - ko: 학점포기
+    en: Credit Abandonment
+    aliases_ko: [부분 성적포기, 성적포기, 학점 포기]
+    aliases_en: [credit abandonment, credit forfeiture, partial credit waiver, grade waiver]
+
+  # ════════════════════════════════════════════════════════════
+  # 복·휴학 (P1-2 추가)
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 복학신청
+    en: Readmission Application
+    aliases_ko: [복학 신청, 복학 절차, 복학원]
+    aliases_en: [readmission application, re-enrollment application, return-to-study application, return-to-school application, readmission process]
+
+  # ════════════════════════════════════════════════════════════
+  # 등록·수업연한 (P1-2 추가)
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 분할납부
+    en: Installment Payment
+    aliases_ko: [등록금 분할납부, 학비 분할, 분납]
+    aliases_en: [installment payment, tuition installment, split payment, partial payment, installment plan, payment in installments]
+
+  - ko: 수업연한초과자
+    en: Student with Extended Study Period
+    aliases_ko: [9학기 이상, 초과학기자, 수업연한 초과]
+    aliases_en: [extended study period, overtime student, student exceeding normal study period, ninth semester or later, extended enrollment]
+
+  # ════════════════════════════════════════════════════════════
+  # 대체 이수 (P1-2 추가)
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 대체이수
+    en: Substitute Credit
+    aliases_ko: [대체 과목 이수, 대체 수강, 대체이수 과목]
+    aliases_en: [substitute credit, alternative credit, replacement course, substitute course completion]
