@@ -30,7 +30,14 @@ from app.crawler.change_detector import ChangeDetector, ChangeType, CrawledItem
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-DEFAULT_FAQ_PATH = Path(__file__).resolve().parent.parent / "data" / "faq_academic.json"
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+# 큐레이션 FAQ 코퍼스 — 동등 등급의 여러 파일을 단일 리스트로 병합 (FaqNodeBuilder
+# 의 "미존재 삭제" 동작 때문에 분리 호출 시 직전 파일이 지워짐).
+DEFAULT_FAQ_PATHS = [
+    DATA_DIR / "faq_academic.json",
+    DATA_DIR / "faq_library.json",
+]
+DEFAULT_FAQ_PATH = DEFAULT_FAQ_PATHS[0]  # 하위호환 (단일 경로 import)
 
 
 def load_faq(path: Path) -> list:
@@ -271,26 +278,43 @@ def ingest_incremental(store: ChromaStore, graph: AcademicGraph, faq_data: list,
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="FAQ → ChromaDB + GraphDB 인제스트")
-    parser.add_argument("--faq", default=str(DEFAULT_FAQ_PATH), help="FAQ JSON 파일 경로")
+    parser.add_argument(
+        "--faq",
+        nargs="+",
+        default=[str(p) for p in DEFAULT_FAQ_PATHS],
+        help="FAQ JSON 파일 경로 (다중 지정 가능; 큐레이션 코퍼스는 병합 후 일괄 인제스트)",
+    )
     parser.add_argument("--full", action="store_true", help="전체 재인제스트 (기본: 증분)")
     args = parser.parse_args()
 
-    path = Path(args.faq)
-    if not path.exists():
-        logger.error("파일 없음: %s", path)
+    paths = [Path(p) for p in args.faq]
+    faq_data: list = []
+    for p in paths:
+        if not p.exists():
+            logger.warning("파일 없음 — 스킵: %s", p)
+            continue
+        items = load_faq(p)
+        faq_data.extend(items)
+        logger.info("FAQ 로드: %s — %d개 항목", p.name, len(items))
+
+    if not faq_data:
+        logger.error("로드된 FAQ가 없습니다: %s", paths)
         return
 
-    faq_data = load_faq(path)
-    logger.info("FAQ 로드: %d개 항목", len(faq_data))
+    logger.info("FAQ 코퍼스 합계: %d개 항목 (%d개 파일)", len(faq_data), len(paths))
+
+    # source_file 기록은 첫 번째 경로명 — 단일 코퍼스로 인덱싱하므로 라벨링 용도.
+    # 항목별 출처 분기가 필요하면 source 메타필드를 활용한다.
+    source_label = paths[0].name
 
     embedder = Embedder()
     store = ChromaStore(embedder=embedder)
     graph = AcademicGraph()
 
     if args.full:
-        ingest_full(store, graph, faq_data, path.name)
+        ingest_full(store, graph, faq_data, source_label)
     else:
-        ingest_incremental(store, graph, faq_data, path.name)
+        ingest_incremental(store, graph, faq_data, source_label)
 
     graph.save()
 

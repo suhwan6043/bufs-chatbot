@@ -144,6 +144,10 @@ class AdminFaqConfig:
     academic_faq_path: str = os.getenv(
         "ACADEMIC_FAQ_PATH", str(DATA_DIR / "faq_academic.json")
     )
+    # 도서관 FAQ — academic 과 동등 등급의 큐레이션 코퍼스
+    library_faq_path: str = os.getenv(
+        "LIBRARY_FAQ_PATH", str(DATA_DIR / "faq_library.json")
+    )
     # answer_generator 의 거절 문구 — 미답변 탐지 시그널
     refusal_phrase_ko: str = os.getenv(
         "ADMIN_FAQ_REFUSAL_KO", "관련 정보를 찾을 수 없습니다"

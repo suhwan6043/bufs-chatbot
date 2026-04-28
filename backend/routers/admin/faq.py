@@ -73,10 +73,14 @@ def _save_admin_faqs(items: list[dict]) -> None:
 
 
 def _merged_faqs() -> tuple[list[dict], list[dict]]:
-    """(정식 FAQ, 관리자 FAQ) 튜플 반환. 두 리스트는 ingest용 병합에 그대로 사용 가능."""
+    """(큐레이션 FAQ, 관리자 FAQ) 튜플 반환. 두 리스트는 ingest용 병합에 그대로 사용 가능.
+
+    큐레이션 코퍼스는 academic_faq + library_faq (동등 등급 큐레이션 파일).
+    """
     academic = _load_json_list(Path(settings.admin_faq.academic_faq_path))
+    library = _load_json_list(Path(settings.admin_faq.library_faq_path))
     admin = _load_json_list(Path(settings.admin_faq.admin_faq_path))
-    return academic, admin
+    return academic + library, admin
 
 
 # ── ID 생성 ────────────────────────────────────────────────
