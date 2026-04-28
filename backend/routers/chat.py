@@ -1155,8 +1155,10 @@ async def get_faq_by_id(faq_id: str):
         except Exception:
             return []
 
-    items = _load(Path(settings.admin_faq.academic_faq_path)) + _load(
-        Path(settings.admin_faq.admin_faq_path)
+    items = (
+        _load(Path(settings.admin_faq.academic_faq_path))
+        + _load(Path(settings.admin_faq.library_faq_path))
+        + _load(Path(settings.admin_faq.admin_faq_path))
     )
     for it in items:
         if it.get("id") == faq_id:
