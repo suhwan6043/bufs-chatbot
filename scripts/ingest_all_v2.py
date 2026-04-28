@@ -101,6 +101,27 @@ def map_filename_meta(filename: str) -> dict:
     # 결석·복학·휴학 매뉴얼
     if any(kw in name for kw in ("결석", "복학", "휴학", "수강신청", "성적")):
         return {"doc_type": "domestic"}
+    # 출결/LMS 매뉴얼 (전자출결, Learning X LMS 등)
+    if any(kw in name for kw in ("출결", "LMS")):
+        return {"doc_type": "domestic"}
+    # 학생포털 시스템 매뉴얼
+    if "포털시스템" in name:
+        return {"doc_type": "domestic"}
+    # 대체이수 안내
+    if "대체이수" in name:
+        return {"doc_type": "domestic"}
+    # 모바일 학생증 안내
+    if "학생증" in name:
+        return {"doc_type": "domestic"}
+    # 멘토링 / 교환학생 프로그램 (WEST 등) / 교육지원사업 → 장학 카테고리
+    if any(kw in name for kw in ("멘토링", "WEST", "교육지원사업")):
+        return {"doc_type": "scholarship"}
+    # 영문 표기 장학 (스칼라십, Scholarship)
+    if "스칼라십" in name or "Scholarship" in name:
+        return {"doc_type": "scholarship"}
+    # 학부과 사무실 전화번호 / 부서 안내
+    if "사무실" in name and ("전화" in name or "안내" in name):
+        return {"doc_type": "guide"}
     return {}
 
 
@@ -315,6 +336,109 @@ def ingest_one(
     }
 
 
+# ── 메타데이터 패치 (re-embed 없음) ─────────────────────────────────────────
+def patch_doc_types(coll, dry_run: bool = False) -> dict:
+    """기존 컬렉션의 notice_attachment 청크를 새 패턴으로 재분류 (임베딩 재생성 없음).
+
+    ingest_all_v2.py --patch-doc-types 로 실행.
+    팀원이 인제스트 완료 후 notice_attachment로 남은 crawled/ 청크를 일괄 수정.
+
+    Returns:
+        {"patched": int, "by_type": {doc_type: count}, "skipped": int}
+    """
+    try:
+        result = coll.get(where={"doc_type": "notice_attachment"}, include=["metadatas"])
+    except Exception as e:
+        logger.error("패치 대상 조회 실패: %s", e)
+        return {}
+
+    ids = result.get("ids", [])
+    metas = result.get("metadatas", [])
+    if not ids:
+        logger.info("패치 대상 없음 (notice_attachment 청크 0개)")
+        return {"patched": 0, "by_type": {}, "skipped": 0}
+
+    patch_ids, patch_metas = [], []
+    changes_by_type: dict[str, int] = {}
+    skipped = 0
+
+    for chunk_id, meta in zip(ids, metas):
+        source_path = meta.get("source_path", "")
+        filename = Path(source_path).name if source_path else ""
+        if not filename:
+            skipped += 1
+            continue
+
+        new_meta_override = map_filename_meta(filename)
+        new_doc_type = new_meta_override.get("doc_type")
+        if not new_doc_type or new_doc_type == "notice_attachment":
+            skipped += 1
+            continue  # 노이즈로 유지
+
+        updated = dict(meta)
+        updated["doc_type"] = new_doc_type
+        if "lifecycle" in new_meta_override:
+            updated["lifecycle"] = new_meta_override["lifecycle"]
+
+        patch_ids.append(chunk_id)
+        patch_metas.append(updated)
+        changes_by_type[new_doc_type] = changes_by_type.get(new_doc_type, 0) + 1
+        logger.debug("  [%s] %s → %s", "DRY" if dry_run else "PATCH", filename, new_doc_type)
+
+    logger.info(
+        "패치 %s: %d개 변경 예정, %d개 유지 (notice_attachment) | 변경 내역: %s",
+        "(dry-run)" if dry_run else "실행",
+        len(patch_ids), skipped, changes_by_type,
+    )
+
+    if not dry_run and patch_ids:
+        _BATCH = 100
+        for i in range(0, len(patch_ids), _BATCH):
+            coll.update(ids=patch_ids[i:i+_BATCH], metadatas=patch_metas[i:i+_BATCH])
+        logger.info("패치 완료: %d개 청크 메타데이터 업데이트", len(patch_ids))
+
+    return {"patched": len(patch_ids), "by_type": changes_by_type, "skipped": skipped}
+
+
+# ── NULL 바이트 후처리 (re-embed 있음) ──────────────────────────────────────
+def patch_null_bytes(coll, dry_run: bool = False) -> dict:
+    """컬렉션 내 문서 텍스트의 NULL 바이트(\x00)를 공백으로 교체 (자동 재임베딩).
+
+    ingest_all_v2.py --patch-nulls 로 실행.
+    VLM 표 추출 경로에서 replace_pua가 누락돼 \x00이 남은 청크를 후처리.
+
+    Returns:
+        {"patched": int, "skipped": int}
+    """
+    data = coll.get(include=["documents"])
+    ids = data.get("ids", [])
+    docs = data.get("documents", [])
+
+    patch_ids, patch_docs = [], []
+    for cid, doc in zip(ids, docs):
+        if "\x00" in (doc or ""):
+            cleaned = doc.replace("\x00", " ")
+            patch_ids.append(cid)
+            patch_docs.append(cleaned)
+            if dry_run:
+                logger.info("  [DRY] id=%s  %d개 NULL → 공백", cid, doc.count("\x00"))
+
+    logger.info(
+        "NULL 패치 %s: %d개 청크, %d개 변경 없음",
+        "(dry-run)" if dry_run else "실행",
+        len(patch_ids), len(ids) - len(patch_ids),
+    )
+
+    if not dry_run and patch_ids:
+        # documents만 업데이트 → 컬렉션 embedding_function으로 자동 재임베딩
+        _BATCH = 100
+        for i in range(0, len(patch_ids), _BATCH):
+            coll.update(ids=patch_ids[i:i+_BATCH], documents=patch_docs[i:i+_BATCH])
+        logger.info("NULL 패치 완료: %d개 청크 재임베딩 완료", len(patch_ids))
+
+    return {"patched": len(patch_ids), "skipped": len(ids) - len(patch_ids)}
+
+
 # ── 메인 ────────────────────────────────────────────────────────────────────
 def main() -> int:
     parser = argparse.ArgumentParser(description="v2 전체 PDF 인제스트 (dedupe + lifecycle 메타)")
@@ -330,7 +454,29 @@ def main() -> int:
                         help="결과 리포트 JSON 경로")
     parser.add_argument("--verbose-dedupe", action="store_true",
                         help="dedupe 스킵 로그 표시")
+    parser.add_argument("--patch-doc-types", action="store_true",
+                        help="인제스트 없이 기존 컬렉션의 notice_attachment 메타만 재분류")
+    parser.add_argument("--patch-nulls", action="store_true",
+                        help="인제스트 없이 기존 컬렉션의 NULL 바이트를 공백으로 교체 (재임베딩)")
     args = parser.parse_args()
+
+    # --patch-doc-types 모드: 인제스트 없이 메타데이터만 수정
+    if args.patch_doc_types:
+        logger.info("=== doc_type 패치 모드 (collection=%s, dry-run=%s) ===",
+                    args.collection, args.dry_run)
+        coll = get_collection(args.collection)
+        summary = patch_doc_types(coll, dry_run=args.dry_run)
+        print(f"\n패치 결과: {summary}")
+        return 0
+
+    # --patch-nulls 모드: NULL 바이트 교체 + 재임베딩
+    if args.patch_nulls:
+        logger.info("=== NULL 바이트 패치 모드 (collection=%s, dry-run=%s) ===",
+                    args.collection, args.dry_run)
+        coll = get_collection(args.collection)
+        summary = patch_null_bytes(coll, dry_run=args.dry_run)
+        print(f"\n패치 결과: {summary}")
+        return 0
 
     logger.info("=== v2 전체 PDF 인제스트 시작 ===")
     logger.info("collection=%s, VLM=%s, dry-run=%s, limit=%s",
