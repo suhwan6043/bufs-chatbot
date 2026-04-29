@@ -147,6 +147,10 @@ class FaqItem(BaseModel):
     created_by: Optional[str] = None
     created_at: Optional[str] = None
     source_question: Optional[str] = None
+    # 2026-04-28: 복수 paraphrase 지원 — 학생이 실제로 묻는 다양한 표현을 모두 검색면에 포함.
+    # 단일 source_question(하위호환)과 함께 사용 가능; 둘 다 있으면 합쳐져 dedupe.
+    source_questions: list[str] = Field(default_factory=list,
+        description="학생 원문 paraphrase 목록 (검색면에 포함되어 비공식 표현으로도 매칭).")
     answer_type: Optional[str] = None
     # 학생 속성 분기 필드 (없으면 전체 허용)
     student_types: list[str] = Field(default_factory=list,
@@ -160,6 +164,8 @@ class FaqCreate(BaseModel):
     answer: str = Field(..., min_length=1, max_length=10000)
     category: str = Field(..., min_length=1, max_length=50)
     source_question: Optional[str] = Field(default=None, max_length=2000)
+    source_questions: list[str] = Field(default_factory=list,
+        description="학생 원문 paraphrase 목록 (검색면에 포함). 단일 source_question과 합쳐 dedupe.")
     # 학생 속성 분기 필드 (선택, 없으면 전체 허용)
     student_types: list[str] = Field(default_factory=list,
         description="적용 학생유형 (빈 리스트=전체). 예: ['외국인','편입생']")
@@ -177,6 +183,9 @@ class FaqUpdate(BaseModel):
     answer: Optional[str] = Field(default=None, min_length=1, max_length=10000)
     category: Optional[str] = Field(default=None, min_length=1, max_length=50)
     source_question: Optional[str] = Field(default=None, max_length=2000)
+    # None이면 기존값 유지, 빈 리스트면 모두 제거.
+    source_questions: Optional[list[str]] = Field(default=None,
+        description="학생 원문 paraphrase 목록 갱신.")
     # 학생 속성 분기 필드 (선택, None이면 기존값 유지)
     student_types: Optional[list[str]] = Field(default=None)
     cohort_from: Optional[int] = Field(default=None)

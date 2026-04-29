@@ -327,12 +327,17 @@ class QueryRouter:
         """
         # EARLY_GRADUATION: 학번 없어도 일반 자격·일정 안내 가능
         # SCHOLARSHIP: 장학금 정보는 학번 무관하게 조회 가능
+        # 2026-04-28: COURSE_INFO 추가 — "신청하고 싶은 과목이 보이지 않아요"
+        # 같은 트러블슈팅 FAQ가 익명 세션에서 그래프 통째로 스킵돼 vector PDF만
+        # LLM에 넘어가 환각 답변을 생성한 회귀(ADMIN-20260428-0004 미매칭) 방어.
+        # 학번 미상이면 핸들러가 기본값(2023)으로 동작 — 다른 intent와 동일 정책.
         no_id_intents = (
             Intent.SCHEDULE, Intent.ALTERNATIVE,
             Intent.REGISTRATION, Intent.EARLY_GRADUATION,
             Intent.SCHOLARSHIP, Intent.LEAVE_OF_ABSENCE,
             Intent.GRADUATION_REQ, Intent.MAJOR_CHANGE,
-            Intent.GENERAL,  # FAQ 검색용 — 학번 없어도 FAQ 탐색 필요
+            Intent.GENERAL,      # FAQ 검색용 — 학번 없어도 FAQ 탐색 필요
+            Intent.COURSE_INFO,  # FAQ + 시간표 검색용 (학번은 핸들러 기본값으로 폴백)
         )
 
         if analysis.intent not in no_id_intents and not analysis.student_id:

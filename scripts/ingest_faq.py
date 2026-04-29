@@ -35,6 +35,7 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 # 의 "미존재 삭제" 동작 때문에 분리 호출 시 직전 파일이 지워짐).
 DEFAULT_FAQ_PATHS = [
     DATA_DIR / "faq_academic.json",
+    DATA_DIR / "faq_admin.json",      # 2026-04-28: 학사지원팀이 admin UI로 작성한 FAQ — 누락 시 검색 실패
     DATA_DIR / "faq_library.json",
 ]
 DEFAULT_FAQ_PATH = DEFAULT_FAQ_PATHS[0]  # 하위호환 (단일 경로 import)
@@ -48,19 +49,41 @@ def load_faq(path: Path) -> list:
     return data
 
 
+def _collect_paraphrases(item: dict) -> list[str]:
+    """관리자가 등록한 모든 학생 원문 paraphrase를 수집.
+
+    원칙 1(유연한 스키마 진화):
+    - `source_question` (str, 기존 하위호환) — 단일 paraphrase
+    - `source_questions` (list[str], 신규) — 복수 paraphrase
+    - 둘 다 있으면 합쳐서 중복 제거.
+    """
+    out: list[str] = []
+    sq = (item.get("source_question") or "").strip()
+    if sq:
+        out.append(sq)
+    sqs = item.get("source_questions") or []
+    if isinstance(sqs, list):
+        for s in sqs:
+            s = (s or "").strip()
+            if s and s not in out:
+                out.append(s)
+    return out
+
+
 def _search_question(item: dict) -> str:
     """
     검색·토크나이저가 사용할 질문 텍스트.
 
-    관리자 큐레이션 FAQ(`source_question` 존재)의 경우, 학생 원문 질문을
-    검색면에 포함해 비공식 문장 recall을 높인다.
+    관리자 큐레이션 FAQ의 경우, 학생 원문 질문(들)을 검색면에 포함해
+    비공식 문장 recall을 높인다. `source_question`(단일) 또는
+    `source_questions`(복수) 중 하나/둘 모두 가능.
     표시용(답변 HTML 상 'Q: ...' 라벨)도 병합본을 사용 — 관리자 책임 아래
     폴리싱된 question 이 전면에 오고 원문은 보조 구문으로 덧붙는다.
     """
     q = (item.get("question") or "").strip()
-    sq = (item.get("source_question") or "").strip()
-    if sq and sq not in q:
-        return f"{q} {sq}".strip()
+    paraphrases = [p for p in _collect_paraphrases(item) if p not in q]
+    if paraphrases:
+        return f"{q} " + " ".join(paraphrases)
     return q
 
 
@@ -87,16 +110,15 @@ def _item_hash(item: dict) -> str:
 
 def _graph_items(faq_data: list) -> list[dict]:
     """
-    그래프 빌더에 넘길 때만 `source_question` 을 `question` 에 병합한
-    얕은 복사본을 반환한다. 원본 리스트는 변경하지 않음.
+    그래프 빌더에 넘길 때만 paraphrase(`source_question` / `source_questions`)
+    들을 `question` 에 병합한 얕은 복사본을 반환한다. 원본 리스트는 변경하지 않음.
 
     그래프 노드의 `구분` 속성(=question)이 토큰 인덱스의 소스이므로,
     학생 원문을 여기 포함해야 비공식 문장으로도 매칭이 가능해진다.
     """
     out: list[dict] = []
     for item in faq_data:
-        sq = (item.get("source_question") or "").strip()
-        if sq:
+        if _collect_paraphrases(item):
             clone = dict(item)
             clone["question"] = _search_question(item)
             out.append(clone)

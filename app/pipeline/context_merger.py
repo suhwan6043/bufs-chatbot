@@ -603,21 +603,13 @@ class ContextMerger:
                 return candidate
             return ""
 
-        # ── 1) URL 추출: "사이트", "주소", "홈페이지" ──
-        if any(kw in q for kw in ("사이트", "주소", "홈페이지", "url")):
-            urls = re.findall(r"https?://[^\s)\]가-힣]+", context)
-            if urls:
-                return f"{urls[0]}입니다."
-            # 그래프 속성에서 URL 추출 (수강신청사이트 필드)
-            m = re.search(r"수강신청사이트[:\s]*(\S+bufs\S+)", context)
-            if m:
-                return f"{m.group(1)}입니다."
-
-        # ── 2) 재수강 최고 성적 (매우 구체적 질문만) ──
-        if "최고성적" in q or ("재수강" in q and "성적" in q and "최고" in q):
-            m = re.search(r"재수강최고성적[은는:]?\s*([A-Da-d][+]?)", context)
-            if m:
-                return f"{m.group(1)}입니다."
+        # 2026-04-28: Category-A 룰(1 URL · 2 재수강 최고성적 · 5 졸업 최소학점 ·
+        # 8 로그인 시간 · 8-b 수강신청 일정) 제거.
+        # 사유: 위 5개는 academic_graph.py 핸들러에 동등 로직이 이미 있고, 거기엔
+        # 트러블슈팅 신호어 가드(_has_troubleshoot_signal)도 적용돼 있다. 폴백을
+        # 유지하면 그래프 가드를 통째로 우회하므로(2026-04-28 "수강신청 사이트 오류"
+        # 회귀 사례) 단일 진실원(graph)만 유지. 카테고리 B/C 룰 (3, 4, 6, 7, 9, 10,
+        # 11, 12)은 그래프 핸들러가 없는 영역이라 폴백 가치가 있어 보존.
 
         # ── 3) 재수강 가능 성적 기준 ──
         # 버그 #3 수정: 질문이 "제한/한도"를 묻는 경우(r05)엔 이 rule을 건너뛴다.
@@ -640,12 +632,6 @@ class ContextMerger:
             if m:
                 return f"전체 출석일수의 {m.group(1)} 이상을 충족해야 합니다."
 
-        # ── 5) 졸업 최소 학점 (학번 특정) ──
-        if ("졸업" in q or "필요한" in q) and ("최소" in q or "학점" in q):
-            m = re.search(r"졸업학점[은는:]?\s*(\d{2,3})", context)
-            if m:
-                return f"{m.group(1)}학점 이상입니다."
-
         # ── 6) OCU 개강일/시간 ──
         if "ocu" in q and any(kw in q for kw in ("개강", "시작", "언제")):
             m_date = re.search(r"개강일[:\s]*([\d\-]+)", context)
@@ -665,46 +651,6 @@ class ContextMerger:
                 m = re.search(r"시간[:\s]*(\d{1,2}:\d{2})", context)
             if m:
                 return f"{m.group(1)}입니다."
-
-        # ── 8) 로그인 오픈 시간 ──
-        if "로그인" in q and any(kw in q for kw in ("시간", "오픈", "언제")):
-            m = re.search(r"로그인오픈시간[:\s]*(.+?)(?:\n|$)", context)
-            if not m:
-                m = re.search(r"(\d+분?\s*전).*?로그인", context)
-            if m:
-                return f"로그인은 {m.group(1).strip()} 오픈됩니다."
-
-        # ── 8-b) 수강신청/장바구니 일정형 fact question ──
-        asks_registration_schedule = (
-            any(kw in q for kw in ("수강신청", "장바구니", "위시리스트"))
-            and any(kw in q for kw in ("기간", "일정", "언제", "시간", "로그인"))
-            and not any(kw in q for kw in ("방법", "절차", "어떻게"))
-        )
-        if asks_registration_schedule:
-            target_terms = []
-            if "장바구니" in q or "위시리스트" in q:
-                target_terms.extend(("장바구니", "위시리스트"))
-            if "로그인" in q:
-                target_terms.append("로그인")
-            if "수강신청" in q and "로그인" not in q:
-                target_terms.append("수강신청")
-
-            schedule_lines = []
-            for line in context.split("\n"):
-                compact = re.sub(r"\s+", "", line)
-                if not compact:
-                    continue
-                if target_terms and not any(term in compact for term in target_terms):
-                    continue
-                if not re.search(r"(\d{1,2}\.\s*\d{1,2}|\d{1,2}:\d{2}|\([월화수목금토일]\))", compact):
-                    continue
-                schedule_lines.append(line.strip(" -"))
-
-            if schedule_lines:
-                joined = "\n".join(dict.fromkeys(schedule_lines))
-                checked = _checked(joined)
-                if checked:
-                    return checked
 
         # ── 9) 이론/실습 학점 추출 ──
         if any(kw in q for kw in ("이론", "실습", "이수과목")):
