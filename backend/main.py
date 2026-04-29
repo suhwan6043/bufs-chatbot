@@ -7,6 +7,14 @@ CAMCHAT FastAPI 백엔드 — 앱 팩토리.
 import logging
 from contextlib import asynccontextmanager
 
+# 2026-04-28 진단: lifespan init_all() 흐름 가시화 — uvicorn은 자체 logger만 등록하므로
+# 우리 logger.info는 default로 silenced. force=True로 root handler 강제 설치.
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(name)s: %(message)s',
+    force=True,
+)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 

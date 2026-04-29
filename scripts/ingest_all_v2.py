@@ -458,6 +458,17 @@ def main() -> int:
                         help="인제스트 없이 기존 컬렉션의 notice_attachment 메타만 재분류")
     parser.add_argument("--patch-nulls", action="store_true",
                         help="인제스트 없이 기존 컬렉션의 NULL 바이트를 공백으로 교체 (재임베딩)")
+    # 2026-04-28: PDF 인제스트 후 FAQ까지 한 번에 처리. ingest_faq.py와 동일한
+    # academic + library 병합 로직을 in-process 호출 → 하나의 명령으로 v2 코퍼스
+    # (chunking_v2 PDF + 큐레이션 FAQ + graph) 동기 갱신.
+    parser.add_argument("--skip-faq", action="store_true",
+                        help="FAQ 통합 단계 건너뜀 (기본: PDF 인제스트 후 자동 실행)")
+    parser.add_argument("--faq-full", action="store_true",
+                        help="FAQ 전체 재인제스트 (기본: 증분)")
+    # 2026-04-28: PDF 코퍼스를 건드리지 않고 FAQ(academic+library)만 갱신.
+    # graph/chromadb에 FAQ만 동기 반영 — 1~2시간 걸리는 PDF 인제스트 우회.
+    parser.add_argument("--faq-only", action="store_true",
+                        help="PDF 인제스트 건너뛰고 FAQ만 처리 (academic+library 병합)")
     args = parser.parse_args()
 
     # --patch-doc-types 모드: 인제스트 없이 메타데이터만 수정
@@ -476,6 +487,13 @@ def main() -> int:
         coll = get_collection(args.collection)
         summary = patch_null_bytes(coll, dry_run=args.dry_run)
         print(f"\n패치 결과: {summary}")
+        return 0
+
+    # --faq-only 모드: PDF 인제스트 우회, FAQ(academic+library)만 graph+chromadb에 반영
+    if args.faq_only:
+        logger.info("=== FAQ-only 모드 (collection=%s, faq_full=%s) ===",
+                    args.collection, args.faq_full)
+        _ingest_faq_inline(args)
         return 0
 
     logger.info("=== v2 전체 PDF 인제스트 시작 ===")
@@ -568,7 +586,77 @@ def main() -> int:
         )
         logger.info("리포트 저장: %s", args.report)
 
+    # 6. FAQ 통합 인제스트 (PR 16 호환: academic + library 병합 후 graph + chromadb)
+    if args.dry_run:
+        logger.info("dry-run 모드 → FAQ 단계 건너뜀")
+    elif args.skip_faq:
+        logger.info("--skip-faq 옵션 → FAQ 단계 건너뜀")
+    else:
+        _ingest_faq_inline(args)
+
     return 0
+
+
+def _ingest_faq_inline(args) -> None:
+    """ingest_faq.py 함수를 in-process 호출 — PDF 인제스트 직후 graph·chromadb 동기 갱신.
+
+    ingest_faq.py의 DEFAULT_FAQ_PATHS([academic, library])를 그대로 사용하므로
+    PR 16 이후 도서관 FAQ가 자동 합류된다. settings.chroma.collection_name이 args.collection과
+    다르면 경고 — FAQ는 settings 컬렉션에 들어간다(ChromaStore가 settings에서 읽음).
+    """
+    print("\n" + "=" * 70)
+    print("[FAQ 통합 인제스트 (academic + library)]")
+    print("=" * 70)
+
+    from app.config import settings as _s
+    if _s.chroma.collection_name != args.collection:
+        logger.warning(
+            "FAQ 컬렉션 mismatch — args.collection=%s vs settings.chroma.collection_name=%s. "
+            "FAQ는 settings 컬렉션에 인제스트됩니다. 일관성을 위해 .env에 "
+            "CHROMA_COLLECTION=%s 설정 권장.",
+            args.collection, _s.chroma.collection_name, args.collection,
+        )
+
+    from scripts.ingest_faq import (
+        DEFAULT_FAQ_PATHS, load_faq, ingest_full, ingest_incremental,
+    )
+    from app.embedding import Embedder as _Embedder
+    from app.vectordb import ChromaStore as _ChromaStore
+    from app.graphdb.academic_graph import AcademicGraph as _Graph
+
+    faq_data: list = []
+    for p in DEFAULT_FAQ_PATHS:
+        if p.exists():
+            items = load_faq(p)
+            faq_data.extend(items)
+            logger.info("FAQ 로드: %s — %d개 항목", p.name, len(items))
+        else:
+            logger.warning("FAQ 파일 없음 — 스킵: %s", p)
+
+    if not faq_data:
+        logger.error("FAQ 데이터 없음 — 단계 종료")
+        return
+
+    logger.info("FAQ 코퍼스 합계: %d개 (%d개 파일)",
+                len(faq_data), len(DEFAULT_FAQ_PATHS))
+
+    embedder = _Embedder()
+    store = _ChromaStore(embedder=embedder)
+    graph = _Graph()
+    source_label = DEFAULT_FAQ_PATHS[0].name
+
+    if args.faq_full:
+        ingest_full(store, graph, faq_data, source_label)
+    else:
+        ingest_incremental(store, graph, faq_data, source_label)
+
+    graph.save()
+    logger.info(
+        "FAQ 통합 완료: %d개 → ChromaDB(%s, 총 %d청크) + Graph(노드 %d)",
+        len(faq_data), _s.chroma.collection_name,
+        store.collection.count(),
+        graph.G.number_of_nodes(),
+    )
 
 
 if __name__ == "__main__":

@@ -17,7 +17,15 @@ export default function FaqAdminPage() {
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const [form, setForm] = useState({ question: "", answer: "", category: "", source_question: "" });
+  // 2026-04-28: source_questions(복수 paraphrase) 지원 — 학생들이 실제로 묻는
+  // 다양한 표현을 동일 FAQ로 매칭시키기 위한 목록. 단일 source_question은 하위호환.
+  const [form, setForm] = useState<{
+    question: string;
+    answer: string;
+    category: string;
+    source_question: string;
+    source_questions: string[];
+  }>({ question: "", answer: "", category: "", source_question: "", source_questions: [] });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "admin" | "academic">("all");
   const [search, setSearch] = useState("");
@@ -41,7 +49,10 @@ export default function FaqAdminPage() {
   useEffect(() => { if (token) reload(); }, [token, reload]);
 
   const resetForm = () => {
-    setForm({ question: "", answer: "", category: categories[0] || "기타", source_question: "" });
+    setForm({
+      question: "", answer: "", category: categories[0] || "기타",
+      source_question: "", source_questions: [],
+    });
     setEditingId(null);
   };
 
@@ -51,6 +62,7 @@ export default function FaqAdminPage() {
       answer: "",
       category: categories[0] || "기타",
       source_question: cluster.representative_question,
+      source_questions: [],
     });
     setEditingId(null);
     setTab("create");
@@ -63,9 +75,28 @@ export default function FaqAdminPage() {
       answer: item.answer,
       category: item.category,
       source_question: item.source_question || "",
+      source_questions: item.source_questions || [],
     });
     setEditingId(item.id);
     setTab("create");
+  };
+
+  // ── source_questions 편집 헬퍼 ──
+  const addParaphrase = () => {
+    setForm((f) => ({ ...f, source_questions: [...f.source_questions, ""] }));
+  };
+  const updateParaphrase = (idx: number, value: string) => {
+    setForm((f) => {
+      const arr = [...f.source_questions];
+      arr[idx] = value;
+      return { ...f, source_questions: arr };
+    });
+  };
+  const removeParaphrase = (idx: number) => {
+    setForm((f) => ({
+      ...f,
+      source_questions: f.source_questions.filter((_, i) => i !== idx),
+    }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -75,17 +106,25 @@ export default function FaqAdminPage() {
       return;
     }
     setLoading(true); setMsg(""); setErr("");
+    // source_questions: 빈 항목 제거 + 트림 후 dedupe (UI 보호; 백엔드도 동일 로직 보유)
+    const cleaned: string[] = [];
+    for (const s of form.source_questions) {
+      const t = (s || "").trim();
+      if (t && !cleaned.includes(t)) cleaned.push(t);
+    }
     try {
       if (editingId) {
         await updateFaq(editingId, {
           question: form.question, answer: form.answer, category: form.category,
           source_question: form.source_question || undefined,
+          source_questions: cleaned, // []=모두 제거, [...]=교체
         });
         setMsg(`FAQ 수정 완료 (${editingId})`);
       } else {
         const created = await createFaq({
           question: form.question, answer: form.answer, category: form.category,
           source_question: form.source_question || undefined,
+          source_questions: cleaned.length ? cleaned : undefined,
         });
         setMsg(`FAQ 추가 완료 (${created.id}) — 다음 채팅부터 바로 반영됩니다.`);
       }
@@ -249,6 +288,11 @@ export default function FaqAdminPage() {
                       {it.source_question && (
                         <div className="text-[11px] text-muted mt-0.5">원문: {it.source_question}</div>
                       )}
+                      {(it.source_questions?.length ?? 0) > 0 && (
+                        <div className="text-[11px] text-accent mt-0.5">
+                          유사 질문 {it.source_questions!.length}개 등록
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2">
                       {it.source === "admin" ? (
@@ -304,6 +348,38 @@ export default function FaqAdminPage() {
                 placeholder="예: 정정 언제까지 돼요ㅠ"
                 className="mt-1 w-full border border-border rounded-lg px-3 py-2 text-sm" />
             </label>
+
+            {/* 2026-04-28: 복수 paraphrase — 학생들이 실제로 묻는 다양한 표현을 추가하면
+                해당 변형 문장으로도 동일 FAQ 답변이 매칭됨. 빈 항목은 저장 시 자동 제거. */}
+            <div className="block">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-text-sub">
+                  유사 질문 (선택, 여러 개) — 학생이 다른 단어/표현으로 물어도 같은 답변으로 매칭됩니다
+                </span>
+                <button type="button" onClick={addParaphrase}
+                  className="text-[11px] text-accent border border-border rounded px-2 py-0.5 hover:bg-gray-50">
+                  + 추가
+                </button>
+              </div>
+              <div className="mt-1 space-y-2">
+                {form.source_questions.length === 0 && (
+                  <p className="text-[11px] text-muted">
+                    아직 등록된 유사 질문이 없습니다. <span className="text-accent">+ 추가</span>를 눌러 입력하세요.
+                  </p>
+                )}
+                {form.source_questions.map((sq, idx) => (
+                  <div key={idx} className="flex gap-2">
+                    <input value={sq} onChange={(e) => updateParaphrase(idx, e.target.value)}
+                      placeholder={`예시 #${idx + 1}: 장바구니에 안 담겨요`}
+                      className="flex-1 border border-border rounded-lg px-3 py-2 text-sm" />
+                    <button type="button" onClick={() => removeParaphrase(idx)}
+                      className="px-2 py-1 text-[11px] border border-red-200 text-red-500 rounded hover:bg-red-50">
+                      삭제
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
 
             <label className="block">
               <span className="text-xs text-text-sub">답변 (Markdown 지원)</span>
