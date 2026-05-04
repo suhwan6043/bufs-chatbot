@@ -28,6 +28,7 @@ from backend.schemas.transcript import (
     TranscriptAnalysisResponse, AnalysisCategory, SemesterSummary,
     RetakeCandidate, GraduationProjection, ActionItemResp,
 )
+from backend.utils.i18n import get_lang_from_session, api_msg
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/transcript", tags=["transcript"])
@@ -329,7 +330,7 @@ async def transcript_analysis(
         analysis = analyzer.build_full_analysis()
     except Exception as exc:
         logger.exception("build_full_analysis 실패: %s", exc)
-        raise HTTPException(status_code=500, detail="분석 생성 실패")
+        raise HTTPException(status_code=500, detail=api_msg("analysis_failed", get_lang_from_session(data)))
 
     # Rule engine (plugin registry 자동 호출)
     ctx = RuleContext(

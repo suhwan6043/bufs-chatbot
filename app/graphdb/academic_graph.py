@@ -58,6 +58,30 @@ _CONCRETE_DATA_RE = re.compile(
 # 답변의 '초반부'로 간주할 문자 수 — 주 답변 문장이 이 범위 안에 들어온다는 가정
 _ANSWER_HEAD_CHARS = 120
 
+# 2026-04-28: 트러블슈팅 의도 시그널 — "사이트/주소/로그인 시간" 같은 단순 정보 핸들러가
+# "로그인 안 됨", "오류 났어요" 류 트러블슈팅에 부적절하게 발화하는 것을 막기 위함.
+# 원칙 4(하드코딩 금지): 신호어를 단일 상수로 모아 핸들러들이 공통으로 사용.
+# 핸들러 발화 전에 `_has_troubleshoot_signal(question)` 호출로 게이트.
+_TROUBLESHOOT_SIGNALS = (
+    "안 됩니다", "안 돼요", "안 돼", "안 되네", "안되요", "안돼요",
+    "되지 않", "되질 않", "안 되", "되지않",
+    "오류", "에러", "error", "문제",
+    "막혀", "막혔", "차단", "거부",
+    "왜 안", "왜안",
+)
+
+
+def _has_troubleshoot_signal(question: str) -> bool:
+    """질문에 트러블슈팅(고장/오류/접속불가) 의도가 보이면 True.
+
+    단순 정보 안내 핸들러(URL 안내, 로그인 시간 안내)가 이 시그널이 있는 질문에
+    발화하지 않도록 사용. None/빈 문자열도 안전.
+    """
+    if not question:
+        return False
+    q = question.lower()
+    return any(sig in q for sig in _TROUBLESHOOT_SIGNALS)
+
 
 def _is_redirect_answer(answer: str, metadata: dict | None) -> bool:
     """FAQ 답이 '어디서 확인/문의'만 안내하는 리다이렉트형인지 판정.
@@ -914,6 +938,12 @@ class AcademicGraph:
                 metadata["_source_pages"] = faq_pages
             # 정규화된 score 사용: FAQ는 0~1.0 범위 (그래프 handler와 동등)
             norm_score = _normalize_faq_score(raw_score)
+            # 2026-04-28: 매우 약한 매칭(norm_score < 0.1 = q_core 토큰 매칭률 10% 미만)은
+            # 무관 FAQ로 보고 컷. 예: "조기취업계 쓸 수 있는 조건" 쿼리가 "장바구니 제도",
+            # "성적 이의신청" 같은 FAQ에 stem 1개 우연 매칭되어 raw_score≈1.0 / max_raw≈24
+            # → norm_score≈0.04로 결과에 들어가 in_context 차지하고 정답 PDF 밀어내는 회귀 차단.
+            if norm_score < 0.1:
+                continue
             results.append(SearchResult(
                 text=text,
                 source=faq_source or f"FAQ:{data.get('faq_id', nid)}",
@@ -2059,17 +2089,27 @@ class AcademicGraph:
             answer = " ".join(answer_parts) if answer_parts else ""
             return [self._make_direct_result("\n".join(lines), answer, score=1.3)]
 
-        # 수강신청 사이트/URL 질문
+        # 수강신청 사이트/URL 질문 — 트러블슈팅 시그널이 없을 때만 발화.
+        # 2026-04-28: "수강신청 사이트 로그인이 안 돼요" 같은 질문이 "사이트" 키워드만 보고
+        # URL 안내로 마감되던 회귀 차단. 트러블슈팅이면 이 핸들러를 우회해 FAQ가 채택되도록.
         q_norm = self._normalize_text(question)
-        if any(kw in q_norm for kw in ("사이트", "주소", "홈페이지", "url")):
+        if (
+            any(kw in q_norm for kw in ("사이트", "주소", "홈페이지", "url"))
+            and not _has_troubleshoot_signal(question)
+        ):
             url = rule.get("수강신청사이트", "")
             if url:
                 answer = f"수강신청 사이트 주소는 {url} 입니다."
                 context = f"[수강신청]\n- 수강신청사이트: {url}"
                 return [self._make_direct_result(context, answer, score=1.3, node_data=rule)]
 
-        # 로그인 시간 질문
-        if "로그인" in q_norm and any(kw in q_norm for kw in ("시간", "언제", "가능", "몇시")):
+        # 로그인 시간 질문 — 트러블슈팅 시그널이 없을 때만 발화.
+        # ("로그인이 안 돼요"는 시간 안내가 아니라 학년 제한 안내가 정답.)
+        if (
+            "로그인" in q_norm
+            and any(kw in q_norm for kw in ("시간", "언제", "몇시"))
+            and not _has_troubleshoot_signal(question)
+        ):
             login_time = rule.get("로그인오픈시간", "")
             if login_time:
                 answer = f"수강신청 시작 전 {login_time}부터 로그인이 가능합니다."
