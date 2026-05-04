@@ -1022,3 +1022,145 @@ terms:
     en: Substitute Credit
     aliases_ko: [대체 과목 이수, 대체 수강, 대체이수 과목]
     aliases_en: [substitute credit, alternative credit, replacement course, substitute course completion]
+
+  # ════════════════════════════════════════════════════════════
+  # 증명서 발급 채널 (ops_en_gaps 보강 2026-05-04)
+  # 한국어 FAQ에 답변은 있으나 EN 쿼리가 매칭 실패하는 용어들 — FlashText로 ko_query 주입
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 무인증명발급기
+    en: Unmanned Certificate Issuing Machine
+    aliases_ko: [무인발급기, 무인증명, 자동발급기]
+    aliases_en: [unmanned issuing machine, unmanned certificate machine, self-service certificate kiosk,
+                 automated certificate kiosk, certificate vending machine, kiosk certificate]
+
+  - ko: 인터넷증명발급
+    en: Online Certificate Issuance
+    aliases_ko: [인터넷 증명발급, 온라인 증명발급, certpia, pufs certpia]
+    aliases_en: [online certificate issuance, online certificate, internet certificate issuance,
+                 digital certificate, e-certificate, online portal certificate, certpia]
+
+  - ko: 해외우편 (EMS)
+    en: EMS Overseas Mail
+    aliases_ko: [EMS, 해외우편, 해외 우편, EMS 우편, 해외 발송]
+    aliases_en: [EMS, overseas mail, international mail, overseas postal service,
+                 EMS overseas mail, EMS delivery, international postal delivery,
+                 overseas, while overseas, abroad, while abroad, from abroad,
+                 academic certificate, academic certificates, certificate from abroad]
+
+  - ko: 정부24
+    en: Government24
+    aliases_ko: [gov24, 정부 24, 정부24 사이트, www.gov.kr]
+    aliases_en: [government24, gov24, gov.kr, korean government portal,
+                 government online portal, e-government korea]
+
+  - ko: 팩스민원
+    en: Civil Fax Issuance
+    aliases_ko: [민원24, FAX민원, 팩스 민원, 공공기관 팩스, 주민센터 팩스]
+    aliases_en: [civil fax, fax issuance, civil fax service, minwon24,
+                 community center fax, public office fax issuance]
+
+  - ko: 대리발급
+    en: Proxy Issuance
+    aliases_ko: [대리 발급, 위임발급, 위임장 발급, 대리인 발급]
+    aliases_en: [proxy issuance, proxy certificate issuance, authorized agent issuance,
+                 power of attorney issuance, third party issuance, agent pickup]
+
+  - ko: 성적증명서
+    en: Academic Transcript
+    aliases_ko: [성적표, 영문 성적증명서, 성적 증명서, 학기별 성적증명서]
+    aliases_en: [academic transcript, transcript, official transcript, grade certificate,
+                 grade transcript, semester transcript, English transcript]
+
+  - ko: 휴학증명서
+    en: Leave of Absence Certificate
+    aliases_ko: [휴학 증명서, 휴학생 증명서]
+    aliases_en: [leave of absence certificate, certificate of leave, LOA certificate,
+                 proof of academic leave]
+
+  # ════════════════════════════════════════════════════════════
+  # 학생증 (ops_studid_* 보강 2026-05-04)
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 학생증
+    en: Student ID Card
+    aliases_ko: [학생증 발급, 학생 신분증, 일반학생증]
+    aliases_en: [student ID, student id, student ID card, school ID, student identification card,
+                 university ID card, BUFS student ID]
+
+  - ko: 학생증 재발급
+    en: Student ID Reissuance
+    aliases_ko: [학생증 분실, 학생증 재발급, 학생증 재신청]
+    aliases_en: [student ID reissue, student ID reissuance, lost student ID,
+                 replacement student ID, new student ID after loss]
+
+  - ko: 국제학생증 (ISIC)
+    en: International Student ID Card (ISIC)
+    aliases_ko: [ISIC, 국제학생증]
+    aliases_en: [international student ID, ISIC, ISIC card, international student identification]
+
+  - ko: 신입생 학생증
+    en: Freshman Student ID
+    aliases_ko: [신입생 학생증, 신입생증, 신입생 ID]
+    aliases_en: [freshman student ID, freshman ID, new student ID,
+                 incoming student ID, first-year student ID]
+
+  - ko: 신입생
+    en: Freshman
+    aliases_ko: [신입생, 1학년 신입, 새내기]
+    aliases_en: [freshman, freshmen, first-year student, new student, incoming student,
+                 first year, 1st year]
+
+  - ko: 오리엔테이션
+    en: Orientation
+    aliases_ko: [OT, 신입생 오리엔테이션, 신입생 OT]
+    aliases_en: [orientation, freshman orientation, new student orientation, OT]
+
+  # ════════════════════════════════════════════════════════════
+  # 이름·개인정보 변경 (ops_namechg_* 보강 2026-05-04)
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 이름 변경
+    en: Name Change
+    aliases_ko: [개명, 성명 변경, 이름변경, 학적 이름 변경]
+    aliases_en: [name change, change name, change my name, legal name change,
+                 update name, name update, change registered name]
+
+  - ko: 가족관계증명서
+    en: Family Relationship Certificate
+    aliases_ko: [가족관계 증명서, 가족 관계 증명서, 가족증명서, 호적등본]
+    aliases_en: [family register, family relationship certificate, family certificate,
+                 family registry, certificate of family relations]
+
+  - ko: 법원 판결문
+    en: Court Ruling
+    aliases_ko: [법원 판결, 판결문, 개명허가서, 법원 결정문]
+    aliases_en: [court ruling, court decision, court order, court judgment,
+                 court name change order, name change court order]
+
+  - ko: 개인정보 변경
+    en: Personal Information Update
+    aliases_ko: [개인정보 수정, 개인정보 갱신, 학적 정보 변경, 학적정보 수정]
+    aliases_en: [personal information update, update personal information,
+                 update personal info, change personal information,
+                 update student record, update contact information,
+                 change address, update phone number,
+                 personal information, personal info, my information,
+                 student record, student records, school records,
+                 update my information, update my profile]
+
+  # ════════════════════════════════════════════════════════════
+  # 학사지원 일반 (보강 2026-05-04)
+  # ════════════════════════════════════════════════════════════
+
+  - ko: 국제학생센터
+    en: International Student Center
+    aliases_ko: [국제학생 센터, 외국인학생 센터, 유학생 센터]
+    aliases_en: [international student center, international student office,
+                 office of international students, international affairs center]
+
+  - ko: 학사지원팀 방문
+    en: Office of Academic Support Visit
+    aliases_ko: [학사지원팀 창구, F104, 학사 방문]
+    aliases_en: [office of academic support, academic support office,
+                 visit academic support, academic support team office, F104 office]

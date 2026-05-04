@@ -29,6 +29,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
+# ── 사용자 노출 메시지 다국어화 (KO 기본, EN 미정의 시 KO fallback) ──
+# i18n.ts의 admin·UI 라벨과는 별개 — 백엔드 응답·검증 라벨은 여기서 관리.
+_USER_MSG: dict[str, dict[str, str]] = {
+    "stream_error": {
+        "ko": "처리 중 오류가 발생했습니다. 다시 시도해 주세요.",
+        "en": "An error occurred while processing your request. Please try again.",
+    },
+    "validation_warning_label": {
+        "ko": "*검증 경고:*",
+        "en": "*Validation warning:*",
+    },
+}
+
+
+def _user_msg(key: str, lang: str = "ko") -> str:
+    entry = _USER_MSG.get(key, {})
+    return entry.get(lang) or entry.get("ko", "")
+
+
 def _resolve_user_id(access_token: Optional[str]) -> Optional[int]:
     """SSE·POST 쿼리 파라미터로 전달된 JWT 토큰을 검증하고 user_id 반환.
 
@@ -49,34 +68,55 @@ def _resolve_user_id(access_token: Optional[str]) -> Optional[int]:
 
 # ── 연락처 단락 처리 (LLM 없이 즉시 응답) ──
 
-def _format_contact_answer(question: str) -> str:
-    """chat_app.py:_format_contact_answer() 동일 로직."""
+def _format_contact_answer(question: str, lang: str = "ko") -> str:
+    """연락처 쿼리 즉답. lang에 따라 라벨 다국어화 (EN/KO).
+
+    부서명(예: 영어학부)은 departments.json의 한국어 표기 유지 — 학교 측 공식 명칭이며,
+    EN 사용자에게도 한국어 명칭이 포함된 답변이 행정 문의 시 일관성을 보장.
+    """
     try:
         from app.contacts import get_dept_searcher
         searcher = get_dept_searcher()
         if not searcher.is_contact_query(question):
             return ""
-        results = searcher.search(question, top_k=3)
+        # EN 쿼리는 EnTermMapper로 KO 키워드 주입 후 검색 (is_contact_query와 동일 경로)
+        search_q = searcher._en_to_ko_query(question) if lang == "en" else question
+        results = searcher.search(search_q, top_k=3)
         if not results:
             return ""
-        lines = ["\U0001f4de **연락처 안내**\n"]
+        if lang == "en":
+            header = "\U0001f4de **Contact Information**\n"
+            ext_label = "Ext."
+            office_prefix = " | Office: "
+        else:
+            header = "\U0001f4de **연락처 안내**\n"
+            ext_label = "내선"
+            office_prefix = " | 사무실: "
+        lines = [header]
         for r in results:
             college_info = f" ({r.college})" if r.college else ""
-            office_info = f" | 사무실: {r.office}" if r.office else ""
+            office_info = f"{office_prefix}{r.office}" if r.office else ""
             lines.append(
                 f"- **{r.name}**{college_info}: "
-                f"`내선 {r.extension}` / {r.phone}{office_info}"
+                f"`{ext_label} {r.extension}` / {r.phone}{office_info}"
             )
         return "\n".join(lines)
     except Exception:
         return ""
 
 
-def _get_contact_footer(intent, entities: dict, question: str) -> str:
-    """chat_app.py:_get_contact_footer() 동일 로직."""
+def _get_contact_footer(intent, entities: dict, question: str, lang: str = "ko") -> str:
+    """답변 꼬리말로 학사/학과 연락처 첨부. lang에 따라 라벨 다국어화."""
     try:
         from app.models import Intent
         from app.contacts import get_dept_searcher
+
+        if lang == "en":
+            dept_label = "Contact"
+            haksa_label = "Academic Affairs"
+        else:
+            dept_label = "문의"
+            haksa_label = "학사 문의"
 
         _DEPT_KW = ("졸업시험", "과 행사", "학과 행사", "과행사", "학과행사")
         if any(kw in question for kw in _DEPT_KW):
@@ -85,7 +125,7 @@ def _get_contact_footer(intent, entities: dict, question: str) -> str:
                 results = get_dept_searcher().search(dept, top_k=1)
                 if results:
                     r = results[0]
-                    return f"\n\n---\n\U0001f4de **{r.name}** 문의: `{r.phone}`"
+                    return f"\n\n---\n\U0001f4de **{r.name}** {dept_label}: `{r.phone}`"
 
         _ACADEMIC = {
             Intent.GRADUATION_REQ, Intent.EARLY_GRADUATION,
@@ -96,7 +136,7 @@ def _get_contact_footer(intent, entities: dict, question: str) -> str:
         if intent in _ACADEMIC:
             haksa = get_dept_searcher().search("학사지원팀", top_k=1)
             if haksa:
-                return f"\n\n---\n\U0001f4de 학사 문의: **{haksa[0].name}** `{haksa[0].phone}`"
+                return f"\n\n---\n\U0001f4de {haksa_label}: **{haksa[0].name}** `{haksa[0].phone}`"
     except Exception:
         pass
     return ""
@@ -424,13 +464,21 @@ async def chat_stream(
     async def event_generator() -> AsyncGenerator[dict, None]:
         _t0 = time.monotonic()
 
+        # 예외 메시지 다국어화용 lang 사전 조회 (정상 경로엔 영향 없음)
+        _err_lang = "ko"
+        try:
+            _, _sd_peek = session_store.get_or_create(session_id)
+            _err_lang = _sd_peek.get("lang", "ko")
+        except Exception:
+            pass
+
         try:
             async for event in _inner_generator(_t0):
                 yield event
         except Exception as e:
             logger.error("채팅 파이프라인 오류: %s", e, exc_info=True)
             yield {"event": "error", "data": json.dumps(
-                {"message": "처리 중 오류가 발생했습니다. 다시 시도해 주세요."},
+                {"message": _user_msg("stream_error", _err_lang)},
                 ensure_ascii=False,
             )}
 
@@ -455,7 +503,7 @@ async def chat_stream(
         question = effective_question
 
         # 연락처 단락 처리
-        contact_answer = _format_contact_answer(question)
+        contact_answer = _format_contact_answer(question, lang=_current_lang)
         if contact_answer:
             _try_log_simple(question, contact_answer, sid, "CONTACT", _t0, user_id=user_id)
             yield {"event": "done", "data": json.dumps({
@@ -796,13 +844,13 @@ async def chat_stream(
             )
             if warnings:
                 warning_text = "\n".join(f"- {w}" for w in warnings)
-                full_answer += f"\n\n---\n*검증 경고:*\n{warning_text}"
+                full_answer += f"\n\n---\n{_user_msg('validation_warning_label', lang)}\n{warning_text}"
         except Exception:
             pass
         _ms_val = int((time.monotonic() - _t6) * 1000)
 
         # 연락처 꼬리말
-        footer = _get_contact_footer(analysis.intent, analysis.entities, question)
+        footer = _get_contact_footer(analysis.intent, analysis.entities, question, lang=lang)
         if footer:
             full_answer += footer
 
@@ -888,7 +936,7 @@ async def chat_sync(
     question = effective_question
 
     # 연락처 단락
-    contact = _format_contact_answer(question)
+    contact = _format_contact_answer(question, lang=_current_lang)
     if contact:
         _try_log_simple(question, contact, sid, "CONTACT", _t0, user_id=user_id)
         return ChatResponse(answer=contact, intent="CONTACT",
@@ -1088,12 +1136,12 @@ async def chat_sync(
         )
         if warnings:
             warning_text = "\n".join(f"- {w}" for w in warnings)
-            full_answer += f"\n\n---\n*검증 경고:*\n{warning_text}"
+            full_answer += f"\n\n---\n{_user_msg('validation_warning_label', lang)}\n{warning_text}"
     except Exception:
         pass
 
     # 연락처 꼬리말
-    footer = _get_contact_footer(analysis.intent, analysis.entities, question)
+    footer = _get_contact_footer(analysis.intent, analysis.entities, question, lang=lang)
     if footer:
         full_answer += footer
 
