@@ -435,6 +435,11 @@ async def chat_stream(
             )}
 
     async def _inner_generator(_t0: float) -> AsyncGenerator[dict, None]:
+        # 2026-04-28 fix: closure 변수 `question` 재할당 → Python이 local 추정 →
+        # `_handle_clarification_reply(session_data, question, ...)`에서
+        # UnboundLocalError. nonlocal로 outer scope 참조 명시.
+        nonlocal question
+
         # 세션 확인/생성
         sid, session_data = session_store.get_or_create(session_id)
 

@@ -185,6 +185,9 @@ def _reingest_faq(academic: list[dict], admin: list[dict]) -> None:
 def _to_faq_item(item: dict) -> FaqItem:
     fid = item.get("id") or ""
     is_admin = fid.startswith(_ADMIN_ID_PREFIX) or item.get("source") == "admin"
+    sqs = item.get("source_questions") or []
+    if not isinstance(sqs, list):
+        sqs = []
     return FaqItem(
         id=fid,
         category=item.get("category", ""),
@@ -194,6 +197,7 @@ def _to_faq_item(item: dict) -> FaqItem:
         created_by=item.get("created_by"),
         created_at=item.get("created_at"),
         source_question=item.get("source_question"),
+        source_questions=sqs,
         answer_type=item.get("answer_type"),
         student_types=item.get("student_types") or [],
         cohort_from=item.get("cohort_from"),
@@ -292,6 +296,15 @@ async def create_faq(body: FaqCreate, _=Depends(require_admin)):
         }
         if body.source_question and body.source_question.strip():
             item["source_question"] = body.source_question.strip()
+        # 복수 paraphrase (선택) — 공백 trim + 빈 항목 제외 + dedupe
+        if body.source_questions:
+            cleaned: list[str] = []
+            for s in body.source_questions:
+                s = (s or "").strip()
+                if s and s not in cleaned:
+                    cleaned.append(s)
+            if cleaned:
+                item["source_questions"] = cleaned
         # 학생 속성 분기 필드 (선택)
         if body.student_types:
             item["student_types"] = body.student_types
@@ -358,6 +371,17 @@ async def update_faq(faq_id: str, body: FaqUpdate, _=Depends(require_admin)):
                 target["source_question"] = sq
             else:
                 target.pop("source_question", None)
+        # 복수 paraphrase 업데이트: None=기존값 유지, []=모두 제거, [...]=교체
+        if body.source_questions is not None:
+            cleaned: list[str] = []
+            for s in body.source_questions:
+                s = (s or "").strip()
+                if s and s not in cleaned:
+                    cleaned.append(s)
+            if cleaned:
+                target["source_questions"] = cleaned
+            else:
+                target.pop("source_questions", None)
         # 학생 속성 분기 필드 업데이트 (None이면 기존값 유지)
         if body.student_types is not None:
             if body.student_types:
@@ -435,12 +459,26 @@ def _is_refusal(answer: str) -> bool:
 
 
 def _is_already_covered(question: str, all_faqs: list[dict], threshold: float) -> bool:
-    """기존 FAQ 중 하나라도 stem 커버리지 ≥ threshold 면 이미 답변 가능."""
+    """기존 FAQ 중 하나라도 stem 커버리지 ≥ threshold 면 이미 답변 가능.
+
+    검색면(ref_q)에는 폴리싱된 question + 학생 원문 paraphrase 들을 모두 포함:
+    - source_question (str, 단일 하위호환)
+    - source_questions (list[str], 신규 복수)
+    """
     for item in all_faqs:
         fq = item.get("question") or ""
         fa = item.get("answer") or ""
-        sq = item.get("source_question") or ""
-        ref_q = f"{fq} {sq}".strip() if sq else fq
+        paraphrases: list[str] = []
+        sq = (item.get("source_question") or "").strip()
+        if sq:
+            paraphrases.append(sq)
+        sqs = item.get("source_questions") or []
+        if isinstance(sqs, list):
+            for s in sqs:
+                s = (s or "").strip()
+                if s and s not in paraphrases:
+                    paraphrases.append(s)
+        ref_q = (fq + " " + " ".join(paraphrases)).strip() if paraphrases else fq
         if _stem_coverage(question, ref_q, fa) >= threshold:
             return True
     return False
