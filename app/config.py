@@ -223,6 +223,19 @@ class PipelineConfig:
         os.getenv("EVIDENCE_SLICING_CONTEXT_LINES", "2")
     )
 
+    # ── EN 쿼리 dense retrieval 전략 ──────────────────────────────
+    # EN 쿼리는 EnTermMapper로 ko_query를 추출한 뒤, 길이 임계치 이상이면
+    # ko_query만 임베딩에 사용 (mono-lingual KO 매칭, 점수 강함).
+    # 임계치 미만이면 ko_query + EN 원문 결합 (cross-lingual, 점수 약함).
+    #
+    # 2026-05-04 실측: bge-m3 cross-lingual 점수가 mono-lingual 대비 ~65배 낮아
+    # 정답 chunk가 retrieve돼도 다운스트림 confidence 기준 미달로 거절됨.
+    # 짧은 KO 학술 용어(예: "성적증명서" 5자, "학생증" 3자)도 단독 모드로
+    # 보내야 retrieval 신호가 살아남는다 — 임계치를 낮게 잡는다.
+    en_vector_ko_query_threshold: int = int(
+        os.getenv("EN_VECTOR_KO_QUERY_THRESHOLD", "3")
+    )
+
 
 @dataclass
 class TranscriptRulesConfig:

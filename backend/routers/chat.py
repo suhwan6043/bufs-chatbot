@@ -841,6 +841,7 @@ async def chat_stream(
                 answer=full_answer,
                 context=merged.formatted_context,
                 search_results=all_results,
+                lang=lang,
             )
             if warnings:
                 warning_text = "\n".join(f"- {w}" for w in warnings)
@@ -1133,6 +1134,7 @@ async def chat_sync(
             answer=full_answer,
             context=merged.formatted_context,
             search_results=all_results,
+            lang=lang,
         )
         if warnings:
             warning_text = "\n".join(f"- {w}" for w in warnings)
