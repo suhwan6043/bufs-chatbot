@@ -203,14 +203,15 @@ class QueryRouter:
             ]
 
         # 원칙 2: 임베딩 1회만 수행 → Phase 1/2/2.5 모두에 재사용
-        # EN 쿼리 검색 전략:
-        #   - ko_query 길이 >= 7자: 구체적 학술 용어(예: "성적평가 선택제도") →
-        #     KO만 사용 (EN 문장이 KO 용어를 희석하는 것을 방지)
-        #   - ko_query 길이 < 7자: 너무 일반적 용어(예: "재수강") →
-        #     ko_query + EN 원문 결합 (문맥 정보 보존)
+        # EN 쿼리 검색 전략 (settings.pipeline.en_vector_ko_query_threshold 기준):
+        #   - ko_query 길이 ≥ 임계치: KO만 사용 (mono-lingual KO 매칭, 점수 강함)
+        #   - ko_query 길이 < 임계치: ko_query + EN 원문 결합 (cross-lingual, 점수 약함)
         #   - ko_query 없음: BGE-M3 cross-lingual로 EN 원문 사용
+        # 2026-05-04 실측: 임계치 7 → 3으로 낮춤 — 짧은 KO 학술 용어도 단독 모드로
+        # 보내야 cross-lingual 점수 폭락(~65배) 회피.
+        _ko_threshold = settings.pipeline.en_vector_ko_query_threshold
         if analysis.lang == "en" and analysis.ko_query:
-            if len(analysis.ko_query) >= 7:
+            if len(analysis.ko_query) >= _ko_threshold:
                 search_query = analysis.ko_query
             else:
                 search_query = f"{analysis.ko_query} {query}"
@@ -307,10 +308,12 @@ class QueryRouter:
                 logger.warning("BM25 병렬 검색 실패 (무시): %s", e)
 
         # 원칙 2: 리랭커 스킵 — 후보 ≤3이면 Cross-Encoder 건너뜀 (재순위화 의미 없음)
+        # 2026-05-04: EN 쿼리에서 reranker가 원본 EN 쿼리로 cross-encoder 점수 매기면
+        # cross-lingual 점수 폭락(~65배). dense retrieval과 동일하게 search_query 사용.
         reranker = self.reranker
         if reranker and len(candidates) > 3:
             return reranker.rerank(
-                query=query,
+                query=search_query,
                 results=candidates,
                 top_k=settings.reranker.top_k,
                 analysis=analysis,  # Phase 2 Step B: asks_url URL-aware boost
