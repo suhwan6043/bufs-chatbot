@@ -39,6 +39,9 @@ class LLMConfig:
     timeout: int = int(_env_llm("LLM_TIMEOUT", "OLLAMA_TIMEOUT", "60"))
     response_cache_ttl_seconds: int = int(os.getenv("LLM_RESPONSE_CACHE_TTL", "3600"))
     response_cache_max_entries: int = int(os.getenv("LLM_RESPONSE_CACHE_MAX_SIZE", "256"))
+    # 동시 LLM 스트리밍 상한 (백엔드 측 백프레셔). Ollama OLLAMA_NUM_PARALLEL과
+    # 일치시키는 것이 권장 (예: 12GB VRAM에서 둘 다 2). 초과 요청은 큐에서 대기.
+    max_concurrent: int = int(os.getenv("LLM_MAX_CONCURRENT", "2"))
     # "ollama" → 네이티브 /api/chat (think:false 실제 동작), "openai" → /v1/chat/completions
     api_type: str = os.getenv("LLM_API_TYPE", "openai")
 
