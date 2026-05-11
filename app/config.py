@@ -274,6 +274,22 @@ class ConversationConfig:
     # ── follow-up 감지 ──
     follow_up_max_words: int = int(os.getenv("CONV_FOLLOW_UP_MAX_WORDS", "5"))
 
+    # ── multi-task 1 (2026-05-11): 통합 쿼리 이해 (LLM JSON) ──
+    # follow_up_detector + query_rewriter + query_analyzer 룰 3종을 gemma3:4b
+    # 단일 JSON 호출로 통합. 실패 시 메인 LLM 폴백 → 룰 폴백 (3단계 폴백).
+    # 원칙 4(하드코딩 금지): 모델·임계치는 env 오버라이드.
+    understanding_enabled: bool = os.getenv("CONV_UNDERSTANDING_ENABLED", "false").lower() == "true"
+    # 1차 모델 — 비우면 rewrite_model(gemma3:4b)와 동일
+    understand_model: str = os.getenv("CONV_UNDERSTAND_MODEL", "")
+    # 1차 모델 전용 엔드포인트 — 비우면 rewrite_base_url 또는 메인 LLM URL
+    understand_base_url: str = os.getenv("CONV_UNDERSTAND_BASE_URL", "")
+    understand_timeout_sec: float = float(os.getenv("CONV_UNDERSTAND_TIMEOUT_SEC", "1.5"))
+    understand_max_tokens: int = int(os.getenv("CONV_UNDERSTAND_MAX_TOKENS", "320"))
+    # 2차 폴백 모델 — 비우면 메인 settings.llm.model (qwen3:8b 등)
+    understand_fallback_model: str = os.getenv("CONV_UNDERSTAND_FALLBACK_MODEL", "")
+    understand_fallback_base_url: str = os.getenv("CONV_UNDERSTAND_FALLBACK_BASE_URL", "")
+    understand_fallback_timeout_sec: float = float(os.getenv("CONV_UNDERSTAND_FALLBACK_TIMEOUT_SEC", "5.0"))
+
 
 @dataclass
 class Settings:
