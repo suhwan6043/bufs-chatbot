@@ -1139,6 +1139,14 @@ class AcademicGraph:
                                     e.get("course_name", "")),
             "SCHOLARSHIP":      lambda s,sid,st,e,q: s._query_scholarship(e, q),
             "LEAVE_OF_ABSENCE": lambda s,sid,st,e,q: s._query_leave_of_absence(e, q),
+            # ── multi-task 1 (2026-05-11): 분할 자식은 부모 핸들러 공유 ──
+            "REGISTRATION_GENERAL":      lambda s,sid,st,e,q: s._query_registration(sid, e, q),
+            "GRADE_OPTION":              lambda s,sid,st,e,q: s._query_registration(sid, e, q),
+            "REREGISTRATION":            lambda s,sid,st,e,q: s._query_registration(sid, e, q),
+            "SCHOLARSHIP_APPLY":         lambda s,sid,st,e,q: s._query_scholarship(e, q),
+            "SCHOLARSHIP_QUALIFICATION": lambda s,sid,st,e,q: s._query_scholarship(e, q),
+            "TUITION_BENEFIT":           lambda s,sid,st,e,q: s._query_scholarship(e, q),
+            # CERTIFICATE / CONTACT / FACILITY: 전용 그래프 노드 없음 → FAQ 그래프만 사용 (handler None)
         }
         handler = _INTENT_HANDLERS.get(intent)
         if handler:
@@ -2823,6 +2831,14 @@ class AcademicGraph:
         "LEAVE_OF_ABSENCE": ["휴복학"],
         "SCHEDULE": ["일정"],
         "EARLY_GRADUATION": ["졸업"],
+        # ── multi-task 1 (2026-05-11): 분할 자식은 부모 태그 상속 ──
+        "REGISTRATION_GENERAL":      ["수강신청"],
+        "GRADE_OPTION":              ["수강신청"],
+        "REREGISTRATION":            ["수강신청"],
+        "SCHOLARSHIP_APPLY":         ["장학금"],
+        "SCHOLARSHIP_QUALIFICATION": ["장학금"],
+        "TUITION_BENEFIT":           ["장학금", "등록금"],
+        # CERTIFICATE / CONTACT / FACILITY: 별도 태그 없음, 공지 검색은 키워드 fallback에 의존
     }
 
     def _query_notices(

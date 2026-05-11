@@ -39,6 +39,16 @@ _INTENT_FALLBACK_TERM: dict[str, dict] = {
     "COURSE_INFO":       {"ko": "교과목",     "en": "Course"},
     "ALTERNATIVE":       {"ko": "대체과목",   "en": "Alternative Course"},
     "TRANSCRIPT":        {"ko": "성적표",     "en": "Transcript"},
+    # ── multi-task 1 (2026-05-11): 분할 자식은 부모 용어 상속 ──
+    "REGISTRATION_GENERAL":      {"ko": "수강신청",   "en": "Course Registration"},
+    "GRADE_OPTION":              {"ko": "성적평가 선택", "en": "Grade Option"},
+    "REREGISTRATION":            {"ko": "재수강",     "en": "Re-registration"},
+    "SCHOLARSHIP_APPLY":         {"ko": "장학금 신청", "en": "Scholarship Application"},
+    "SCHOLARSHIP_QUALIFICATION": {"ko": "장학금 자격", "en": "Scholarship Qualification"},
+    "TUITION_BENEFIT":           {"ko": "등록금",     "en": "Tuition"},
+    "CERTIFICATE":               {"ko": "증명서",     "en": "Certificate"},
+    "CONTACT":                   {"ko": "학과사무실", "en": "Department Office"},
+    "FACILITY":                  {"ko": "학생포털",   "en": "Student Portal"},
 }
 
 # ── EN One-Pass 시스템 프롬프트 ───────────────────────────────────────────────

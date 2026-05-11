@@ -65,6 +65,18 @@ _INTENT_WEIGHTS = {
     # 이전: graph=0.8로 벡터에 완전히 묻힘 → 전반적 규정 질의에서 그래프 노드 미활용.
     # 개선: graph=1.2, vector=1.3 → 동등 경쟁 + 벡터 약우선.
     Intent.GENERAL:          (1.2, 1.3),   # Global 테마 요약에도 그래프 활용
+    # ── multi-task 1 (2026-05-11): 분할 자식은 부모 값 상속 ──
+    Intent.REGISTRATION_GENERAL:      (1.0, 1.5),
+    # GRADE_OPTION은 그래프 노드 없음 (P/NP·등급제는 PDF/FAQ만) → 그래프 약화
+    Intent.GRADE_OPTION:              (0.5, 1.5),
+    Intent.REREGISTRATION:            (1.0, 1.5),
+    Intent.SCHOLARSHIP_APPLY:         (0.8, 1.5),
+    Intent.SCHOLARSHIP_QUALIFICATION: (0.8, 1.5),
+    Intent.TUITION_BENEFIT:           (0.8, 1.5),
+    # CERTIFICATE/CONTACT/FACILITY는 그래프 FAQ 노드가 있으면 활용
+    Intent.CERTIFICATE:               (1.2, 1.3),
+    Intent.CONTACT:                   (1.2, 1.3),
+    Intent.FACILITY:                  (1.2, 1.3),
 }
 _DEFAULT_WEIGHTS = (1.2, 1.2)  # Intent 미지정 시 기본: 동등 경쟁
 
@@ -93,6 +105,16 @@ _INTENT_BUDGET = {
     Intent.EARLY_GRADUATION: 1600, # 1200 → 1600
     Intent.MAJOR_CHANGE:   1600,   # 1200 → 1600: 다년도 표 수용
     Intent.TRANSCRIPT:     1600,
+    # ── multi-task 1 (2026-05-11): 분할 자식은 부모 값 상속 ──
+    Intent.REGISTRATION_GENERAL:      1500,
+    Intent.GRADE_OPTION:              1200,  # 작은 토픽, 부모보다 축소
+    Intent.REREGISTRATION:            1500,
+    Intent.SCHOLARSHIP_APPLY:         1200,
+    Intent.SCHOLARSHIP_QUALIFICATION: 1200,
+    Intent.TUITION_BENEFIT:           1000,  # 등록금 토픽은 짧음
+    Intent.CERTIFICATE:               800,   # 증명서는 단답형
+    Intent.CONTACT:                   600,   # 연락처는 매우 단답형
+    Intent.FACILITY:                  1000,
 }
 
 # RRF 상수
@@ -370,6 +392,15 @@ class ContextMerger:
             Intent.LEAVE_OF_ABSENCE: ("휴학",),
             Intent.SCHOLARSHIP:      ("장학", "TA"),
             Intent.ALTERNATIVE:      ("대체과목", "동일과목"),
+            # ── multi-task 1 (2026-05-11): 분할 자식 + 신 카테고리 ──
+            Intent.SCHOLARSHIP_APPLY:         ("장학", "TA"),
+            Intent.SCHOLARSHIP_QUALIFICATION: ("장학", "TA"),
+            Intent.TUITION_BENEFIT:           ("등록금", "납부", "반환"),
+            Intent.GRADE_OPTION:              ("P/NP", "성적포기", "등급제"),
+            Intent.REREGISTRATION:            ("재수강", "이수구분"),
+            Intent.CERTIFICATE:               ("증명서", "발급"),
+            Intent.CONTACT:                   ("연락처", "사무실"),
+            Intent.FACILITY:                  ("포털", "LMS", "sugang"),
         }
         _focus_kws = _INTENT_FOCUS_KWS.get(intent)
         if _focus_kws and all_results and len(all_results) > 3:
