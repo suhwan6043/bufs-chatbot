@@ -278,17 +278,24 @@ class ConversationConfig:
     # follow_up_detector + query_rewriter + query_analyzer 룰 3종을 gemma3:4b
     # 단일 JSON 호출로 통합. 실패 시 메인 LLM 폴백 → 룰 폴백 (3단계 폴백).
     # 원칙 4(하드코딩 금지): 모델·임계치는 env 오버라이드.
+    #
+    # 활성화 방법: .env에 CONV_UNDERSTANDING_ENABLED=true 명시 + backend 재시작.
+    # default OFF 사유: 평가 통과 전 운영 영향 회피. 평가 절차는 scripts/eval_contains_f1.py
+    # 로 164문항 contains-F1 회귀 -1pp 이내 확인 후 default ON 전환(별도 PR).
     understanding_enabled: bool = os.getenv("CONV_UNDERSTANDING_ENABLED", "false").lower() == "true"
     # 1차 모델 — 비우면 rewrite_model(gemma3:4b)와 동일
     understand_model: str = os.getenv("CONV_UNDERSTAND_MODEL", "")
     # 1차 모델 전용 엔드포인트 — 비우면 rewrite_base_url 또는 메인 LLM URL
     understand_base_url: str = os.getenv("CONV_UNDERSTAND_BASE_URL", "")
-    understand_timeout_sec: float = float(os.getenv("CONV_UNDERSTAND_TIMEOUT_SEC", "1.5"))
+    # 1차 타임아웃 — sanity check 결과 CPU 호스트에서 gemma3:4b가 4초 (1100토큰
+    # 프롬프트). GPU 컨테이너에서는 0.5~1s 예상. 보수적 3.0s default.
+    understand_timeout_sec: float = float(os.getenv("CONV_UNDERSTAND_TIMEOUT_SEC", "3.0"))
     understand_max_tokens: int = int(os.getenv("CONV_UNDERSTAND_MAX_TOKENS", "320"))
     # 2차 폴백 모델 — 비우면 메인 settings.llm.model (qwen3:8b 등)
     understand_fallback_model: str = os.getenv("CONV_UNDERSTAND_FALLBACK_MODEL", "")
     understand_fallback_base_url: str = os.getenv("CONV_UNDERSTAND_FALLBACK_BASE_URL", "")
-    understand_fallback_timeout_sec: float = float(os.getenv("CONV_UNDERSTAND_FALLBACK_TIMEOUT_SEC", "5.0"))
+    # 2차 타임아웃 — qwen3:8b 같은 큰 모델 응답 시간 + JSON 모드 처리 여유.
+    understand_fallback_timeout_sec: float = float(os.getenv("CONV_UNDERSTAND_FALLBACK_TIMEOUT_SEC", "10.0"))
 
 
 @dataclass
