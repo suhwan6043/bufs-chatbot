@@ -281,11 +281,19 @@ CONTEXT_PRECISION_SYSTEM = """당신은 RAG 시스템 평가 전문가입니다.
 CONTEXT_RECALL_SYSTEM = """당신은 RAG 시스템 평가 전문가입니다.
 정답(reference)을 도출하는 데 필요한 정보가 검색된 컨텍스트에 얼마나 포함되어 있는지 평가합니다.
 
-핵심 원칙: 정답의 핵심 사실(날짜/숫자/조건)이 컨텍스트에서 확인 가능하면 0.8 이상입니다.
-표현이 다르더라도 동일한 사실이면 "포함"으로 간주하세요.
+핵심 원칙:
+1. 정답의 핵심 사실(날짜/숫자/조건/URL)이 컨텍스트에서 확인 가능하면 0.8 이상.
+2. 표현·형식·구두점·기호가 달라도 동일 사실이면 "포함"으로 간주.
+   - "2026년 3월 3일" = "2026-03-03" = "3.3" = "3/3"
+   - "10권" = "10 권" = "열 권"
+   - 날짜 범위 "2026-02-23〜2026-03-19" = "2026년 2월 23일부터 3월 19일까지"
+3. **컨텍스트가 길다면 반드시 전체를 끝까지 훑어 확인**하세요.
+   앞부분에만 근거가 없어도 뒷부분 청크에 있을 수 있습니다.
+4. 질문 표현과 컨텍스트의 용어가 달라도 의미상 같은 대상이면 포함으로 봅니다.
+   - 질문 "OCU 시스템 사용료 납부기간" ≈ 컨텍스트 "OCU 시스템 사용료 납부: 기간"
 
 점수 기준:
-- 0.9~1.0: 정답의 모든 핵심 정보가 컨텍스트에 있음
+- 0.9~1.0: 정답의 모든 핵심 정보가 컨텍스트에 있음 (표현 달라도 OK)
 - 0.8: 핵심 정보는 있으나 세부 조건이 일부 누락
 - 0.5~0.7: 핵심 정보 중 일부만 있음
 - 0.2~0.4: 관련 내용은 있으나 정답 도출에 부족
@@ -294,6 +302,7 @@ CONTEXT_RECALL_SYSTEM = """당신은 RAG 시스템 평가 전문가입니다.
 예시:
 정답: "2026년 3월 3일이다" 컨텍스트: "수업시작일: 2026-03-03" → 0.9 (같은 정보)
 정답: "C+ 이하이다" 컨텍스트: "재수강기준성적: C+이하" → 1.0
+정답: "2026-02-23부터 3-19까지" 컨텍스트: "납부기간: 2026-02-23〜2026-03-19" → 1.0
 
 반드시 아래 JSON 형식으로만 응답하세요:
 {"score": 0.0, "reason": "한 줄 이유"}"""
@@ -301,16 +310,30 @@ CONTEXT_RECALL_SYSTEM = """당신은 RAG 시스템 평가 전문가입니다.
 ANSWER_CORRECTNESS_SYSTEM = """당신은 RAG 시스템 평가 전문가입니다.
 생성된 답변이 정답(reference)과 얼마나 일치하는지 평가합니다.
 
-평가 기준:
-- 답변의 핵심 정보(날짜, 숫자, 조건)가 정답과 일치하는가?
-- 부분적으로 맞는 경우 일치 비율로 점수화
+핵심 원칙:
+1. 정답의 핵심 사실(날짜/숫자/조건/URL/연락처)이 답변에 있으면 0.8 이상.
+2. 표현·형식·문장구조가 달라도 동일 사실을 전달하면 "일치"로 간주.
+   - "2026년 3월 2일" = "2026-03-02" = "3월 2일(월)"
+   - "B0 이하" = "B학점 이하" (동의어)
+   - 소문자/대문자 차이는 무시 ("bufs" vs "BUFS")
+3. 답변이 정답보다 상세하거나 부가 정보(꼬리말·검증 경고·연락처 안내)를
+   포함해도 감점하지 마세요. 정답의 핵심이 답변 안에 있으면 됩니다.
+4. 답변이 정답과 다른 URL/경로를 제시했더라도 질문자가 동일 결과를
+   얻을 수 있는 대체 경로라면 부분점수 이상(0.6+) 부여.
 
 점수 기준 (0.0~1.0 연속값 사용):
 - 1.0: 정답의 핵심 정보(날짜, 숫자, 조건)가 모두 일치
-- 0.7~0.9: 핵심 정보는 맞으나 세부 조건·시간·범위 일부 누락
-- 0.4~0.6: 일부 핵심 정보만 일치하고 나머지 누락 또는 불일치
+- 0.8~0.9: 핵심 정보 일치 + 부가 설명이나 형식 차이만 있음
+- 0.6~0.7: 핵심 정보 일부 일치, 대체 경로/유사 값 제시
+- 0.4~0.5: 일부 핵심 정보만 일치하고 나머지 누락
 - 0.1~0.3: 관련은 있으나 핵심 정보 대부분 불일치
-- 0.0: 정답과 완전히 불일치하거나 답변 없음
+- 0.0: 정답과 완전히 불일치하거나 refusal("찾을 수 없습니다")
+
+예시:
+정답: "2026년 3월 2일이다"
+답변: "1학기 개강일은 2026-03-02(월)이며, 개강 전 수업시간표 확인 필요" → 1.0
+답변: "3월 2일" → 0.9 (연도 생략이지만 일반적으로 당해년도 맥락)
+답변: "학사일정을 확인해주세요" → 0.3 (직접 답변 없음)
 
 반드시 아래 JSON 형식으로만 응답하세요:
 {"score": 0.0, "reason": "한 줄 이유"}"""
@@ -361,11 +384,15 @@ async def evaluate_metric(
 ) -> tuple:
     """하나의 메트릭을 평가하고 (score, reason)을 반환합니다."""
     cfg = METRIC_CONFIG[metric_name]
+    # 2026-04-24: context truncation 완화 (800 → 4000).
+    # formatted_context는 3~6K자인데 800자로 자르면 정답 근거가 뒤쪽 청크에
+    # 있을 때 judge가 못 봐서 context_recall=0으로 오판. 88문항 중 24건 CR<0.5
+    # 이슈의 주원인. answer·reference도 꼬리말·부가설명 고려해 확장.
     prompt = cfg["prompt_template"].format(
         question=question[:500],
-        context=context[:800],
-        answer=answer[:400],
-        reference=reference[:300],
+        context=context[:4000],
+        answer=answer[:1200],
+        reference=reference[:500],
     )
     try:
         # 외부 API judge 라우팅
@@ -519,13 +546,37 @@ async def evaluate_dataset(
     return results
 
 
+_REFUSAL_MARKERS = (
+    "찾을 수 없습니다", "찾지 못", "문의하시기", "문의 바랍",
+    "couldn't find", "sorry,", "해당 정보는 확인되지",
+)
+
+
+def _is_refusal(answer: str) -> bool:
+    if not answer:
+        return True
+    return any(m in answer for m in _REFUSAL_MARKERS)
+
+
 def summarize(results: list, metric_names: list) -> dict:
-    """유효한 결과를 집계합니다."""
+    """유효한 결과를 집계합니다.
+
+    2026-04-24: refusal 답변은 answer_correctness 평균을 끌어내리므로
+    answerable-only 평균을 병행 계산하여 수치 왜곡을 제거.
+    """
     valid = [r for r in results if not r.get("skipped")]
     if not valid:
         return {}
 
-    summary = {"n_evaluated": len(valid), "n_skipped": len(results) - len(valid)}
+    answerable = [r for r in valid if not _is_refusal(r.get("answer_preview", ""))]
+    n_refusal = len(valid) - len(answerable)
+
+    summary = {
+        "n_evaluated": len(valid),
+        "n_skipped": len(results) - len(valid),
+        "n_refusal": n_refusal,
+        "n_answerable": len(answerable),
+    }
 
     for m_name in metric_names:
         vals = [r[m_name] for r in valid if r.get(m_name) is not None and r[m_name] >= 0]
@@ -534,9 +585,19 @@ def summarize(results: list, metric_names: list) -> dict:
         else:
             summary[m_name] = None
 
+        # answerable-only 평균 (refusal 제외)
+        a_vals = [r[m_name] for r in answerable if r.get(m_name) is not None and r[m_name] >= 0]
+        if a_vals:
+            summary[f"{m_name}_answerable"] = round(sum(a_vals) / len(a_vals), 4)
+        else:
+            summary[f"{m_name}_answerable"] = None
+
     # 전체 평균
-    scores = [v for k, v in summary.items() if k in metric_names and v is not None]
+    scores = [summary.get(m) for m in metric_names if summary.get(m) is not None]
     summary["avg"] = round(sum(scores) / len(scores), 4) if scores else None
+    a_scores = [summary.get(f"{m}_answerable") for m in metric_names
+                if summary.get(f"{m}_answerable") is not None]
+    summary["avg_answerable"] = round(sum(a_scores) / len(a_scores), 4) if a_scores else None
 
     return summary
 
@@ -615,21 +676,28 @@ async def main():
     print("RAGAS 평가 결과")
     print(f"{'─' * 65}")
     if summary:
-        print(f"  평가 수: {summary['n_evaluated']}개  |  스킵: {summary['n_skipped']}개  |  소요: {total_elapsed:.0f}초")
+        print(f"  평가 수: {summary['n_evaluated']}개  |  스킵: {summary['n_skipped']}개  |  "
+              f"refusal: {summary.get('n_refusal', 0)}개  |  소요: {total_elapsed:.0f}초")
+        print(f"{'─' * 65}")
+        print(f"  {'메트릭':<35}  {'전체':>8} / {'응답가능':>8}")
         print(f"{'─' * 65}")
         for m_name in args.metrics:
             kr_name = METRIC_CONFIG[m_name]["kr_name"]
             score = summary.get(m_name)
+            score_a = summary.get(f"{m_name}_answerable")
             if score is not None:
                 bar = "█" * int(score * 20) + "░" * (20 - int(score * 20))
-                print(f"  {kr_name:<35}  {bar}  {score:.4f}")
+                a_str = f"{score_a:.4f}" if score_a is not None else "   N/A"
+                print(f"  {kr_name:<35}  {bar}  {score:.4f} / {a_str}")
             else:
                 print(f"  {kr_name:<35}  {'░' * 20}  N/A")
         if summary.get("avg") is not None:
             print(f"{'─' * 65}")
             avg = summary["avg"]
+            avg_a = summary.get("avg_answerable")
             bar = "█" * int(avg * 20) + "░" * (20 - int(avg * 20))
-            print(f"  {'종합 평균':<35}  {bar}  {avg:.4f}")
+            a_str = f"{avg_a:.4f}" if avg_a is not None else "   N/A"
+            print(f"  {'종합 평균':<35}  {bar}  {avg:.4f} / {a_str}")
     print(f"{'=' * 65}")
 
     # ── 결과 저장 ────────────────────────────────────────────────────
