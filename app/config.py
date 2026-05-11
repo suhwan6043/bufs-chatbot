@@ -218,6 +218,14 @@ class PipelineConfig:
     evidence_slicing_context_lines: int = int(
         os.getenv("EVIDENCE_SLICING_CONTEXT_LINES", "2")
     )
+    # M7 (2026-04-27): direct_answer 단락 응답(LLM 우회)은 기본 OFF.
+    # direct_answer는 컨텍스트의 일부로만 사용되고, LLM이 항상 생성한다.
+    # .env DIRECT_ANSWER_BYPASS_LLM=true 시 (구) 우회 동작 복구.
+    # chat.py:591/962 의 if 조건이 참조하지만 main의 PipelineConfig에 필드 자체가
+    # 누락되어 있어 호출 시 AttributeError 발생. multi-task 1 범위 밖의 hotfix.
+    direct_answer_bypass_llm: bool = os.getenv(
+        "DIRECT_ANSWER_BYPASS_LLM", "false"
+    ).strip().lower() in ("1", "true", "yes")
 
 
 @dataclass
