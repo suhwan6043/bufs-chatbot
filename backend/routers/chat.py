@@ -416,39 +416,73 @@ async def chat_stream(
         _conv_cfg = _settings.conversation
         prior_messages = session_data.get("messages") or []
         search_query = question  # retrieval·LLM에 실제로 건네는 쿼리 (잠재적으로 rewritten)
-        _t_fu = time.monotonic()
-        follow_up_signal = follow_up_detector.detect(question, prior_messages)
-        _ms_follow_up = int((time.monotonic() - _t_fu) * 1000)
-        _ms_rewrite = 0
-        if _conv_cfg.rewrite_enabled and follow_up_signal.is_follow_up:
-            _t_rw = time.monotonic()
-            try:
-                search_query = await query_rewriter.rewrite(
-                    question,
-                    prior_messages,
-                    skip_rule_stage=follow_up_signal.skip_rule_stage,
-                    lang=session_data.get("lang", "ko"),
-                )
-            except Exception as e:
-                logger.debug("query_rewriter 실패, 원본 사용: %s", e)
-                search_query = question
-            _ms_rewrite = int((time.monotonic() - _t_rw) * 1000)
+        lang = session_data.get("lang", "ko")
+
+        if _conv_cfg.understanding_enabled:
+            # ── multi-task 1 (2026-05-11): 통합 쿼리 이해 (gemma3:4b JSON) ──
+            # follow_up_detector + query_rewriter + analyzer 룰 3종을 단일 LLM 호출로 통합.
+            # 실패 시 메인 LLM 폴백 → 룰 폴백 (3단계 폴백).
+            from app.pipeline import query_understanding
+            _t_u = time.monotonic()
+            _understand = await query_understanding.understand(
+                question, prior_messages, lang=lang,
+            )
+            _ms_understand = int((time.monotonic() - _t_u) * 1000)
+            follow_up_signal = _understand.follow_up_signal
+            search_query = _understand.rewritten_query
+            analysis = _understand.analysis
+            if lang == "en":
+                analysis.lang = "en"
+            analysis, transcript_context, student_context = _enrich_analysis(
+                search_query, analysis, router_inst, session_data, user_id=user_id
+            )
+            # 통합 호출은 분리 timing 불가 — 전체를 rewrite_ms로 기록 (PIPELINE_TIMING 호환)
+            _ms_follow_up = 0
+            _ms_rewrite = _ms_understand
+            _ms_analyze = 0
+            logger.info(
+                "understand[%s] %dms intent=%s confidence=%.2f",
+                _understand.source, _ms_understand,
+                analysis.intent.value, _understand.intent_confidence,
+            )
             if search_query != question:
                 logger.info(
                     "follow-up[%s] rewrite: '%s' → '%s'",
                     follow_up_signal.reason, question[:60], search_query[:60],
                 )
+        else:
+            _t_fu = time.monotonic()
+            follow_up_signal = follow_up_detector.detect(question, prior_messages)
+            _ms_follow_up = int((time.monotonic() - _t_fu) * 1000)
+            _ms_rewrite = 0
+            if _conv_cfg.rewrite_enabled and follow_up_signal.is_follow_up:
+                _t_rw = time.monotonic()
+                try:
+                    search_query = await query_rewriter.rewrite(
+                        question,
+                        prior_messages,
+                        skip_rule_stage=follow_up_signal.skip_rule_stage,
+                        lang=lang,
+                    )
+                except Exception as e:
+                    logger.debug("query_rewriter 실패, 원본 사용: %s", e)
+                    search_query = question
+                _ms_rewrite = int((time.monotonic() - _t_rw) * 1000)
+                if search_query != question:
+                    logger.info(
+                        "follow-up[%s] rewrite: '%s' → '%s'",
+                        follow_up_signal.reason, question[:60], search_query[:60],
+                    )
 
-        # Stage 1: 질문 분석 (rewritten이 있으면 rewritten 기반으로 분석 → intent/entity 정확도↑)
-        _t1 = time.monotonic()
-        analysis = analyzer.analyze(search_query)
-        lang = session_data.get("lang", "ko")
-        if lang == "en":
-            analysis.lang = "en"
-        analysis, transcript_context, student_context = _enrich_analysis(
-            search_query, analysis, router_inst, session_data, user_id=user_id
-        )
-        _ms_analyze = int((time.monotonic() - _t1) * 1000)
+            # Stage 1: 질문 분석 (rewritten이 있으면 rewritten 기반으로 분석 → intent/entity 정확도↑)
+            _t1 = time.monotonic()
+            analysis = analyzer.analyze(search_query)
+            if lang == "en":
+                analysis.lang = "en"
+            analysis, transcript_context, student_context = _enrich_analysis(
+                search_query, analysis, router_inst, session_data, user_id=user_id
+            )
+            _ms_analyze = int((time.monotonic() - _t1) * 1000)
 
         # Stage 2: 검색 (glossary 정규화된 쿼리 사용 — 학식→학생식당 등)
         # search_query는 이미 follow-up rewrite를 거친 상태 → 그 위에 glossary 레이어 적용
@@ -820,32 +854,59 @@ async def chat_sync(
     _conv_cfg = _settings.conversation
     prior_messages = session_data.get("messages") or []
     search_query = question
-    _t1 = time.monotonic()
-    follow_up_signal = follow_up_detector.detect(question, prior_messages)
-    _ms_follow_up = int((time.monotonic() - _t1) * 1000)
-    if _conv_cfg.rewrite_enabled and follow_up_signal.is_follow_up:
-        _t2 = time.monotonic()
-        try:
-            search_query = await query_rewriter.rewrite(
-                question,
-                prior_messages,
-                skip_rule_stage=follow_up_signal.skip_rule_stage,
-                lang=session_data.get("lang", "ko"),
-            )
-        except Exception as e:
-            logger.debug("query_rewriter 실패 (sync), 원본 사용: %s", e)
-            search_query = question
-        _ms_rewrite = int((time.monotonic() - _t2) * 1000)
-
-    _t3 = time.monotonic()
-    analysis = analyzer.analyze(search_query)
     lang = session_data.get("lang", "ko")
-    if lang == "en":
-        analysis.lang = "en"
-    analysis, transcript_context, student_context = _enrich_analysis(
-        search_query, analysis, router_inst, session_data, user_id=user_id
-    )
-    _ms_analyze = int((time.monotonic() - _t3) * 1000)
+    _ms_rewrite = 0
+
+    if _conv_cfg.understanding_enabled:
+        # ── multi-task 1 (2026-05-11): 통합 쿼리 이해 (gemma3:4b JSON) ──
+        from app.pipeline import query_understanding
+        _t_u = time.monotonic()
+        _understand = await query_understanding.understand(
+            question, prior_messages, lang=lang,
+        )
+        _ms_understand = int((time.monotonic() - _t_u) * 1000)
+        follow_up_signal = _understand.follow_up_signal
+        search_query = _understand.rewritten_query
+        analysis = _understand.analysis
+        if lang == "en":
+            analysis.lang = "en"
+        analysis, transcript_context, student_context = _enrich_analysis(
+            search_query, analysis, router_inst, session_data, user_id=user_id
+        )
+        _ms_follow_up = 0
+        _ms_rewrite = _ms_understand
+        _ms_analyze = 0
+        logger.info(
+            "understand[%s] %dms intent=%s confidence=%.2f",
+            _understand.source, _ms_understand,
+            analysis.intent.value, _understand.intent_confidence,
+        )
+    else:
+        _t1 = time.monotonic()
+        follow_up_signal = follow_up_detector.detect(question, prior_messages)
+        _ms_follow_up = int((time.monotonic() - _t1) * 1000)
+        if _conv_cfg.rewrite_enabled and follow_up_signal.is_follow_up:
+            _t2 = time.monotonic()
+            try:
+                search_query = await query_rewriter.rewrite(
+                    question,
+                    prior_messages,
+                    skip_rule_stage=follow_up_signal.skip_rule_stage,
+                    lang=lang,
+                )
+            except Exception as e:
+                logger.debug("query_rewriter 실패 (sync), 원본 사용: %s", e)
+                search_query = question
+            _ms_rewrite = int((time.monotonic() - _t2) * 1000)
+
+        _t3 = time.monotonic()
+        analysis = analyzer.analyze(search_query)
+        if lang == "en":
+            analysis.lang = "en"
+        analysis, transcript_context, student_context = _enrich_analysis(
+            search_query, analysis, router_inst, session_data, user_id=user_id
+        )
+        _ms_analyze = int((time.monotonic() - _t3) * 1000)
 
     # glossary 정규화된 쿼리 우선. follow-up rewrite된 search_query 위에 glossary 레이어.
     _search_query = analysis.normalized_query or search_query
