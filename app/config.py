@@ -236,6 +236,15 @@ class PipelineConfig:
         os.getenv("EN_VECTOR_KO_QUERY_THRESHOLD", "3")
     )
 
+    # ── 출처 표기 검증 경고 노출 ──────────────────────────────────
+    # 2026-05-06: response_validator의 "답변에 출처(페이지 번호)가 명시되지 않았습니다"
+    # 경고를 응답 본문에 합칠지 여부. 시연 시 사용자에게 미완성 인상을 줘서 기본 OFF.
+    # frontend는 별도로 "*검증 경고:*" 블록을 정규식 마스킹하므로 이 토글과 독립.
+    validation_source_warning_enabled: bool = (
+        os.getenv("VALIDATION_SOURCE_WARNING_ENABLED", "false").strip().lower()
+        in ("1", "true", "yes")
+    )
+
 
 @dataclass
 class TranscriptRulesConfig:

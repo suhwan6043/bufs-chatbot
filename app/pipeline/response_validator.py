@@ -72,7 +72,16 @@ class ResponseValidator:
             return True, []
 
         # 출처 표기 확인 — KO만 (EN은 UI 하이라이팅으로 대체)
-        if lang != "en" and not self._has_source_reference(answer):
+        # 2026-05-06: 시연 안전성 — VALIDATION_SOURCE_WARNING_ENABLED 토글로 제어.
+        # 기본값 false(미노출). 디버그 로그용으로 보고 싶을 때만 true.
+        # frontend는 "*검증 경고:*" 블록을 별도 정규식으로 마스킹하므로 이 토글이
+        # true여도 사용자 UI에는 노출되지 않음 (방어선 두 겹).
+        from app.config import settings as _settings
+        if (
+            lang != "en"
+            and getattr(_settings.pipeline, "validation_source_warning_enabled", False)
+            and not self._has_source_reference(answer)
+        ):
             warnings.append("답변에 출처(페이지 번호)가 명시되지 않았습니다.")
 
         # 숫자 교차 검증 (컨텍스트에 있는 숫자인지)

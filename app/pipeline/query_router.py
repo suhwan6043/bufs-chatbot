@@ -9,7 +9,7 @@ import os
 from typing import List
 
 from app.config import settings
-from app.models import QueryAnalysis, SearchResult, Intent
+from app.models import QueryAnalysis, SearchResult, Intent, QuestionType
 from app.vectordb import ChromaStore
 from app.graphdb import AcademicGraph
 
@@ -176,11 +176,16 @@ class QueryRouter:
         # 해결: intent_k 제한 제거 → REGISTRATION 기본 k=15 + candidate_k=30 경로로
         #       후보 풀 확보. OCU 필터링은 context_merger._filter_by_entity에서 수행.
 
-        n_candidates = (
-            max(intent_k, settings.reranker.candidate_k)
-            if settings.reranker.enabled
-            else intent_k
-        )
+        if settings.reranker.enabled:
+            # WSL2 reranker 비용이 후보 수에 선형 → overview qt만 따로 제한 (factoid/procedural 무영향)
+            rerank_k = (
+                settings.reranker.candidate_k_overview
+                if analysis.question_type == QuestionType.OVERVIEW
+                else settings.reranker.candidate_k
+            )
+            n_candidates = max(intent_k, rerank_k)
+        else:
+            n_candidates = intent_k
 
         # COURSE_INFO + department: 수업시간표 전용 필터 적용
         department = None

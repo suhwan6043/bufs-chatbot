@@ -100,6 +100,32 @@ export default function LogsPage() {
     setPromoteResult(null);
   };
 
+  // 다운로드 헬퍼 — Authorization 헤더가 필요하므로 fetch + Blob 방식.
+  // <a href> 직접 링크는 브라우저 navigation에 헤더가 안 실려 401 발생.
+  const downloadWithAuth = useCallback(async (format: "csv" | "jsonl" | "xlsx") => {
+    if (!token) return;
+    const qs = selDate ? `?log_date=${selDate}` : "";
+    const url = `${BASE_URL}/api/admin/logs/export/${format}${qs}`;
+    try {
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) {
+        alert(`다운로드 실패 (${res.status})`);
+        return;
+      }
+      const blob = await res.blob();
+      const downloadUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = downloadUrl;
+      a.download = `camchat_logs_${selDate || "all"}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(downloadUrl);
+    } catch (e) {
+      alert(`다운로드 오류: ${e instanceof Error ? e.message : "unknown"}`);
+    }
+  }, [token, selDate]);
+
   const submitPromote = async (sourceEntry: LogEntry) => {
     if (!promoteForm.question.trim() || !promoteForm.answer.trim() || !promoteForm.category.trim()) return;
     setPromoteLoading(true);
@@ -171,10 +197,12 @@ export default function LogsPage() {
           <label className="text-xs text-muted block mb-1">Intent</label>
           <input value={intent} onChange={(e) => setIntent(e.target.value)} placeholder="필터..." className="px-3 py-2 border border-border rounded-lg text-sm w-40" />
         </div>
-        <a href={`${BASE_URL}/api/admin/logs/export/csv${selDate ? `?log_date=${selDate}` : ""}`} target="_blank" rel="noreferrer"
-          className="px-3 py-2 text-sm border border-border rounded-lg hover:bg-gray-50">CSV 내보내기</a>
-        <a href={`${BASE_URL}/api/admin/logs/export/jsonl${selDate ? `?log_date=${selDate}` : ""}`} target="_blank" rel="noreferrer"
-          className="px-3 py-2 text-sm border border-border rounded-lg hover:bg-gray-50">JSONL 내보내기</a>
+        <button type="button" onClick={() => downloadWithAuth("xlsx")}
+          className="px-3 py-2 text-sm border border-emerald-300 bg-emerald-50 text-emerald-700 rounded-lg hover:bg-emerald-100 font-medium">📊 엑셀 내보내기</button>
+        <button type="button" onClick={() => downloadWithAuth("csv")}
+          className="px-3 py-2 text-sm border border-border rounded-lg hover:bg-gray-50">CSV 내보내기</button>
+        <button type="button" onClick={() => downloadWithAuth("jsonl")}
+          className="px-3 py-2 text-sm border border-border rounded-lg hover:bg-gray-50">JSONL 내보내기</button>
       </div>
 
       {/* Table */}
