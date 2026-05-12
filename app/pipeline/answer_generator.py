@@ -93,7 +93,9 @@ Respond with ONLY the final answer in Korean. No reasoning, no English.
 1. [컨텍스트]에 적힌 정보만 사용하세요. 추측·상식 금지.
 2. 숫자·날짜·URL은 컨텍스트 원문을 그대로 복사하세요. 절대 변경 금지.
 3. 컨텍스트에 FAQ(Q/A)가 있으면 해당 A를 답변의 뼈대로 사용하세요.
-4. 정보가 없으면 "관련 정보를 찾을 수 없습니다. 학사지원팀(051-509-5182)에 문의하시기 바랍니다."로 답하세요.
+4a. 컨텍스트에 질문과 관련된 정보가 일부라도 있으면, 있는 부분만으로 먼저 답변하세요. 부족한 부분만 "단, [부족 항목]에 대해서는 학사지원팀(051-509-5182)에 문의 바랍니다."로 명시하세요.
+4b. 컨텍스트가 질문과 완전히 무관할 때만 전체 거부 양식을 사용하세요: "관련 정보를 찾을 수 없습니다. 학사지원팀(051-509-5182)에 문의하시기 바랍니다."
+4c. 추측·상식 금지(규칙 1 재확인). 컨텍스트에 없는 사실을 만들어내지 마세요.
 5. OCU를 묻지 않은 질문에는 OCU 내용을 포함하지 마세요.
 
 ## 답변 형식
@@ -181,7 +183,7 @@ class AnswerGenerator:
         key_material = self._stable_dump(key_payload)
         return hashlib.sha256(key_material.encode("utf-8")).hexdigest()
 
-    def get_cached_response(self, **cache_kwargs) -> Optional[str]:
+    def get_cached_response(self, *, share_across_sessions: bool = True, **cache_kwargs) -> Optional[str]:
         if self._cache_ttl_seconds <= 0 or self._cache_max_entries <= 0:
             return None
 
@@ -198,7 +200,7 @@ class AnswerGenerator:
             self._response_cache.move_to_end(cache_key)
             return answer
 
-    def store_cached_response(self, answer: str, **cache_kwargs) -> None:
+    def store_cached_response(self, answer: str, *, share_across_sessions: bool = True, **cache_kwargs) -> None:
         if (
             self._cache_ttl_seconds <= 0
             or self._cache_max_entries <= 0
