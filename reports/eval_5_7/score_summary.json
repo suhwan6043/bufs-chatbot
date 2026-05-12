@@ -1,0 +1,17 @@
+{
+  "total": 137,
+  "h100_distribution": {
+    "partial": 32,
+    "wrong": 46,
+    "refusal_unacceptable": 27,
+    "review": 20,
+    "correct": 9,
+    "refusal_acceptable": 3
+  },
+  "yesterday_distribution": {
+    "partial": 35,
+    "wrong": 27,
+    "correct": 66,
+    "refusal": 9
+  }
+}
