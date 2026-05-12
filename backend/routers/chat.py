@@ -5,6 +5,7 @@ chat_app.py:generate_response_stream() (1701~1914줄) 로직을 1:1 이식.
 파이프라인 함수 호출은 동일 — st.session_state만 session_store로 교체.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -14,6 +15,7 @@ from typing import AsyncGenerator, Optional
 from fastapi import APIRouter, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
+from app.config import settings
 from backend.dependencies import (
     get_analyzer,
     get_chat_logger,
@@ -27,6 +29,11 @@ from backend.schemas.chat import ChatResponse, SearchResultItem, SourceURL
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+# 동시 LLM 스트리밍 상한 (백엔드 측 백프레셔, OOM 방어).
+# Ollama OLLAMA_NUM_PARALLEL과 일치시키는 것이 권장 — 그 이상 동시 요청이 들어와도
+# 여기서 큐잉되어 Ollama의 KV 캐시 슬롯이 초과되지 않게 막는다. 12GB VRAM 기준 2.
+_LLM_SEMAPHORE = asyncio.Semaphore(settings.llm.max_concurrent)
 
 
 # ── 사용자 노출 메시지 다국어화 (KO 기본, EN 미정의 시 KO fallback) ──
@@ -753,34 +760,36 @@ async def chat_stream(
             yield {"event": "token", "data": json.dumps({"token": _pref}, ensure_ascii=False)}
             _soft_warn_emitted = True
         try:
-            async for token in generator.generate(
-                question=search_query,
-                context=merged.formatted_context,
-                student_id=analysis.student_id,
-                question_focus=analysis.entities.get("question_focus"),
-                lang=analysis.lang,
-                matched_terms=analysis.matched_terms,
-                student_context=student_context,
-                context_confidence=merged.context_confidence,
-                question_type=analysis.question_type.value if analysis.question_type else None,
-                intent=analysis.intent.value,
-                entities=analysis.entities,
-                history=llm_history,
-            ):
-                if token == "\x00CLEAR\x00":
-                    full_answer = ""
-                    yield {"event": "clear", "data": "{}"}
-                    # EN 경로: CLEAR 직후 warning 주입 (한 번만)
-                    if _soft_warn_text and not _soft_warn_emitted:
-                        _pref = _soft_warn_text + "\n\n"
-                        full_answer += _pref
-                        yield {"event": "token", "data": json.dumps({"token": _pref}, ensure_ascii=False)}
-                        _soft_warn_emitted = True
-                    continue
-                full_answer += token
-                yield {"event": "token", "data": json.dumps(
-                    {"token": token}, ensure_ascii=False
-                )}
+            # 백프레셔: 동시 LLM 스트리밍 상한 도달 시 여기서 큐 대기 → OOM 방어.
+            async with _LLM_SEMAPHORE:
+                async for token in generator.generate(
+                    question=search_query,
+                    context=merged.formatted_context,
+                    student_id=analysis.student_id,
+                    question_focus=analysis.entities.get("question_focus"),
+                    lang=analysis.lang,
+                    matched_terms=analysis.matched_terms,
+                    student_context=student_context,
+                    context_confidence=merged.context_confidence,
+                    question_type=analysis.question_type.value if analysis.question_type else None,
+                    intent=analysis.intent.value,
+                    entities=analysis.entities,
+                    history=llm_history,
+                ):
+                    if token == "\x00CLEAR\x00":
+                        full_answer = ""
+                        yield {"event": "clear", "data": "{}"}
+                        # EN 경로: CLEAR 직후 warning 주입 (한 번만)
+                        if _soft_warn_text and not _soft_warn_emitted:
+                            _pref = _soft_warn_text + "\n\n"
+                            full_answer += _pref
+                            yield {"event": "token", "data": json.dumps({"token": _pref}, ensure_ascii=False)}
+                            _soft_warn_emitted = True
+                        continue
+                    full_answer += token
+                    yield {"event": "token", "data": json.dumps(
+                        {"token": token}, ensure_ascii=False
+                    )}
         except Exception as e:
             logger.error("LLM 생성 오류: %s", e)
             yield {"event": "error", "data": json.dumps(
@@ -1059,26 +1068,27 @@ async def chat_sync(
             duration_ms=int((time.monotonic() - _t0) * 1000),
         )
 
-    # LLM 생성 (전체 수집)
+    # LLM 생성 (전체 수집) — 백프레셔로 동시 LLM 호출 상한 적용 (OOM 방어).
     full_answer = ""
-    async for token in generator.generate(
-        question=search_query,
-        context=merged.formatted_context,
-        student_id=analysis.student_id,
-        question_focus=analysis.entities.get("question_focus"),
-        lang=analysis.lang,
-        matched_terms=analysis.matched_terms,
-        student_context=student_context,
-        context_confidence=merged.context_confidence,
-        question_type=analysis.question_type.value if analysis.question_type else None,
-        intent=analysis.intent.value,
-        entities=analysis.entities,
-        history=llm_history,
-    ):
-        if token == "\x00CLEAR\x00":
-            full_answer = ""
-            continue
-        full_answer += token
+    async with _LLM_SEMAPHORE:
+        async for token in generator.generate(
+            question=search_query,
+            context=merged.formatted_context,
+            student_id=analysis.student_id,
+            question_focus=analysis.entities.get("question_focus"),
+            lang=analysis.lang,
+            matched_terms=analysis.matched_terms,
+            student_context=student_context,
+            context_confidence=merged.context_confidence,
+            question_type=analysis.question_type.value if analysis.question_type else None,
+            intent=analysis.intent.value,
+            entities=analysis.entities,
+            history=llm_history,
+        ):
+            if token == "\x00CLEAR\x00":
+                full_answer = ""
+                continue
+            full_answer += token
 
     # 빈 응답 방어
     if not full_answer.strip():
