@@ -11,7 +11,7 @@ import os
 from .system_ko_v0 import SYSTEM_PROMPT_KO_V0
 from .system_ko_v1 import SYSTEM_PROMPT_KO_V1
 
-_VERSION = os.getenv("KO_PROMPT_VERSION", "v0").lower().strip()
+_VERSION = os.getenv("KO_PROMPT_VERSION", "v1").lower().strip()
 
 if _VERSION == "v0":
     SYSTEM_PROMPT = SYSTEM_PROMPT_KO_V0
