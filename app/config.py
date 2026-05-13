@@ -226,6 +226,16 @@ class PipelineConfig:
         os.getenv("EVIDENCE_SLICING_CONTEXT_LINES", "2")
     )
 
+    # ── direct_answer bypass 게이트 (2026-05-13) ──────────────────
+    # context_merger의 direct_answer 채택 시 CrossEncoder raw logit이 이 임계치
+    # 미만이면 거부 → LLM 경로로 위임.
+    # 운영 로그 23쌍 실측(scripts/measure_rerank_bypass_threshold.py) 기반:
+    #   - WRONG p75=0.627, mean=0.215  /  CORRECT min=0.276, mean=0.701
+    #   - 임계치 0.20: WRONG 3/4 차단, CORRECT 10/10 통과, PARTIAL 2/9 통과
+    # PARTIAL은 LLM 경유가 안전하므로 차단 다수 정상 거동.
+    rerank_bypass_threshold: float = float(
+        os.getenv("RERANK_BYPASS_THRESHOLD", "0.20")
+    )
 
 @dataclass
 class TranscriptRulesConfig:
