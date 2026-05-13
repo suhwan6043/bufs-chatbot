@@ -78,6 +78,9 @@ export interface FaqItem {
   created_by?: string | null;
   created_at?: string | null;
   source_question?: string | null;
+  // 2026-04-28: 복수 paraphrase 지원 — 학생이 실제로 묻는 다양한 표현.
+  // 단일 source_question(하위호환)과 함께 사용 가능.
+  source_questions?: string[] | null;
   answer_type?: string | null;
 }
 export interface FaqListResponse {
@@ -90,6 +93,7 @@ export interface FaqCreateBody {
   answer: string;
   category: string;
   source_question?: string;
+  source_questions?: string[];
   source_user_id?: number | null;
   source_chat_message_id?: number | null;
 }
@@ -98,6 +102,8 @@ export interface FaqUpdateBody {
   answer?: string;
   category?: string;
   source_question?: string;
+  // null|undefined=기존 유지, []=모두 제거, [...]=교체
+  source_questions?: string[];
 }
 export interface UncoveredExample {
   question: string;

@@ -8,9 +8,15 @@ TranscriptAnalyzer 기능 테스트.
   - "복수전공 얼마나 했어?" → dual_major_status()
   - 포맷터 출력에 PII 없는가
 
-실제 XLS 파일(20260404205953601.xls)이 있을 때만 실행.
+실제 XLS 파일이 있을 때만 실행.
+
+XLS 픽스처 경로 우선순위:
+  1) 환경변수 BUFS_TRANSCRIPT_FIXTURE (절대/상대 경로)
+  2) data/test/transcript_sample.xls (repo 기본 위치)
+경로의 파일이 없으면 통합 테스트는 자동 스킵됩니다.
 """
 
+import os
 from pathlib import Path
 
 import pytest
@@ -18,7 +24,8 @@ import pytest
 from app.transcript.analyzer import TranscriptAnalyzer, _GRADE_ORDER
 from app.transcript.models import StudentAcademicProfile, StudentProfile, CreditsSummary
 
-_XLS_PATH = Path("C:/Users/User/Downloads/20260404205953601.xls")
+_DEFAULT_FIXTURE = Path(__file__).resolve().parent.parent / "data" / "test" / "transcript_sample.xls"
+_XLS_PATH = Path(os.getenv("BUFS_TRANSCRIPT_FIXTURE", str(_DEFAULT_FIXTURE)))
 
 
 # ══════════════════════════════════════════════════════

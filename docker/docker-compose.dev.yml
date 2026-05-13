@@ -18,6 +18,20 @@ services:
       - ../backend:/app/backend
       - ../data:/app/data
       - ../config:/app/config
+      # 2026-04-28: scripts mount 추가 — PR 15의 ingest_all_v2.py --patch-doc-types
+      # 같은 새 명령을 image rebuild 없이 즉시 사용할 수 있도록.
+      - ../scripts:/app/scripts
+      # 호스트 모델 캐시 공유 (BGE-M3 / Reranker 재다운로드 방지)
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    # 2026-04-28: GPU passthrough 복원 — CPU 모드에서 chat 응답 60~120초 발생 →
+    #             GPU 가속으로 BGE-M3 임베딩 + Reranker Cross-Encoder 단축.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--workers", "1"]
     restart: unless-stopped
 

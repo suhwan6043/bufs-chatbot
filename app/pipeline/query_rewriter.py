@@ -131,15 +131,27 @@ def rule_based_rewrite(query: str, history: list[dict]) -> Optional[str]:
 
 _SYSTEM_PROMPT_KO = (
     "당신은 대화 맥락 기반 쿼리 재작성기입니다. "
-    "사용자의 마지막 질문을 이전 대화 없이도 이해 가능한 자립적 문장으로 재작성하세요. "
-    "재작성된 질문만 한 줄로 출력하고, 설명·따옴표·접두사는 붙이지 마세요. "
-    "원래 의도를 유지하고, 맥락에서 명시적으로 언급된 개체(대상·주제)만 보충하세요."
+    "사용자의 마지막 질문을 이전 대화 없이도 이해 가능한 자립적 의문문(질문)으로 재작성하세요. "
+    "절대 규칙:\n"
+    "1. 출력은 반드시 한 줄의 의문문이어야 하며 물음표(?)로 끝나야 합니다.\n"
+    "2. 답변·설명·평서문·날짜만 적힌 텍스트는 출력하지 마세요.\n"
+    "3. 이전 Assistant 답변의 문장을 복사하지 마세요.\n"
+    "4. 원래 질문의 의도(언제/어떻게/얼마/무엇 등)를 그대로 유지하고, 맥락에서 명시된 학번·학과·유형 같은 개체만 보충하세요.\n"
+    "5. 새 정보를 추측해 넣지 마세요.\n"
+    "예: '2020학번은?' + 이전이 졸업학점 → '2020학번 학생의 졸업학점은 얼마입니까?'\n"
+    "예: '언제 수강신청할 수 있나요?' (이전과 무관) → '언제 수강신청할 수 있나요?' (그대로 의문문)\n"
+    "재작성된 의문문만 출력하세요. 설명·따옴표·접두사는 붙이지 마세요."
 )
 _SYSTEM_PROMPT_EN = (
     "You are a conversational query rewriter. "
-    "Rewrite the user's last question as a self-contained sentence that is understandable without prior turns. "
-    "Output only the rewritten question on a single line, no explanation, quotes, or prefixes. "
-    "Preserve the original intent and only inject entities explicitly mentioned in the context."
+    "Rewrite the user's last question as a self-contained interrogative sentence (a question) understandable without prior turns. "
+    "Hard rules:\n"
+    "1. Output must be a single-line question ending with '?'.\n"
+    "2. Never output an answer, explanation, declarative statement, or a date-only string.\n"
+    "3. Never copy a sentence from a prior Assistant answer.\n"
+    "4. Preserve the original interrogative intent (when/how/how many/what) and only inject entities (cohort, department, type) explicitly mentioned in the context.\n"
+    "5. Do not invent new information.\n"
+    "Output only the rewritten question, no explanation, quotes, or prefixes."
 )
 
 
@@ -197,32 +209,58 @@ async def llm_rewrite(
         system = _SYSTEM_PROMPT_KO
         user_body = f"[이전 대화]\n{history_text}\n\n[사용자의 마지막 질문]\n{query}\n\n[자립적으로 재작성된 질문]:"
 
+    # 2026-04-28: OpenAI compat /v1/chat/completions는 qwen3.5의 reasoning('think')
+    # 출력을 분리하지 못해 max_tokens가 reasoning에 다 쓰여 content=''로 응답.
+    # api_type=ollama면 native /api/chat을 쓰고 think:false로 reasoning 비활성화.
     base = conv_cfg.rewrite_base_url or settings.llm.base_url
-    url = f"{base}/v1/chat/completions"
-    payload = {
-        "model": conv_cfg.rewrite_model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_body},
-        ],
-        "stream": False,
-        "max_tokens": conv_cfg.rewrite_max_tokens,
-        "temperature": 0.1,
-        "top_p": 0.9,
-        "think": False,
-    }
+    api_type = (settings.llm.api_type or "openai").strip().lower()
+    if api_type == "ollama":
+        url = f"{base}/api/chat"
+        payload = {
+            "model": conv_cfg.rewrite_model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_body},
+            ],
+            "stream": False,
+            "think": False,
+            "options": {
+                "num_predict": conv_cfg.rewrite_max_tokens,
+                "temperature": 0.1,
+                "top_p": 0.9,
+            },
+        }
+    else:
+        url = f"{base}/v1/chat/completions"
+        payload = {
+            "model": conv_cfg.rewrite_model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_body},
+            ],
+            "stream": False,
+            "max_tokens": conv_cfg.rewrite_max_tokens,
+            "temperature": 0.1,
+            "top_p": 0.9,
+            "think": False,
+        }
 
     try:
         async with httpx.AsyncClient(timeout=conv_cfg.rewrite_timeout_sec) as client:
             response = await client.post(url, json=payload)
             response.raise_for_status()
             data = response.json()
-            content = (
-                data.get("choices", [{}])[0]
-                .get("message", {})
-                .get("content", "")
-                .strip()
-            )
+            if api_type == "ollama":
+                # native /api/chat 응답 형식: {"message": {"content": "..."}, ...}
+                content = data.get("message", {}).get("content", "").strip()
+            else:
+                # OpenAI compat 응답 형식: {"choices": [{"message": {"content": "..."}}]}
+                content = (
+                    data.get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                    .strip()
+                )
     except (httpx.TimeoutException, asyncio.TimeoutError):
         logger.debug("쿼리 재작성 타임아웃 (%.2fs), 원본 사용", conv_cfg.rewrite_timeout_sec)
         return None
@@ -247,6 +285,25 @@ async def llm_rewrite(
     if rewritten == query:
         return None
 
+    # 2026-04-28: 의문문 형식 검증 — LLM이 prior 답변 텍스트를 그대로 출력하는 회귀 차단.
+    # 예: "언제 수강신청할 수 있나요?" → "2026 년 1 월 28 일부터 2 월 1 일까지" (X)
+    # 한국어/영어 의문 어미·키워드 또는 '?'로 끝나야 정상.
+    _Q_KEYWORDS = ("?", "？", "까", "나요", "ㄴ가요", "ㅂ니까",
+                   "what", "when", "where", "who", "why", "how", "which",
+                   "어떻", "언제", "어디", "얼마", "무엇", "왜", "누가", "몇")
+    rl = rewritten.lower()
+    if not any(kw in rl for kw in _Q_KEYWORDS):
+        logger.debug("rewrite rejected (not interrogative): %r", rewritten)
+        return None
+
+    # 이전 Assistant 답변을 그대로 복사한 경우 reject (substring 매칭)
+    for msg in history[-4:]:  # 최근 2 턴 user/assistant
+        if msg.get("role") == "assistant":
+            asst = (msg.get("content") or "").strip()
+            if asst and len(rewritten) >= 8 and rewritten[:30] in asst:
+                logger.debug("rewrite rejected (copies prior answer): %r", rewritten)
+                return None
+
     return rewritten
 
 
@@ -266,6 +323,25 @@ async def rewrite(
     모든 경로 실패 시 원본 쿼리 반환 (호출측은 안전하게 사용 가능).
     """
     if not settings.conversation.rewrite_enabled:
+        return query
+
+    # 2026-04-28: 원본이 이미 self-contained 의문문이면 rewrite skip.
+    # follow_up_detector의 no_subject_short_ko가 "언제 수강신청할 수 있나요?" 같은
+    # 명확한 standalone 의문문도 follow-up으로 분류 → LLM rewrite가 prior context 토픽
+    # (장바구니·이수구분 등)을 잘못 합성해 의도를 변형하는 회귀를 차단.
+    # 휴리스틱: 의문어(언제/어디서/어떻게/얼마/무엇/...) + 의문 어미(나요/까/?) 동시 보유 시
+    # standalone 의문문으로 간주.
+    _STANDALONE_Q_WORDS = (
+        "언제", "어디", "어떻", "얼마", "무엇", "뭐", "왜", "누가", "몇", "어느",
+        "what", "when", "where", "who", "why", "how", "which",
+    )
+    _STANDALONE_Q_ENDINGS = ("?", "？", "나요", "까", "ㅂ니까", "ㄴ가요")
+    ql = query.strip().lower()
+    has_qword = any(w in ql for w in _STANDALONE_Q_WORDS)
+    has_qending = any(query.endswith(e) or e in query for e in _STANDALONE_Q_ENDINGS)
+    # 추가 가드: 동사·서술어가 포함되어야 (단어 길이 ≥ 8자)
+    if has_qword and has_qending and len(query.replace(" ", "")) >= 8:
+        logger.debug("rewrite skipped (standalone question): %r", query)
         return query
 
     # Stage 2: 규칙 치환

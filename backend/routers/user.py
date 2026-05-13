@@ -34,6 +34,7 @@ from backend.schemas.user import (
     ChatHistoryItem, ChatHistoryResponse,
     NotificationItem, NotificationListResponse, UnreadCountResponse,
 )
+from backend.utils.i18n import get_lang_from_request, api_msg, normalize_student_type
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/user", tags=["user"])
@@ -95,7 +96,7 @@ def _verify_user_token(token: str) -> Optional[dict]:
         return None
 
 
-def _check_rate_limit(ip: str):
+def _check_rate_limit(ip: str, lang: str = "ko"):
     """Raise 429 if IP has too many failed login attempts."""
     now = time.time()
     attempts = _login_attempts.get(ip, [])
@@ -105,7 +106,7 @@ def _check_rate_limit(ip: str):
     if len(attempts) >= _MAX_ATTEMPTS:
         raise HTTPException(
             status_code=429,
-            detail="로그인 시도 횟수 초과. 15분 후 재시도하세요.",
+            detail=api_msg("rate_limit_login", lang),
         )
 
 
@@ -117,14 +118,16 @@ def _record_failed_attempt(ip: str):
 # ── Auth dependency ──
 
 async def require_user(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
 ) -> dict:
     """Require valid user JWT. Returns user payload."""
+    lang = get_lang_from_request(request)
     if credentials is None:
-        raise HTTPException(status_code=401, detail="인증이 필요합니다.")
+        raise HTTPException(status_code=401, detail=api_msg("auth_required", lang))
     payload = _verify_user_token(credentials.credentials)
     if payload is None:
-        raise HTTPException(status_code=401, detail="토큰이 만료되었거나 유효하지 않습니다.")
+        raise HTTPException(status_code=401, detail=api_msg("token_invalid", lang))
     return payload
 
 
@@ -149,11 +152,13 @@ async def require_user_optional(
 # ── Endpoints ──
 
 @router.post("/register", response_model=AuthToken)
-async def register(body: UserRegister):
+async def register(body: UserRegister, request: Request):
     """Register a new user account."""
-    # Validate student_type
-    if body.student_type not in ("내국인", "외국인", "편입생"):
-        raise HTTPException(status_code=400, detail="유효하지 않은 학생 유형입니다.")
+    lang = get_lang_from_request(request)
+    # Validate + normalize student_type (KO/EN 양쪽 수용 → KO 저장)
+    normalized_type = normalize_student_type(body.student_type)
+    if normalized_type is None:
+        raise HTTPException(status_code=400, detail=api_msg("invalid_student_type", lang))
 
     user = create_user(
         username=body.username,
@@ -161,10 +166,10 @@ async def register(body: UserRegister):
         password=body.password,  # hashed inside create_user
         student_id=body.student_id,
         department=body.department,
-        student_type=body.student_type,
+        student_type=normalized_type,
     )
     if user is None:
-        raise HTTPException(status_code=409, detail="이미 사용 중인 아이디입니다.")
+        raise HTTPException(status_code=409, detail=api_msg("username_taken", lang))
 
     logger.info("User registered: %s", body.username)
     token, expires_at = _create_user_token(user)
@@ -178,13 +183,14 @@ async def register(body: UserRegister):
 @router.post("/login", response_model=AuthToken)
 async def login(body: UserLogin, request: Request):
     """Authenticate user and return JWT."""
+    lang = get_lang_from_request(request)
     client_ip = request.client.host if request.client else "unknown"
-    _check_rate_limit(client_ip)
+    _check_rate_limit(client_ip, lang=lang)
 
     user = authenticate_user(body.username, body.password)
     if user is None:
         _record_failed_attempt(client_ip)
-        raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 잘못되었습니다.")
+        raise HTTPException(status_code=401, detail=api_msg("login_failed", lang))
 
     # Clear failed attempts on success
     _login_attempts.pop(client_ip, None)
@@ -199,11 +205,11 @@ async def login(body: UserLogin, request: Request):
 
 
 @router.get("/me", response_model=UserInfo)
-async def get_me(payload: dict = Depends(require_user)):
+async def get_me(request: Request, payload: dict = Depends(require_user)):
     """Get current user info from JWT."""
     user = get_user_by_id(payload["user_id"])
     if user is None:
-        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
+        raise HTTPException(status_code=404, detail=api_msg("user_not_found", get_lang_from_request(request)))
     return UserInfo(**user)
 
 
@@ -281,13 +287,14 @@ async def get_unread_count(payload: dict = Depends(require_user)):
 @router.post("/notifications/{notification_id}/read")
 async def mark_read(
     notification_id: int,
+    request: Request,
     payload: dict = Depends(require_user),
 ):
     """개별 알림을 읽음 처리. 소유자 검증은 DB 헬퍼에서 user_id 매칭으로 수행."""
     uid = int(payload["user_id"])
     ok = mark_notification_read(notification_id, uid)
     if not ok:
-        raise HTTPException(status_code=404, detail="알림을 찾을 수 없거나 이미 읽었습니다.")
+        raise HTTPException(status_code=404, detail=api_msg("notification_not_found", get_lang_from_request(request)))
     return {"ok": True}
 
 

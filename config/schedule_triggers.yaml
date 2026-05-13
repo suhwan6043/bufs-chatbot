@@ -162,6 +162,20 @@ triggers:
     require_any: ["신청", "기간", "언제", "날짜", "일자", "일정"]
     weight: 0.5
 
+  - event_keywords: ["온라인휴복학신청"]
+    match_any: ["휴학", "복학", "휴복학"]
+    match_all: []
+    exclude: []
+    require_any: ["신청", "기간", "언제", "날짜", "일자", "일정"]
+    weight: 1.0
+
+  - event_keywords: ["성적평가선택제"]
+    match_any: ["성적평가선택제", "성적평가선택제도", "성적선택제", "passfail"]
+    match_all: []
+    exclude: []
+    require_any: ["신청", "기간", "언제", "날짜", "일자", "일정"]
+    weight: 1.0
+
   - event_keywords: ["전공졸업시험"]
     match_any: ["졸업시험", "졸업논문"]
     exclude: []

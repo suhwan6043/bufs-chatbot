@@ -66,7 +66,15 @@ class BM25Index:
         # 한국어 최적화 토큰화: 조사 제거 + 불용어 필터 + 2글자 이상
         from app.pipeline.ko_tokenizer import tokenize_for_bm25
 
-        tokenized = [tokenize_for_bm25(doc or "") for doc in self._corpus]
+        # A-2: section_path가 있으면 prefix해 헤더 토큰까지 BM25 매칭 대상에 포함.
+        # raw text(self._corpus)는 그대로 — 토큰화 단계에서만 결합.
+        def _enrich(doc: str, meta: dict) -> str:
+            sec = (meta or {}).get("section_path") or ""
+            return f"{sec} {doc or ''}" if sec else (doc or "")
+        tokenized = [
+            tokenize_for_bm25(_enrich(doc, meta))
+            for doc, meta in zip(self._corpus, self._metadatas)
+        ]
 
         # 빈 토큰 리스트 방어 (BM25Okapi는 빈 문서에 대해 0-division 가능)
         for i, tokens in enumerate(tokenized):

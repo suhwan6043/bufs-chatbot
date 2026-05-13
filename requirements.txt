@@ -9,6 +9,11 @@ pdfplumber>=0.10.0
 # 임베딩 & 리랭킹
 sentence-transformers>=3.0.0
 
+# transformers 4.x 고정 — Surya 0.17 OCR과의 호환을 위해 (5.x는 pad_token_id
+# 기본 속성·_tied_weights_keys dict 변경으로 surya 모델 로드 실패).
+# sentence-transformers는 4.x/5.x 모두 호환.
+transformers>=4.57.0,<5.0.0
+
 # 벡터 DB
 # ChromaDB: Rust 백엔드(1.x)가 Windows + Python 3.12에서 쓰기 경로 segfault → pre-Rust 마지막 안정판 고정.
 # chroma-hnswlib 버전은 chromadb가 자동으로 결정 (Linux/Py3.10에서는 0.7.6 사용)
@@ -60,5 +65,7 @@ uvicorn[standard]>=0.27.0
 python-multipart>=0.0.6
 sse-starlette>=1.6.0
 
-# OCR (선택 - 스캔 PDF 처리 시)
-# surya-ocr
+# OCR (스캔 PDF 처리 — chunking_v2의 페이지 라우팅에서 자동 호출)
+# 0.4.x는 transformers 5.x와 비호환 → 0.17+ 신 API(`DetectionPredictor`/
+# `RecognitionPredictor`/`FoundationPredictor`)로 마이그레이션됨.
+surya-ocr>=0.17.0,<0.18.0

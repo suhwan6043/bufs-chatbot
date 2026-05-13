@@ -1,8 +1,14 @@
 """
 성적표 파서 + 보안 모듈 테스트.
-실제 XLS 파일(20260404205953601.xls)이 있으면 통합 테스트도 실행.
+실제 XLS 파일이 있으면 통합 테스트도 실행.
+
+XLS 픽스처 경로 우선순위:
+  1) 환경변수 BUFS_TRANSCRIPT_FIXTURE (절대/상대 경로)
+  2) data/test/transcript_sample.xls (repo 기본 위치)
+경로의 파일이 없으면 통합 테스트는 자동 스킵됩니다.
 """
 
+import os
 import time
 from pathlib import Path
 
@@ -24,7 +30,8 @@ from app.transcript.version_manager import TranscriptVersionManager
 
 
 # ── 실제 XLS 경로 ──
-_XLS_PATH = Path("C:/Users/User/Downloads/20260404205953601.xls")
+_DEFAULT_FIXTURE = Path(__file__).resolve().parent.parent / "data" / "test" / "transcript_sample.xls"
+_XLS_PATH = Path(os.getenv("BUFS_TRANSCRIPT_FIXTURE", str(_DEFAULT_FIXTURE)))
 
 
 # ══════════════════════════════════════════════════════

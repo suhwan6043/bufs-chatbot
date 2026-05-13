@@ -86,6 +86,8 @@ The [Context] is written in Korean. You MUST read and understand it directly.
 # 2026-05-12: 인라인 정의를 app/pipeline/prompts/ 로 이동.
 # 환경변수 KO_PROMPT_VERSION=v0|v1 으로 즉시 토글 (rebuild 불요, restart만).
 # SYSTEM_PROMPT 심볼은 파일 상단 import로 주입됨.
+# 2026-05-13: origin/main PR #23 (feat/llm-rejection-msg-cleanup) 의 거절 문구
+# "담당 부서 하드코딩 제거" 의도를 prompts/system_ko_v1.py 의 거부 정책에 흡수.
 
 # 태그 최대 길이 기준 홀딩 버퍼 크기
 _TAG_HOLD = 16  # "<final_answer>" = 14자 + 여유 2자
@@ -430,8 +432,8 @@ class AnswerGenerator:
                     "  3) 숫자·날짜·명칭이 **질문이 요구하는 것과 일치**하는가?\n"
                     "\n"
                     "위 3개 중 하나라도 '아니오'면 추측하지 말고 아래 문장 하나로만 답하세요:\n"
-                    "  → '관련 정보를 찾을 수 없습니다. "
-                    "학사지원팀(051-509-5182)에 문의하시기 바랍니다.'\n"
+                    "  → '관련 정보를 찾을 수 없습니다.'\n"
+                    "  (담당 부서 안내는 시스템이 별도로 추가하므로 본문에 부서명·전화번호를 적지 마세요.)\n"
                     "\n"
                     "주의: 비슷한 키워드가 있어도 주제가 다르면 오답입니다. "
                     "(예: 'OCU 시스템사용료' vs '계절학기 수강료', "
@@ -460,8 +462,8 @@ class AnswerGenerator:
                     "여러 일정 구간이 있으면 각 날짜/시간 구간을 한 줄씩 나누고, "
                     "장바구니·본 수강신청처럼 성격이 다른 일정은 빈 줄로 구분하세요. "
                     "컨텍스트에 해당 일정의 날짜가 없으면 "
-                    "'해당 일정 정보를 찾을 수 없습니다. "
-                    "학사지원팀(051-509-5182)에 문의하시기 바랍니다.'로 답하세요.\n"
+                    "'해당 일정 정보를 찾을 수 없습니다.'로 답하세요. "
+                    "(담당 부서 안내는 시스템이 별도로 추가하므로 본문에 부서명·전화번호를 적지 마세요.)\n"
                 )
             elif question_focus == "limit":
                 # q028 회귀 교훈: 질문이 '재수강 제한 기준'을 묻는데 LLM이
@@ -1015,10 +1017,7 @@ class AnswerGenerator:
                             if m is not None:
                                 out = out[m:].lstrip(" :：\n")
                             else:
-                                out = (
-                                    "죄송합니다. 답변을 생성하지 못했습니다.\n"
-                                    "학사지원팀(051-509-5182)에 문의하시기 바랍니다."
-                                )
+                                out = "죄송합니다. 답변을 생성하지 못했습니다."
                             if not content_started:
                                 yield "\x00CLEAR\x00"
                             yield out
@@ -1088,11 +1087,8 @@ class AnswerGenerator:
                 full = full[m.end():]
             else:
                 # 마커 없음 → 본 모델이 사고 과정에 토큰 다 써서 유효 답변 없음.
-                # 환각·누출 방지 위해 안전 폴백.
-                full = (
-                    "죄송합니다. 답변을 생성하지 못했습니다.\n"
-                    "학사지원팀(051-509-5182)에 문의하시기 바랍니다."
-                )
+                # 환각·누출 방지 위해 안전 폴백. 부서 안내는 footer가 처리.
+                full = "죄송합니다. 답변을 생성하지 못했습니다."
 
         full = full.strip()
 
@@ -1119,10 +1115,7 @@ class AnswerGenerator:
                 ok, reason = verify_answer_against_context(full, context)
                 if not ok:
                     logger.warning("answer-context mismatch detected: %s", reason)
-                    return (
-                        "제공된 자료에서 해당 내용을 정확히 확인하지 못했습니다. "
-                        "학사지원팀(051-509-5182)에 문의하시기 바랍니다."
-                    )
+                    return "제공된 자료에서 해당 내용을 정확히 확인하지 못했습니다."
 
                 # Phase 3 Step 3 (2026-04-12): 답변 완전성 가드 (g04 bi-value).
                 # "복수전공 최소 이수학점" 같이 질문이 두 값(주/제2)을 요구하는 경우

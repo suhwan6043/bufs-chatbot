@@ -5,6 +5,7 @@ chat_app.py:generate_response_stream() (1701~1914줄) 로직을 1:1 이식.
 파이프라인 함수 호출은 동일 — st.session_state만 session_store로 교체.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -29,6 +30,30 @@ from backend.schemas.chat import ChatResponse, SearchResultItem, SourceURL
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
+# 동시 LLM 스트리밍 상한 (백엔드 측 백프레셔, OOM 방어).
+# Ollama OLLAMA_NUM_PARALLEL과 일치시키는 것이 권장 — 그 이상 동시 요청이 들어와도
+# 여기서 큐잉되어 Ollama의 KV 캐시 슬롯이 초과되지 않게 막는다. 12GB VRAM 기준 2.
+_LLM_SEMAPHORE = asyncio.Semaphore(settings.llm.max_concurrent)
+
+
+# ── 사용자 노출 메시지 다국어화 (KO 기본, EN 미정의 시 KO fallback) ──
+# i18n.ts의 admin·UI 라벨과는 별개 — 백엔드 응답·검증 라벨은 여기서 관리.
+_USER_MSG: dict[str, dict[str, str]] = {
+    "stream_error": {
+        "ko": "처리 중 오류가 발생했습니다. 다시 시도해 주세요.",
+        "en": "An error occurred while processing your request. Please try again.",
+    },
+    "validation_warning_label": {
+        "ko": "*검증 경고:*",
+        "en": "*Validation warning:*",
+    },
+}
+
+
+def _user_msg(key: str, lang: str = "ko") -> str:
+    entry = _USER_MSG.get(key, {})
+    return entry.get(lang) or entry.get("ko", "")
+
 
 def _resolve_user_id(access_token: Optional[str]) -> Optional[int]:
     """SSE·POST 쿼리 파라미터로 전달된 JWT 토큰을 검증하고 user_id 반환.
@@ -50,34 +75,55 @@ def _resolve_user_id(access_token: Optional[str]) -> Optional[int]:
 
 # ── 연락처 단락 처리 (LLM 없이 즉시 응답) ──
 
-def _format_contact_answer(question: str) -> str:
-    """chat_app.py:_format_contact_answer() 동일 로직."""
+def _format_contact_answer(question: str, lang: str = "ko") -> str:
+    """연락처 쿼리 즉답. lang에 따라 라벨 다국어화 (EN/KO).
+
+    부서명(예: 영어학부)은 departments.json의 한국어 표기 유지 — 학교 측 공식 명칭이며,
+    EN 사용자에게도 한국어 명칭이 포함된 답변이 행정 문의 시 일관성을 보장.
+    """
     try:
         from app.contacts import get_dept_searcher
         searcher = get_dept_searcher()
         if not searcher.is_contact_query(question):
             return ""
-        results = searcher.search(question, top_k=3)
+        # EN 쿼리는 EnTermMapper로 KO 키워드 주입 후 검색 (is_contact_query와 동일 경로)
+        search_q = searcher._en_to_ko_query(question) if lang == "en" else question
+        results = searcher.search(search_q, top_k=3)
         if not results:
             return ""
-        lines = ["\U0001f4de **연락처 안내**\n"]
+        if lang == "en":
+            header = "\U0001f4de **Contact Information**\n"
+            ext_label = "Ext."
+            office_prefix = " | Office: "
+        else:
+            header = "\U0001f4de **연락처 안내**\n"
+            ext_label = "내선"
+            office_prefix = " | 사무실: "
+        lines = [header]
         for r in results:
             college_info = f" ({r.college})" if r.college else ""
-            office_info = f" | 사무실: {r.office}" if r.office else ""
+            office_info = f"{office_prefix}{r.office}" if r.office else ""
             lines.append(
                 f"- **{r.name}**{college_info}: "
-                f"`내선 {r.extension}` / {r.phone}{office_info}"
+                f"`{ext_label} {r.extension}` / {r.phone}{office_info}"
             )
         return "\n".join(lines)
     except Exception:
         return ""
 
 
-def _get_contact_footer(intent, entities: dict, question: str) -> str:
-    """chat_app.py:_get_contact_footer() 동일 로직."""
+def _get_contact_footer(intent, entities: dict, question: str, lang: str = "ko") -> str:
+    """답변 꼬리말로 학사/학과 연락처 첨부. lang에 따라 라벨 다국어화."""
     try:
         from app.models import Intent
         from app.contacts import get_dept_searcher
+
+        if lang == "en":
+            dept_label = "Contact"
+            haksa_label = "Academic Affairs"
+        else:
+            dept_label = "문의"
+            haksa_label = "학사 문의"
 
         _DEPT_KW = ("졸업시험", "과 행사", "학과 행사", "과행사", "학과행사")
         if any(kw in question for kw in _DEPT_KW):
@@ -86,7 +132,7 @@ def _get_contact_footer(intent, entities: dict, question: str) -> str:
                 results = get_dept_searcher().search(dept, top_k=1)
                 if results:
                     r = results[0]
-                    return f"\n\n---\n\U0001f4de **{r.name}** 문의: `{r.phone}`"
+                    return f"\n\n---\n\U0001f4de **{r.name}** {dept_label}: `{r.phone}`"
 
         _ACADEMIC = {
             Intent.GRADUATION_REQ, Intent.EARLY_GRADUATION,
@@ -97,10 +143,91 @@ def _get_contact_footer(intent, entities: dict, question: str) -> str:
         if intent in _ACADEMIC:
             haksa = get_dept_searcher().search("학사지원팀", top_k=1)
             if haksa:
-                return f"\n\n---\n\U0001f4de 학사 문의: **{haksa[0].name}** `{haksa[0].phone}`"
+                return f"\n\n---\n\U0001f4de {haksa_label}: **{haksa[0].name}** `{haksa[0].phone}`"
     except Exception:
         pass
     return ""
+
+
+# ── Clarification 게이트 헬퍼 ────────────────────────────────────────────────
+# 필수 정보(학번/학과/유형/성적표) 누락 시 되묻기 처리. 팀원 작성 프로필 주입 블록
+# 뒤에 실행되어, 프로필이 여전히 부족하면 short-circuit. 1회 제한(세션당 필드당).
+def _handle_clarification_reply(
+    session_data: dict, question: str, lang: str,
+) -> tuple[str, bool]:
+    """
+    이전 턴이 clarification이었으면 현 턴 응답에서 필드 추출 → 프로필 업데이트.
+
+    Returns:
+        (effective_question, profile_updated)
+        - effective_question: 원질문 재실행 대상이면 그 값, 아니면 원 question
+        - profile_updated: 프로필 변경됐는지
+    """
+    from app.pipeline import clarification as _clr
+    if not _clr.ENABLED:
+        return question, False
+    pending = session_data.get("pending_clarification") or {}
+    if not pending:
+        return question, False
+    last_asked = pending.get("fields") or []
+    if not last_asked:
+        return question, False
+    extracted = _clr.detect_clarification_reply(question, last_asked, lang=lang)
+    if not extracted:
+        # 응답 아님 — pending 해제 (무한 대기 방지)
+        session_data.pop("pending_clarification", None)
+        return question, False
+    # 프로필 병합
+    profile = dict(session_data.get("user_profile") or {})
+    for k, v in extracted.items():
+        if k in ("student_id", "department", "student_type") and v:
+            profile[k] = v
+    session_data["user_profile"] = profile
+    # 원질문 복원
+    original_q = pending.get("original_question")
+    session_data.pop("pending_clarification", None)
+    if original_q:
+        logger.info("clarification reply 적용: extracted=%s → 원질문 재실행", extracted)
+        return original_q, True
+    return question, True
+
+
+def _check_clarification_gate(
+    analysis, session_data: dict, question: str, lang: str,
+    transcript_present: bool,
+) -> tuple[Optional[str], list[str]]:
+    """
+    누락 필수 필드 확인 + clarification 메시지 구성.
+
+    Returns:
+        (clarification_message_or_None, already_asked_fields)
+        - clarification_message: short-circuit으로 반환할 텍스트 (None이면 통과)
+        - already_asked_fields: soft 경고 주입 대상 필드 (clarification_message와 배타)
+    """
+    from app.pipeline import clarification as _clr
+    if not _clr.ENABLED:
+        return None, []
+    profile = session_data.get("user_profile") or {}
+    log = session_data.get("clarification_log") or {}
+    missing = _clr.check_required_fields(
+        analysis, profile, log, transcript_present=transcript_present,
+    )
+    if missing:
+        # short-circuit 준비 — 로그 갱신 + pending 저장
+        new_log = _clr.update_log(log, missing)
+        session_data["clarification_log"] = new_log
+        session_data["pending_clarification"] = {
+            "fields": missing,
+            "original_question": question,
+        }
+        msg = _clr.build_clarification_message(analysis.intent, lang, missing)
+        return msg, []
+    # 통과 — soft 경고 대상 확인
+    already = _clr.get_already_asked_missing(
+        analysis, profile, log, transcript_present=transcript_present,
+    )
+    return None, already
+
 
 
 def _enrich_analysis(question: str, analysis, router_inst, session_data: dict,
@@ -366,25 +493,46 @@ async def chat_stream(
     async def event_generator() -> AsyncGenerator[dict, None]:
         _t0 = time.monotonic()
 
+        # 예외 메시지 다국어화용 lang 사전 조회 (정상 경로엔 영향 없음)
+        _err_lang = "ko"
+        try:
+            _, _sd_peek = session_store.get_or_create(session_id)
+            _err_lang = _sd_peek.get("lang", "ko")
+        except Exception:
+            pass
+
         try:
             async for event in _inner_generator(_t0):
                 yield event
         except Exception as e:
             logger.error("채팅 파이프라인 오류: %s", e, exc_info=True)
             yield {"event": "error", "data": json.dumps(
-                {"message": "처리 중 오류가 발생했습니다. 다시 시도해 주세요."},
+                {"message": _user_msg("stream_error", _err_lang)},
                 ensure_ascii=False,
             )}
 
     async def _inner_generator(_t0: float) -> AsyncGenerator[dict, None]:
+        # 2026-04-28 fix: closure 변수 `question` 재할당 → Python이 local 추정 →
+        # `_handle_clarification_reply(session_data, question, ...)`에서
+        # UnboundLocalError. nonlocal로 outer scope 참조 명시.
+        nonlocal question
+
         # 세션 확인/생성
         sid, session_data = session_store.get_or_create(session_id)
 
         # JWT 토큰이 있으면 user_id 추출 (비로그인은 None — 개인 DB 저장 스킵)
         user_id = _resolve_user_id(access_token)
 
+        # [Clarification] 이전 턴이 되묻기였으면 응답에서 필드 추출 → 원질문 재실행
+        _current_lang = session_data.get("lang", "ko")
+        effective_question, _profile_updated = _handle_clarification_reply(
+            session_data, question, _current_lang,
+        )
+        # 하류 파이프라인은 effective_question 기준으로 동작 (재실행 시 원질문 사용)
+        question = effective_question
+
         # 연락처 단락 처리
-        contact_answer = _format_contact_answer(question)
+        contact_answer = _format_contact_answer(question, lang=_current_lang)
         if contact_answer:
             _try_log_simple(question, contact_answer, sid, "CONTACT", _t0, user_id=user_id)
             yield {"event": "done", "data": json.dumps({
@@ -483,6 +631,22 @@ async def chat_stream(
                 search_query, analysis, router_inst, session_data, user_id=user_id
             )
             _ms_analyze = int((time.monotonic() - _t1) * 1000)
+
+        # [Clarification] 필수 필드 누락 시 short-circuit, 또는 soft 경고 플래그
+        _transcript_present = transcript_context is not None and bool(transcript_context.strip() if transcript_context else False)
+        _clarify_msg, _soft_warn_fields = _check_clarification_gate(
+            analysis, session_data, question, lang, _transcript_present,
+        )
+        if _clarify_msg:
+            _try_log_simple(question, _clarify_msg, sid, "CLARIFICATION", _t0, user_id=user_id)
+            yield {"event": "done", "data": json.dumps({
+                "answer": _clarify_msg,
+                "source_urls": [],
+                "results": [],
+                "intent": "CLARIFICATION",
+                "duration_ms": int((time.monotonic() - _t0) * 1000),
+            }, ensure_ascii=False)}
+            return
 
         # Stage 2: 검색 (glossary 정규화된 쿼리 사용 — 학식→학생식당 등)
         # search_query는 이미 follow-up rewrite를 거친 상태 → 그 위에 glossary 레이어 적용
@@ -646,29 +810,49 @@ async def chat_stream(
         # Stage 5: LLM 스트리밍 생성
         _t5 = time.monotonic()
         full_answer = ""
+        # [Clarification] soft 경고 문구 준비 — LLM 스트림 맨 앞에 주입
+        _soft_warn_text = ""
+        if _soft_warn_fields:
+            from app.pipeline import clarification as _clr
+            _soft_warn_text = _clr.build_soft_warning(_soft_warn_fields, analysis.lang or "ko")
+        _soft_warn_emitted = False
+        # KO 경로: CLEAR 없음 → 즉시 warning 토큰 yield
+        if _soft_warn_text and analysis.lang != "en":
+            _pref = _soft_warn_text + "\n\n"
+            full_answer += _pref
+            yield {"event": "token", "data": json.dumps({"token": _pref}, ensure_ascii=False)}
+            _soft_warn_emitted = True
         try:
-            async for token in generator.generate(
-                question=search_query,
-                context=merged.formatted_context,
-                student_id=analysis.student_id,
-                question_focus=analysis.entities.get("question_focus"),
-                lang=analysis.lang,
-                matched_terms=analysis.matched_terms,
-                student_context=student_context,
-                context_confidence=merged.context_confidence,
-                question_type=analysis.question_type.value if analysis.question_type else None,
-                intent=analysis.intent.value,
-                entities=analysis.entities,
-                history=llm_history,
-            ):
-                if token == "\x00CLEAR\x00":
-                    full_answer = ""
-                    yield {"event": "clear", "data": "{}"}
-                    continue
-                full_answer += token
-                yield {"event": "token", "data": json.dumps(
-                    {"token": token}, ensure_ascii=False
-                )}
+            # 백프레셔: 동시 LLM 스트리밍 상한 도달 시 여기서 큐 대기 → OOM 방어.
+            async with _LLM_SEMAPHORE:
+                async for token in generator.generate(
+                    question=search_query,
+                    context=merged.formatted_context,
+                    student_id=analysis.student_id,
+                    question_focus=analysis.entities.get("question_focus"),
+                    lang=analysis.lang,
+                    matched_terms=analysis.matched_terms,
+                    student_context=student_context,
+                    context_confidence=merged.context_confidence,
+                    question_type=analysis.question_type.value if analysis.question_type else None,
+                    intent=analysis.intent.value,
+                    entities=analysis.entities,
+                    history=llm_history,
+                ):
+                    if token == "\x00CLEAR\x00":
+                        full_answer = ""
+                        yield {"event": "clear", "data": "{}"}
+                        # EN 경로: CLEAR 직후 warning 주입 (한 번만)
+                        if _soft_warn_text and not _soft_warn_emitted:
+                            _pref = _soft_warn_text + "\n\n"
+                            full_answer += _pref
+                            yield {"event": "token", "data": json.dumps({"token": _pref}, ensure_ascii=False)}
+                            _soft_warn_emitted = True
+                        continue
+                    full_answer += token
+                    yield {"event": "token", "data": json.dumps(
+                        {"token": token}, ensure_ascii=False
+                    )}
         except Exception as e:
             logger.error("LLM 생성 오류: %s", e)
             yield {"event": "error", "data": json.dumps(
@@ -732,13 +916,13 @@ async def chat_stream(
             )
             if warnings:
                 warning_text = "\n".join(f"- {w}" for w in warnings)
-                full_answer += f"\n\n---\n*검증 경고:*\n{warning_text}"
+                full_answer += f"\n\n---\n{_user_msg('validation_warning_label', lang)}\n{warning_text}"
         except Exception:
             pass
         _ms_val = int((time.monotonic() - _t6) * 1000)
 
         # 연락처 꼬리말
-        footer = _get_contact_footer(analysis.intent, analysis.entities, question)
+        footer = _get_contact_footer(analysis.intent, analysis.entities, question, lang=lang)
         if footer:
             full_answer += footer
 
@@ -835,8 +1019,15 @@ async def chat_sync(
     sid, session_data = session_store.get_or_create(session_id)
     user_id = _resolve_user_id(access_token)
 
+    # [Clarification] 이전 턴이 되묻기였으면 응답에서 필드 추출 → 원질문 재실행
+    _current_lang = session_data.get("lang", "ko")
+    effective_question, _profile_updated = _handle_clarification_reply(
+        session_data, question, _current_lang,
+    )
+    question = effective_question
+
     # 연락처 단락
-    contact = _format_contact_answer(question)
+    contact = _format_contact_answer(question, lang=_current_lang)
     if contact:
         _try_log_simple(question, contact, sid, "CONTACT", _t0, user_id=user_id)
         total_ms = _log_chat_sync_timing(t0=_t0, path="contact", intent="CONTACT")
@@ -907,6 +1098,19 @@ async def chat_sync(
             search_query, analysis, router_inst, session_data, user_id=user_id
         )
         _ms_analyze = int((time.monotonic() - _t3) * 1000)
+
+    # [Clarification] 필수 필드 누락 시 short-circuit
+    _transcript_present_sync = transcript_context is not None and bool(transcript_context.strip() if transcript_context else False)
+    _clarify_msg_sync, _soft_warn_fields_sync = _check_clarification_gate(
+        analysis, session_data, question, lang, _transcript_present_sync,
+    )
+    if _clarify_msg_sync:
+        _try_log_simple(question, _clarify_msg_sync, sid, "CLARIFICATION", _t0, user_id=user_id)
+        return ChatResponse(
+            answer=_clarify_msg_sync,
+            intent="CLARIFICATION",
+            duration_ms=int((time.monotonic() - _t0) * 1000),
+        )
 
     # glossary 정규화된 쿼리 우선. follow-up rewrite된 search_query 위에 glossary 레이어.
     _search_query = analysis.normalized_query or search_query
@@ -1014,27 +1218,29 @@ async def chat_sync(
             duration_ms=total_ms,
         )
 
-    # LLM 생성 (전체 수집)
+    # LLM 생성 (전체 수집) — 백프레셔로 동시 LLM 호출 상한 적용 (OOM 방어, PR #22).
+    # PIPELINE_TIMING의 generate=Xms 측정 보존 (semaphore wait + generate 합산, HEAD 의도).
     _t6 = time.monotonic()
     full_answer = ""
-    async for token in generator.generate(
-        question=search_query,
-        context=merged.formatted_context,
-        student_id=analysis.student_id,
-        question_focus=analysis.entities.get("question_focus"),
-        lang=analysis.lang,
-        matched_terms=analysis.matched_terms,
-        student_context=student_context,
-        context_confidence=merged.context_confidence,
-        question_type=analysis.question_type.value if analysis.question_type else None,
-        intent=analysis.intent.value,
-        entities=analysis.entities,
-        history=llm_history,
-    ):
-        if token == "\x00CLEAR\x00":
-            full_answer = ""
-            continue
-        full_answer += token
+    async with _LLM_SEMAPHORE:
+        async for token in generator.generate(
+            question=search_query,
+            context=merged.formatted_context,
+            student_id=analysis.student_id,
+            question_focus=analysis.entities.get("question_focus"),
+            lang=analysis.lang,
+            matched_terms=analysis.matched_terms,
+            student_context=student_context,
+            context_confidence=merged.context_confidence,
+            question_type=analysis.question_type.value if analysis.question_type else None,
+            intent=analysis.intent.value,
+            entities=analysis.entities,
+            history=llm_history,
+        ):
+            if token == "\x00CLEAR\x00":
+                full_answer = ""
+                continue
+            full_answer += token
     _ms_gen = int((time.monotonic() - _t6) * 1000)
 
     # 빈 응답 방어
@@ -1044,6 +1250,13 @@ async def chat_sync(
         else:
             full_answer = "죄송합니다. 응답을 생성하지 못했습니다. 다시 시도해 주세요."
         logger.warning("LLM 빈 응답 (sync): question='%s'", question[:50])
+
+    # [Clarification] soft 경고 prepend (이미 물었던 필드 누락 유지 케이스)
+    if _soft_warn_fields_sync:
+        from app.pipeline import clarification as _clr
+        _warn = _clr.build_soft_warning(_soft_warn_fields_sync, analysis.lang or "ko")
+        if _warn:
+            full_answer = _warn + "\n\n" + full_answer
 
     # ~ 이스케이프 (마크다운 취소선 방지)
     full_answer = re.sub(r'(?<!~)~(?!~)', r'\~', full_answer)
@@ -1087,13 +1300,13 @@ async def chat_sync(
         )
         if warnings:
             warning_text = "\n".join(f"- {w}" for w in warnings)
-            full_answer += f"\n\n---\n*검증 경고:*\n{warning_text}"
+            full_answer += f"\n\n---\n{_user_msg('validation_warning_label', lang)}\n{warning_text}"
     except Exception:
         pass
     _ms_val = int((time.monotonic() - _t7) * 1000)
 
     # 연락처 꼬리말
-    footer = _get_contact_footer(analysis.intent, analysis.entities, question)
+    footer = _get_contact_footer(analysis.intent, analysis.entities, question, lang=lang)
     if footer:
         full_answer += footer
 
@@ -1168,8 +1381,10 @@ async def get_faq_by_id(faq_id: str):
         except Exception:
             return []
 
-    items = _load(Path(settings.admin_faq.academic_faq_path)) + _load(
-        Path(settings.admin_faq.admin_faq_path)
+    items = (
+        _load(Path(settings.admin_faq.academic_faq_path))
+        + _load(Path(settings.admin_faq.library_faq_path))
+        + _load(Path(settings.admin_faq.admin_faq_path))
     )
     for it in items:
         if it.get("id") == faq_id:

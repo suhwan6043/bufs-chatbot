@@ -27,6 +27,8 @@ class ResponseValidator:
     # - "찾을 수 없"(접두어 독립) — "해당 **일정** 정보를 찾을 수 없습니다" 같은
     #   중간 단어가 끼어든 변형 매칭
     # - "문의하시기 바랍니다" — 거절 응답의 꼬리말 표준 패턴
+    # 2026-05-09 추가: LLM 거절 메시지에서 부서명·전화번호 제거(footer로 분리).
+    # "답변을 생성하지 못했" / "확인하지 못했" 도 refusal 감지 패턴에 포함.
     NO_CONTEXT_PHRASES = [
         # KO 거절 패턴
         "확인되지 않는 정보",
@@ -34,8 +36,10 @@ class ResponseValidator:
         "관련 정보를 찾을 수 없",
         "해당 정보가 없",
         "찾을 수 없습니다",           # 일반 거절 표현
-        "찾지 못했습니다",             # "정확히 확인하지 못했습니다"
-        "문의하시기 바랍니다",         # refusal 꼬리말
+        "찾지 못했습니다",             # "정확히 찾지 못했습니다"
+        "확인하지 못했",               # "정확히 확인하지 못했습니다" (verify_answer_against_context fallback)
+        "답변을 생성하지 못했",        # 스트리밍/thinking 폴백
+        "문의하시기 바랍니다",         # refusal 꼬리말 (legacy, footer 분리 후에도 호환)
         # EN 거절 패턴
         "couldn't find relevant",
         "could not find relevant",

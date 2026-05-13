@@ -370,10 +370,28 @@ def main():
         create_chunk as _faq_chunk,
     )
 
-    faq_path = Path("data/faq_academic.json")
-    if faq_path.exists():
-        faq_data = _faq_load(faq_path)
-        logger.info("FAQ 로드: %d개 항목", len(faq_data))
+    # 큐레이션 FAQ 코퍼스 — 동등 등급의 여러 파일을 단일 리스트로 병합해
+    # 인덱싱한다. 분리 호출 시 FaqNodeBuilder.build_from_items 의
+    # "미존재 삭제" 동작이 직전 파일의 노드를 제거해 버리기 때문이다.
+    from app.config import settings as _faq_settings
+    faq_paths = [
+        Path(_faq_settings.admin_faq.academic_faq_path),
+        Path(_faq_settings.admin_faq.library_faq_path),
+    ]
+    faq_data: list = []
+    source_files: list[str] = []
+    for p in faq_paths:
+        if not p.exists():
+            logger.warning("FAQ 파일 없음 — 스킵: %s", p)
+            continue
+        items = _faq_load(p)
+        faq_data.extend(items)
+        source_files.extend([p.name] * len(items))
+        logger.info("FAQ 로드: %s — %d개 항목", p.name, len(items))
+
+    faq_path = faq_paths[0]  # 로깅·예외 메시지용 대표 경로
+    if faq_data:
+        logger.info("FAQ 코퍼스 합계: %d개 항목 (%d개 파일)", len(faq_data), len(faq_paths))
 
         # 증분 감지
         faq_crawled = [_faq_to_item(item) for item in faq_data]
@@ -384,6 +402,11 @@ def main():
         else:
             # ChromaDB 업데이트 (변경/신규 FAQ만)
             item_by_id = {item.get("id"): item for item in faq_data if item.get("id")}
+            source_by_id = {
+                item.get("id"): src
+                for item, src in zip(faq_data, source_files)
+                if item.get("id")
+            }
             chunks_to_add = []
             ids_to_delete = []
             for event in faq_events:
@@ -398,7 +421,7 @@ def main():
                 if event.change_type != ChangeType.DELETED:
                     item = item_by_id.get(faq_id)
                     if item:
-                        chunk = _faq_chunk(item, faq_path.name)
+                        chunk = _faq_chunk(item, source_by_id.get(faq_id, faq_path.name))
                         if chunk:
                             chunks_to_add.append(chunk)
 
@@ -424,7 +447,7 @@ def main():
 
             detector.commit(faq_events)
     else:
-        logger.warning("FAQ 파일 없음: %s", faq_path)
+        logger.warning("FAQ 파일이 하나도 존재하지 않음: %s", faq_paths)
 
     # ── 7. 검증 ──────────────────────────────────────────────
     count = chroma_store.collection.count()
