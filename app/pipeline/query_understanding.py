@@ -100,6 +100,9 @@ def _build_system_prompt() -> str:
     intents_block = "\n".join(f"- {k}: {desc}" for k, desc in _INTENT_DEFINITIONS)
     qtypes_block = "\n".join(f"- {k}: {desc}" for k, desc in _QTYPE_DEFINITIONS)
     return (
+        # qwen3 thinking 모드 비활성 — 매번 reasoning 단계 거치면 H100에서도 27-52s 소요.
+        # answer_generator의 SYSTEM_PROMPT와 동일한 토큰. gemma4/llama 등엔 무영향.
+        "/no_think\n\n"
         "당신은 부산외국어대학교 학사 RAG 챗봇의 쿼리 이해 모듈입니다.\n"
         "사용자 질문을 분석해 아래 JSON 스키마로만 출력하세요. JSON 외 어떤 텍스트도 출력 금지.\n\n"
         "JSON 스키마:\n"
@@ -254,24 +257,56 @@ async def _call_llm(
         "temperature": 0.0,
         "top_p": 0.9,
         "think": False,
-        "response_format": {"type": "json_object"},
+        # response_format(JSON 모드)는 일부 ollama 모델에서 content를 비우고 reasoning만
+        # 채우는 버그가 있음(2026-05-12 qwen3:8b/gemma4:26b 관측). prompt만으로 JSON 유도.
     }
+    _t_call = time.monotonic()
+    prompt_chars = sum(len(m.get("content", "")) for m in messages)
     try:
         async with httpx.AsyncClient(timeout=timeout_sec) as client:
             response = await client.post(url, json=payload)
             response.raise_for_status()
             data = response.json()
-            content = (
-                data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+            msg = data.get("choices", [{}])[0].get("message", {})
+            content = (msg.get("content") or "").strip()
+            reasoning = (msg.get("reasoning") or "").strip()
+            # 일부 모델은 content를 비우고 reasoning에 JSON을 박음(ollama 0.10+ 일부 빌드).
+            if not content:
+                content = reasoning
+            elapsed_ms = int((time.monotonic() - _t_call) * 1000)
+            logger.info(
+                "[understand-call] OK model=%s timeout=%.1fs elapsed=%dms "
+                "prompt_chars=%d content_len=%d reasoning_len=%d",
+                model, timeout_sec, elapsed_ms, prompt_chars, len(content), len(reasoning),
             )
     except (httpx.TimeoutException, asyncio.TimeoutError):
-        logger.debug("understand LLM 타임아웃 (%.2fs, model=%s)", timeout_sec, model)
+        elapsed_ms = int((time.monotonic() - _t_call) * 1000)
+        logger.warning(
+            "[understand-call] TIMEOUT model=%s timeout=%.1fs actual=%dms prompt_chars=%d",
+            model, timeout_sec, elapsed_ms, prompt_chars,
+        )
         return None
     except Exception as e:
-        logger.debug("understand LLM 호출 실패 (model=%s): %s", model, e)
+        elapsed_ms = int((time.monotonic() - _t_call) * 1000)
+        logger.warning(
+            "[understand-call] EXCEPTION model=%s err=%s:%s elapsed=%dms",
+            model, type(e).__name__, str(e)[:120], elapsed_ms,
+        )
         return None
 
-    return _parse_json_response(content)
+    parsed = _parse_json_response(content)
+    if parsed is None:
+        logger.warning(
+            "[understand-call] JSON_PARSE_FAIL model=%s content_head=%r",
+            model, content[:120],
+        )
+    else:
+        intent = parsed.get("intent", "?")
+        logger.info(
+            "[understand-call] JSON_OK model=%s intent=%s keys=%s",
+            model, intent, list(parsed.keys())[:8],
+        )
+    return parsed
 
 
 _JSON_BLOCK_RE = re.compile(r"\{[\s\S]*\}", re.MULTILINE)

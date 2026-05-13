@@ -5,6 +5,7 @@ CAMCHAT FastAPI 백엔드 — 앱 팩토리.
 """
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -15,11 +16,26 @@ from backend.database import init_db
 from backend.routers import health, chat, session, transcript, feedback, source, user
 from backend.routers.admin import router as admin_router
 
-logger = logging.getLogger(__name__)
-
 # 환경변수 로드 (.env)
 from dotenv import load_dotenv
 load_dotenv()
+
+# 2026-05-13: root logger 정상화 — 진단 결과 root level=WARNING + handlers=[] 였음.
+# 그 결과 app.pipeline.* 의 logger.info/debug 가 stdout에 출력 안 됨 (PIPELINE_TIMING
+# 만 print 경유로 보임). LOG_LEVEL env로 동적 설정, format에 logger name 포함.
+_lvl_name = os.getenv("LOG_LEVEL", "INFO").upper()
+_lvl = getattr(logging, _lvl_name, logging.INFO)
+logging.basicConfig(
+    level=_lvl,
+    format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
+    force=True,  # uvicorn pre-config 덮어쓰기
+)
+# app.pipeline.* 강제 명시 (정확한 진단용)
+logging.getLogger("app.pipeline").setLevel(_lvl)
+logging.getLogger("backend").setLevel(_lvl)
+
+logger = logging.getLogger(__name__)
+logger.info("logging configured: level=%s (LOG_LEVEL env)", _lvl_name)
 
 
 @asynccontextmanager
