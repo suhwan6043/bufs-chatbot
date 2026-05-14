@@ -404,10 +404,22 @@ class ContextMerger:
         # AnswerUnit.aligns()는 질문의 기대 단위(credit/won/date/...)와 답변의
         # 실제 제공 단위가 일치하는지 검증한다. 불일치면 skip → 다음 후보 or
         # _try_extract_direct_answer 폴백 or LLM 경로.
+        # [Rerank Bypass Gate] 2026-05-13: CrossEncoder raw logit 임계치 미만이면
+        # direct_answer bypass 거부 → LLM 경유. 운영 로그 23쌍 실측 기반 임계치.
+        # raw_score 없으면(reranker 미적용 경로) 게이트 우회 → 기존 동작 유지.
+        from app.config import settings as _settings_rb
+        _rb_thresh = _settings_rb.pipeline.rerank_bypass_threshold
         for result in all_results:
             if not result.metadata.get("direct_answer"):
                 continue
             if _is_redirect_faq(result):
+                continue
+            _raw = result.metadata.get("raw_score")
+            if _raw is not None and float(_raw) < _rb_thresh:
+                logger.debug(
+                    "direct_answer rejected by rerank gate: raw=%.3f < %.2f q=%r",
+                    float(_raw), _rb_thresh, (question or "")[:60],
+                )
                 continue
             candidate = result.metadata["direct_answer"]
             if not _answer_unit_aligns(question, candidate):
@@ -437,11 +449,13 @@ class ContextMerger:
                 continue
 
             # FAQ direct_answer가 없을 때만 다른 소스의 direct_answer 수락
-            # (동일 semantic gate 적용)
+            # (동일 semantic gate + rerank gate 적용)
             if not direct_answer and result.metadata.get("direct_answer"):
-                candidate = result.metadata["direct_answer"]
-                if _answer_unit_aligns(question, candidate):
-                    direct_answer = candidate
+                _raw2 = result.metadata.get("raw_score")
+                if _raw2 is None or float(_raw2) >= _rb_thresh:
+                    candidate = result.metadata["direct_answer"]
+                    if _answer_unit_aligns(question, candidate):
+                        direct_answer = candidate
 
             # 원칙 2: OCU 미언급 쿼리에서 혼합 청크의 OCU 섹션 동적 트리밍
             if _trim_ocu and result.metadata.get("source_type") != "graph":

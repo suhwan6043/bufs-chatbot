@@ -135,6 +135,10 @@ class Reranker:
         boosted_scored = []
         for raw, (_, r) in zip(raw_scores, valid):
             s = float(raw)
+            # context_merger의 direct_answer bypass 게이트가 사용하는 raw 보정 전 logit.
+            # boosted score(result.score)는 tier/url 가산 후 값이므로 게이트 임계치
+            # 적용 시 부정확. raw를 별도 보존하여 측정 임계치와 1:1 정합.
+            r.metadata["raw_score"] = float(raw)
             dt = r.metadata.get("doc_type", "")
             is_tier1 = dt in (_TIER1_DOMESTIC, _TIER1_GUIDE)
             url_has = asks_url and bool(_URL_IN_CHUNK_PATTERN.search(r.text or ""))
