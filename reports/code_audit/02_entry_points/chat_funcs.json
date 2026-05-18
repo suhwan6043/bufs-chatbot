@@ -1,0 +1,605 @@
+[
+  {
+    "name": "_user_msg",
+    "is_async": false,
+    "lineno": 53,
+    "end_lineno": 55,
+    "loc": 3,
+    "cc": 2,
+    "internal_calls": [],
+    "external_calls": [
+      "_USER_MSG.get",
+      "entry.get"
+    ]
+  },
+  {
+    "name": "_resolve_user_id",
+    "is_async": false,
+    "lineno": 58,
+    "end_lineno": 73,
+    "loc": 16,
+    "cc": 5,
+    "internal_calls": [
+      "_verify_user_token",
+      "int"
+    ],
+    "external_calls": [
+      "logger.debug"
+    ]
+  },
+  {
+    "name": "_format_contact_answer",
+    "is_async": false,
+    "lineno": 78,
+    "end_lineno": 112,
+    "loc": 35,
+    "cc": 9,
+    "internal_calls": [
+      "get_dept_searcher"
+    ],
+    "external_calls": [
+      "join",
+      "lines.append",
+      "searcher._en_to_ko_query",
+      "searcher.is_contact_query",
+      "searcher.search"
+    ]
+  },
+  {
+    "name": "_get_contact_footer",
+    "is_async": false,
+    "lineno": 115,
+    "end_lineno": 149,
+    "loc": 35,
+    "cc": 8,
+    "internal_calls": [
+      "any",
+      "get_dept_searcher"
+    ],
+    "external_calls": [
+      "entities.get",
+      "search"
+    ]
+  },
+  {
+    "name": "_handle_clarification_reply",
+    "is_async": false,
+    "lineno": 155,
+    "end_lineno": 192,
+    "loc": 38,
+    "cc": 12,
+    "internal_calls": [
+      "dict"
+    ],
+    "external_calls": [
+      "_clr.detect_clarification_reply",
+      "extracted.items",
+      "logger.info",
+      "pending.get",
+      "session_data.get",
+      "session_data.pop"
+    ]
+  },
+  {
+    "name": "_check_clarification_gate",
+    "is_async": false,
+    "lineno": 195,
+    "end_lineno": 229,
+    "loc": 35,
+    "cc": 5,
+    "internal_calls": [],
+    "external_calls": [
+      "_clr.build_clarification_message",
+      "_clr.check_required_fields",
+      "_clr.get_already_asked_missing",
+      "_clr.update_log",
+      "session_data.get"
+    ]
+  },
+  {
+    "name": "_enrich_analysis",
+    "is_async": false,
+    "lineno": 233,
+    "end_lineno": 344,
+    "loc": 112,
+    "cc": 49,
+    "internal_calls": [
+      "TranscriptAnalyzer",
+      "_rehydrate_transcript_from_json",
+      "any",
+      "get_user_transcript",
+      "getattr",
+      "hasattr",
+      "int"
+    ],
+    "external_calls": [
+      "PIIRedactor.redact_for_llm",
+      "_profile.get",
+      "analysis.entities.get",
+      "analysis.missing_info.remove",
+      "join",
+      "logger.info",
+      "logger.warning",
+      "parts.append",
+      "reg.get",
+      "row.get",
+      "session_data.get",
+      "tx.current_semester_courses",
+      "tx.format_courses_context_safe",
+      "tx.format_gap_context_safe",
+      "tx.format_profile_summary_safe",
+      "tx.registration_limit",
+      "tx.retake_candidates"
+    ]
+  },
+  {
+    "name": "_rehydrate_transcript_from_json",
+    "is_async": false,
+    "lineno": 347,
+    "end_lineno": 395,
+    "loc": 49,
+    "cc": 11,
+    "internal_calls": [
+      "CreditCategory",
+      "CreditSummary",
+      "StudentAcademicProfile",
+      "StudentProfile",
+      "_build_credits",
+      "_build_profile"
+    ],
+    "external_calls": [
+      "StudentProfile.__dataclass_fields__.values",
+      "_json.loads",
+      "c.get",
+      "cat.get",
+      "cats.append",
+      "fields.items",
+      "logger.warning",
+      "p.get",
+      "raw.get"
+    ]
+  },
+  {
+    "name": "_serialize_results",
+    "is_async": false,
+    "lineno": 398,
+    "end_lineno": 418,
+    "loc": 21,
+    "cc": 7,
+    "internal_calls": [
+      "bool",
+      "float",
+      "getattr",
+      "round"
+    ],
+    "external_calls": [
+      "items.append",
+      "meta.get"
+    ]
+  },
+  {
+    "name": "_build_generation_cache_kwargs",
+    "is_async": false,
+    "lineno": 421,
+    "end_lineno": 463,
+    "loc": 43,
+    "cc": 7,
+    "internal_calls": [
+      "bool"
+    ],
+    "external_calls": [
+      "analysis.entities.get",
+      "strip"
+    ]
+  },
+  {
+    "name": "chat_stream",
+    "is_async": true,
+    "lineno": 469,
+    "end_lineno": 979,
+    "loc": 511,
+    "cc": 76,
+    "internal_calls": [
+      "EventSourceResponse",
+      "Query",
+      "_RV",
+      "_build_generation_cache_kwargs",
+      "_check_clarification_gate",
+      "_enrich_analysis",
+      "_format_contact_answer",
+      "_get_contact_footer",
+      "_handle_clarification_reply",
+      "_inner_generator",
+      "_resolve_user_id",
+      "_serialize_results",
+      "_try_log",
+      "_try_log_simple",
+      "_user_msg",
+      "all",
+      "bool",
+      "event_generator",
+      "fill_from_context",
+      "get_analyzer",
+      "get_generator",
+      "get_merger",
+      "get_router",
+      "get_validator",
+      "int",
+      "print",
+      "set",
+      "set_skip_log",
+      "verify_answer_against_context",
+      "verify_completeness"
+    ],
+    "external_calls": [
+      "_clr.build_soft_warning",
+      "_rv._is_no_context_response",
+      "_sd_peek.get",
+      "analysis.entities.get",
+      "analyzer.analyze",
+      "combined_graph.append",
+      "combined_vector.append",
+      "follow_up_detector.detect",
+      "full_answer.strip",
+      "generator.generate",
+      "generator.get_cached_response",
+      "generator.rewrite_query",
+      "generator.store_cached_response",
+      "join",
+      "json.dumps",
+      "logger.debug",
+      "logger.error",
+      "logger.info",
+      "logger.warning",
+      "lower",
+      "merged.formatted_context.strip",
+      "merger.merge",
+      "messages.append",
+      "query_rewriter.rewrite",
+      "query_understanding.understand",
+      "re.sub",
+      "request.headers.get",
+      "router.get",
+      "router_inst.route_and_search",
+      "seen.add",
+      "seen_g.add",
+      "session_data.get",
+      "session_store.get_or_create",
+      "session_store.update",
+      "strip",
+      "time.monotonic",
+      "transcript_context.strip",
+      "u.get",
+      "validator.validate"
+    ]
+  },
+  {
+    "name": "_log_chat_sync_timing",
+    "is_async": false,
+    "lineno": 984,
+    "end_lineno": 998,
+    "loc": 15,
+    "cc": 1,
+    "internal_calls": [
+      "int",
+      "print"
+    ],
+    "external_calls": [
+      "time.monotonic"
+    ]
+  },
+  {
+    "name": "chat_sync",
+    "is_async": true,
+    "lineno": 1002,
+    "end_lineno": 1339,
+    "loc": 338,
+    "cc": 47,
+    "internal_calls": [
+      "ChatResponse",
+      "Query",
+      "SearchResultItem",
+      "SourceURL",
+      "_RV",
+      "_build_generation_cache_kwargs",
+      "_check_clarification_gate",
+      "_enrich_analysis",
+      "_format_contact_answer",
+      "_get_contact_footer",
+      "_handle_clarification_reply",
+      "_log_chat_sync_timing",
+      "_resolve_user_id",
+      "_serialize_results",
+      "_try_log",
+      "_try_log_simple",
+      "_user_msg",
+      "bool",
+      "fill_from_context",
+      "get_analyzer",
+      "get_generator",
+      "get_merger",
+      "get_router",
+      "get_validator",
+      "int",
+      "set_skip_log",
+      "verify_answer_against_context",
+      "verify_completeness"
+    ],
+    "external_calls": [
+      "_clr.build_soft_warning",
+      "_rv._is_no_context_response",
+      "analysis.entities.get",
+      "analyzer.analyze",
+      "follow_up_detector.detect",
+      "full_answer.strip",
+      "generator.generate",
+      "generator.get_cached_response",
+      "generator.store_cached_response",
+      "join",
+      "logger.debug",
+      "logger.info",
+      "logger.warning",
+      "lower",
+      "merged.formatted_context.strip",
+      "merger.merge",
+      "messages.append",
+      "query_rewriter.rewrite",
+      "query_understanding.understand",
+      "re.sub",
+      "request.headers.get",
+      "router.post",
+      "router_inst.route_and_search",
+      "session_data.get",
+      "session_store.get_or_create",
+      "session_store.update",
+      "strip",
+      "time.monotonic",
+      "transcript_context.strip",
+      "u.get",
+      "validator.validate"
+    ]
+  },
+  {
+    "name": "chat_history",
+    "is_async": true,
+    "lineno": 1345,
+    "end_lineno": 1350,
+    "loc": 6,
+    "cc": 2,
+    "internal_calls": [
+      "Query"
+    ],
+    "external_calls": [
+      "data.get",
+      "router.get",
+      "session_store.get"
+    ]
+  },
+  {
+    "name": "clear_history",
+    "is_async": true,
+    "lineno": 1354,
+    "end_lineno": 1357,
+    "loc": 4,
+    "cc": 1,
+    "internal_calls": [
+      "Query"
+    ],
+    "external_calls": [
+      "router.delete",
+      "session_store.update"
+    ]
+  },
+  {
+    "name": "get_faq_by_id",
+    "is_async": true,
+    "lineno": 1363,
+    "end_lineno": 1397,
+    "loc": 35,
+    "cc": 8,
+    "internal_calls": [
+      "Path",
+      "_load",
+      "isinstance"
+    ],
+    "external_calls": [
+      "_json.loads",
+      "it.get",
+      "path.exists",
+      "path.read_text",
+      "router.get"
+    ]
+  },
+  {
+    "name": "_persist_user_message",
+    "is_async": false,
+    "lineno": 1402,
+    "end_lineno": 1433,
+    "loc": 32,
+    "cc": 5,
+    "internal_calls": [
+      "insert_chat_message",
+      "should_skip_log"
+    ],
+    "external_calls": [
+      "logger.error"
+    ]
+  },
+  {
+    "name": "_try_log",
+    "is_async": false,
+    "lineno": 1436,
+    "end_lineno": 1491,
+    "loc": 56,
+    "cc": 6,
+    "internal_calls": [
+      "ChatLogger",
+      "_persist_user_message",
+      "get_chat_logger",
+      "int"
+    ],
+    "external_calls": [
+      "PIIRedactor.redact_for_log",
+      "chat_logger.log",
+      "logger.error",
+      "time.monotonic"
+    ]
+  },
+  {
+    "name": "_try_log_simple",
+    "is_async": false,
+    "lineno": 1494,
+    "end_lineno": 1522,
+    "loc": 29,
+    "cc": 5,
+    "internal_calls": [
+      "ChatLogger",
+      "_persist_user_message",
+      "get_chat_logger",
+      "int"
+    ],
+    "external_calls": [
+      "chat_logger.log",
+      "time.monotonic"
+    ]
+  },
+  {
+    "name": "_build_profile",
+    "is_async": false,
+    "lineno": 365,
+    "end_lineno": 369,
+    "loc": 5,
+    "cc": 1,
+    "internal_calls": [
+      "StudentProfile"
+    ],
+    "external_calls": [
+      "StudentProfile.__dataclass_fields__.values",
+      "fields.items",
+      "p.get"
+    ]
+  },
+  {
+    "name": "_build_credits",
+    "is_async": false,
+    "lineno": 371,
+    "end_lineno": 385,
+    "loc": 15,
+    "cc": 5,
+    "internal_calls": [
+      "CreditCategory",
+      "CreditSummary"
+    ],
+    "external_calls": [
+      "c.get",
+      "cat.get",
+      "cats.append"
+    ]
+  },
+  {
+    "name": "event_generator",
+    "is_async": true,
+    "lineno": 493,
+    "end_lineno": 512,
+    "loc": 20,
+    "cc": 4,
+    "internal_calls": [
+      "_inner_generator",
+      "_user_msg"
+    ],
+    "external_calls": [
+      "_sd_peek.get",
+      "json.dumps",
+      "logger.error",
+      "session_store.get_or_create",
+      "time.monotonic"
+    ]
+  },
+  {
+    "name": "_inner_generator",
+    "is_async": true,
+    "lineno": 514,
+    "end_lineno": 977,
+    "loc": 464,
+    "cc": 73,
+    "internal_calls": [
+      "_RV",
+      "_build_generation_cache_kwargs",
+      "_check_clarification_gate",
+      "_enrich_analysis",
+      "_format_contact_answer",
+      "_get_contact_footer",
+      "_handle_clarification_reply",
+      "_resolve_user_id",
+      "_serialize_results",
+      "_try_log",
+      "_try_log_simple",
+      "_user_msg",
+      "all",
+      "bool",
+      "fill_from_context",
+      "get_analyzer",
+      "get_generator",
+      "get_merger",
+      "get_router",
+      "get_validator",
+      "int",
+      "print",
+      "set",
+      "verify_answer_against_context",
+      "verify_completeness"
+    ],
+    "external_calls": [
+      "_clr.build_soft_warning",
+      "_rv._is_no_context_response",
+      "analysis.entities.get",
+      "analyzer.analyze",
+      "combined_graph.append",
+      "combined_vector.append",
+      "follow_up_detector.detect",
+      "full_answer.strip",
+      "generator.generate",
+      "generator.get_cached_response",
+      "generator.rewrite_query",
+      "generator.store_cached_response",
+      "join",
+      "json.dumps",
+      "logger.debug",
+      "logger.error",
+      "logger.info",
+      "logger.warning",
+      "merged.formatted_context.strip",
+      "merger.merge",
+      "messages.append",
+      "query_rewriter.rewrite",
+      "query_understanding.understand",
+      "re.sub",
+      "router_inst.route_and_search",
+      "seen.add",
+      "seen_g.add",
+      "session_data.get",
+      "session_store.get_or_create",
+      "session_store.update",
+      "time.monotonic",
+      "transcript_context.strip",
+      "u.get",
+      "validator.validate"
+    ]
+  },
+  {
+    "name": "_load",
+    "is_async": false,
+    "lineno": 1373,
+    "end_lineno": 1382,
+    "loc": 10,
+    "cc": 6,
+    "internal_calls": [
+      "isinstance"
+    ],
+    "external_calls": [
+      "_json.loads",
+      "path.exists",
+      "path.read_text"
+    ]
+  }
+]
