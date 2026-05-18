@@ -1,0 +1,9 @@
+scenario,toggle_summary,total_ms_est,understand_ms_est,rewrite_ms_est,search_ms_est,merge_ms_est,generate_ms_est,validate_ms_est,accuracy_pp_est,priority,source
+baseline,current_env_5_7,41547,28567,0,1346,0,14953,0,0,reference,PIPELINE_TIMING_all172
+S1_understanding_off,CONV_UNDERSTANDING_ENABLED=false,13500,0,100,1346,0,14953,0,-3,P0_immediate,estimated
+S2_timeout_short,CONV_UNDERSTAND_TIMEOUT_SEC=2.0+FALLBACK=5.0,20500,7500,0,1346,0,14953,0,-2,P0_immediate,estimated
+S3_reranker_off,RERANKER_ENABLED=false,41200,28567,0,600,0,14953,0,-8,P2_hold,estimated
+S4_direct_answer_on,DIRECT_ANSWER_BYPASS_LLM=true,28000,28567,0,1346,0,0,0,1,sim_only_protected,estimated
+S5_combined,S1+S2,13000,0,100,1346,0,14953,0,-3,P1_followup,estimated
+S6_history_off,CONV_HISTORY_ENABLED=false,40500,28567,0,1346,0,13900,0,-1,P3_skip,estimated
+S7_max_concurrent_high,LLM_MAX_CONCURRENT=4,41000,28567,0,1346,0,14400,0,0,P2_hold,estimated
