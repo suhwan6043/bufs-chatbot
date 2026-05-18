@@ -52,11 +52,15 @@
 3. **회귀 테스트** — 기존 동작이 깨지지 않았는지 인접 케이스 점검
 4. **정답률 체크 (필수, 절대 생략 금지)**:
    - **검색·생성·답변 품질에 영향을 줄 수 있는 변경**(파이프라인·그래프·프롬프트·컨텍스트·LLM 설정 등)이면 반드시 `scripts/eval_contains_f1.py`로 164문항 E2E 평가
-   - **현재 기준선**: 2026-04-21 commit `99a01df`, `reports/eval_contains_f1/combined_20260421_153203.json` = **83.54%** (학사지원팀 피드백 반영 +6.71pp)
+   - **현재 기준선 (5/18 환경 갱신)**:
+     - **현 환경 baseline = 68.90%** (`combined_p0_1a_20260518_143121`, P0-1a 적용 + 5/6 재인제스트 `chromadb_new`)
+       - balanced 58.97% / rag_eval 78.00% / user_eval 68.00% — 신규 PR 회귀 평가의 비교 기준
+     - **4/21 stale baseline = 83.54%** (`combined_20260421_153203`, `data/chromadb` 4/19 sub-dir) — 환경 차이 비교용으로만 보존
+     - **5/18 회귀 진단** (`reports/regression_analysis/REPORT.md`): -14.64pp 회귀 = 4/22~5/6 v2 indexing pipeline + 5/6 재인제스트 + KO_PROMPT v1 누적 영향. SCHEDULE/REGISTRATION 22건(92%) 회귀. 학사일정 `_format_date` 5곳 보강(audit P2-12 부분 적용) 평가 진행 중
    - 참고: 4/22 ChromaDB 경로 정규화·재인제스트 후 `combined_full_crawl_rebuild_20260422` = 81.10% (신입생가이드북 OCR 미설치로 -2.44pp, 재현 가능 범위)
    - 참고: 4/18 구 기준선 76.8% (`combined_no_tier1_boost_20260418_094724.json`) — 학사지원팀 피드백 반영 전
    - 참고: 4/16 구 기준선 81.7% (`combined_slicing_off_20260416_002907.json`) — 모델 변경·리랭커 Tier 부스트 제거 등 구조 변경 반영 전
-   - **NO-GO 기준**: 전체 정답률 -1pp 이상 회귀 OR 단일 데이터셋 -3pp 이상 회귀 OR 거부율 -10pp 이상 폭락
+   - **NO-GO 기준** (현 환경 baseline 68.90% 기준): 전체 정답률 -1pp 이상 회귀 OR 단일 데이터셋 -3pp 이상 회귀 OR 거부율 -10pp 이상 폭락
    - 회귀 발생 시 commit 보류, 원인 분석 후 사용자에게 보고
    - 검색·생성에 영향 없는 명백한 작업(UI 텍스트, 주석, 로그 메시지 등)은 정답률 체크 생략 가능 — 단 사유를 한 줄로 명시
 

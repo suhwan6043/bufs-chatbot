@@ -125,10 +125,19 @@ Git log 기반 주요 마일스톤 (2026-03 이후):
 | `53e89f8` | 4월 20일 | Reranker Tier 1 고정 부스트 제거 (도메스틱 +22%p 과도) |
 | `cb825f4` | 4월 21일 | **LLM**: `LLM_API_TYPE=ollama` 네이티브 `/api/chat` + `think:false` 실동작 |
 | `654ce54` | 4월 21일 | Docker compose 의 `LLM_BASE_URL` 하드코딩 제거 (`.env` SSOT 원칙) |
-| `99a01df` | 4월 21일 | **현 베이스라인 확정**: 학사지원팀 피드백 반영 후 Contains-F1 = **83.54%** (+6.71pp) |
+| `99a01df` | 4월 21일 | **4/21 베이스라인**: 학사지원팀 피드백 반영 후 Contains-F1 = **83.54%** (+6.71pp) |
 | (4/22 본 턴) | 4월 22일 | ChromaDB `source_file` 경로 정규화 (중복 청크 방지) + LLM 응답 캐시 세션 간 공유 (8.4× 지연 단축) + admin `/cache/stats`·`/clear` API |
+| `2653a85` | 4월 말 | feat(indexing): v2 전체 코퍼스 인제스트 + FAQ/notice 통합 + 검색 prefix |
+| `95781c4` | 4월 말 | feat(indexing): v2 PDF pipeline (Surya 0.17 + page routing + section stack + VLM tables) + clarification gate |
+| (5/6 18:31) | 5월 6일 | **수동 재인제스트**: `data/chromadb_new` + `data/graphs/academic_graph.pkl` 재빌드. 학사일정/수강신청 노드 학년별 분리 + 시간 정보 + ISO 형식으로 저장 |
+| `00b985a` | 5월 11일 | **multi-task 1**: `query_understanding` LLM 통합 (3단계 폴백: gemma3:4b → 메인 LLM → 룰). 후속 측정에서 88% TIMEOUT으로 실효성 0 확인 |
+| 5/12 | 5월 12일 | **KO_PROMPT v1** 도입 — 토큰 280→560, "원문 그대로 복사" 명령 강화 |
+| `b41a804`→`be47c44` | 5월 13일 | **7-step code audit 완료** (28 커밋): chat.py god 4건 / understand 71.5% 시간 점유 / 14 PR 후보 식별. 보고서: `reports/code_audit/AUDIT_REPORT.md` |
+| `0947bac` | 5월 18일 | **P0-1a**: chat.py Stage D `_resolve_understand_or_rule` 헬퍼 추출 (130 LOC 중복 해소, CC -22) |
+| (5/18) | 5월 18일 | **회귀 진단** -14.64pp 식별 — 4/21 환경 → 5/18 환경 비교. **원인**: 5/6 재인제스트로 학사일정 노드 형식 변경 → graph context가 ISO 형식 raw 노출 → KO_PROMPT v1 "원문 복사" 명령에 따라 LLM이 ISO 그대로 답변. SCHEDULE/REGISTRATION 인텐트 22건 회귀 (전체 -24건의 92%). 보고서: `reports/regression_analysis/REPORT.md` |
+| (5/18 후속) | 5월 18일 | **학사일정 ISO→한글 복원** (`academic_graph.py` 5곳 패치): `_schedule_to_result`·장바구니·OCU 납부·학사일정 fallback·휴/복학 신청 context를 `_format_date`/`_format_period`로 한글 변환. audit P2-12 부분 적용 |
 
-**현재 메인 LLM**: `LLM_MODEL` 환경변수가 SSOT. 2026-04-22 시점 운영값은 `qwen3.5:9b` (tabby-api 원격). 코드·README에 모델명 하드코딩 없음 (원칙 4).
+**현재 메인 LLM**: `LLM_MODEL` 환경변수가 SSOT. 2026-05-18 시점 운영값은 `gemma4:26b` (H100 NVL MIG 47GB, SSH 터널). 코드·README에 모델명 하드코딩 없음 (원칙 4).
 
 ---
 
@@ -393,7 +402,9 @@ python -X utf8 scripts/eval_contains_f1.py \
 
 3개 데이터셋을 Docker 백엔드(`/api/chat` 경유) 로 돌리고 rule-based Contains-F1·Recall@5·MRR@5·Answerable/Unanswerable F1을 산출한다. 결과는 `reports/eval_contains_f1/combined_<tag>_<ts>.json` 에 저장.
 
-**기준선** (2026-04-21, commit `99a01df`, 학사지원팀 피드백 반영 후):
+**기준선 — 두 개 환경 분리 (2026-05-18 진단 후 갱신)**:
+
+**A. 4/21 stale baseline** (`99a01df`, `data/chromadb` 4/19 sub-dir, 학사지원팀 피드백 반영):
 
 | 데이터셋 | Contains-F1 | Recall@5 |
 |---|---|---|
@@ -401,6 +412,25 @@ python -X utf8 scripts/eval_contains_f1.py \
 | rag_eval_dataset_2026_1 (50문항) | 92.00% | — |
 | user_eval_dataset_50 (75문항) | 86.67% | — |
 | **OVERALL (164문항)** | **83.54%** | — |
+
+**B. 5/18 측정 — 현 환경 baseline** (`combined_p0_1a_20260518_143121`, P0-1a 적용 + 5/6 재인제스트 환경 `chromadb_new`):
+
+| 데이터셋 | Contains-F1 | Δ vs A |
+|---|---|---|
+| balanced_test_set | 58.97% | -7.70pp |
+| rag_eval_dataset_2026_1 | 78.00% | -14.00pp |
+| user_eval_dataset_50 | 68.00% | -18.67pp |
+| **OVERALL** | **68.90%** | **-14.64pp** |
+
+**회귀 진단** (`reports/regression_analysis/REPORT.md`):
+- SCHEDULE 인텐트 17/+15·REGISTRATION 5/+5 = 22건 (-24건 중 92%)
+- 원인: 5/6 재인제스트 + KO_PROMPT v1 "원문 그대로 복사" → graph context의 ISO 날짜를 LLM이 그대로 답변에 채택
+- P0-1a (코드 이동) 자체 영향 0pp 추정
+- **5/18 후속 patch**: `app/graphdb/academic_graph.py` 5곳 ISO→한글 변환 적용. 평가 검증 진행 중
+
+**비교 기준 선택**:
+- 신규 PR 회귀 평가는 **B (68.90%)** 와 비교 (현 환경)
+- A는 stale로 표기, 환경 비교용으로만 보존
 
 **NO-GO 기준** (`CLAUDE.md` 커밋 규칙):
 - 전체 -1pp 이상 회귀 → 커밋 보류
