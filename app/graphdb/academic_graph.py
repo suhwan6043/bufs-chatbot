@@ -1583,7 +1583,8 @@ class AcademicGraph:
     ) -> SearchResult:
         start = schedule.get("시작일", "")
         end = schedule.get("종료일", "")
-        period = start if start == end else f"{start}\u301C{end}"
+        # 2026-05-18 audit P2-12 부분 적용 (회귀 -14pp 해소): context 한글 변환
+        period = self._format_date(start) if start == end else self._format_period(start, end)
         event_name = schedule.get("이벤트명", "")
         semester = schedule.get("학기", "")
 
@@ -2151,7 +2152,8 @@ class AcademicGraph:
                 answer = f"수강신청 장바구니 신청 기간은 {self._format_period(start, end)}입니다."
                 if sm.get("비고"):
                     answer += f" ({self._safe_tilde(sm['비고'])})"
-                context = f"[학사일정]\n- 장바구니 신청: {start}~{end}"
+                _period_ko = self._format_period(start, end)
+                context = f"[학사일정]\n- 장바구니 신청: {_period_ko}"
                 return [self._make_direct_result(context, answer, score=1.3, node_data=sm)]
 
         if entities.get("basket_limit"):
@@ -2209,7 +2211,8 @@ class AcademicGraph:
                     end = ocu_data.get("납부종료")
                     if start and end:
                         answer = f"OCU 시스템 사용료 납부기간은 {self._format_period(start, end)}입니다."
-                        context = f"[OCU 납부기간]\n- 납부기간: {start}~{end}"
+                        _period_ko = self._format_period(start, end)
+                        context = f"[OCU 납부기간]\n- 납부기간: {_period_ko}"
                         return [self._make_direct_result(context, answer, score=1.3, node_data=ocu_data)]
 
                 # 초과학점 예외 전용 — "초과수강료"·"시스템사용료" 묻는 질문은 제외
@@ -2529,7 +2532,8 @@ class AcademicGraph:
             for s in sorted(standard, key=lambda x: x.get("시작일", "")):
                 start  = s.get("시작일", "")
                 end    = s.get("종료일", "")
-                period = start if start == end else f"{start}\u301C{end}"
+                # 2026-05-18 audit P2-12 부분 적용 (회귀 -14pp 해소): context 한글 변환
+                period = self._format_date(start) if start == end else self._format_period(start, end)
                 line   = f"- {s.get('이벤트명', '')}: {period} ({s.get('학기', '')})"
                 if s.get("시작시간"):           # OCU개강 등 시작시간 필드
                     line += f" {s['시작시간']}부터"
@@ -2860,7 +2864,8 @@ class AcademicGraph:
                     f"{_qualifier}온라인 휴/복학 신청 기간은 "
                     f"{self._format_period(start, end)}입니다."
                 )
-                context = f"[학사일정]\n- 온라인 휴/복학 신청: {start}~{end}"
+                _period_ko = self._format_period(start, end)
+                context = f"[학사일정]\n- 온라인 휴/복학 신청: {_period_ko}"
                 results.append(self._make_direct_result(context, answer, score=1.3, node_data=sm))
                 return results
 

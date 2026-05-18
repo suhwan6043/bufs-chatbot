@@ -1,0 +1,66 @@
+{
+  "timestamp": "20260518_143121",
+  "tag": "p0_1a",
+  "datasets": {
+    "balanced_test_set": {
+      "retrieval": {
+        "recall_at_5": 0.4516,
+        "mrr_at_5": 0.3194,
+        "evaluated": 31,
+        "total_answerable": 31
+      },
+      "generation": {
+        "total": 39,
+        "overall_contains_f1": 0.5897,
+        "em_rate": 0.0,
+        "answerable_contains_f1": 0.5806,
+        "unanswerable_contains_f1": 0.625,
+        "answerable_n": 31,
+        "unanswerable_n": 8,
+        "answerable_correct": 18,
+        "unanswerable_correct": 5,
+        "avg_token_f1": 0.106
+      }
+    },
+    "rag_eval_dataset_2026_1": {
+      "retrieval": {
+        "recall_at_5": 1.0,
+        "mrr_at_5": 0.7733,
+        "evaluated": 50,
+        "total_answerable": 50
+      },
+      "generation": {
+        "total": 50,
+        "overall_contains_f1": 0.78,
+        "em_rate": 0.0,
+        "answerable_contains_f1": 0.78,
+        "unanswerable_contains_f1": 0.0,
+        "answerable_n": 50,
+        "unanswerable_n": 0,
+        "answerable_correct": 39,
+        "unanswerable_correct": 0,
+        "avg_token_f1": 0.0975
+      }
+    },
+    "user_eval_dataset_50": {
+      "retrieval": {
+        "recall_at_5": 0.9048,
+        "mrr_at_5": 0.6857,
+        "evaluated": 63,
+        "total_answerable": 70
+      },
+      "generation": {
+        "total": 75,
+        "overall_contains_f1": 0.68,
+        "em_rate": 0.0,
+        "answerable_contains_f1": 0.6857,
+        "unanswerable_contains_f1": 0.6,
+        "answerable_n": 70,
+        "unanswerable_n": 5,
+        "answerable_correct": 48,
+        "unanswerable_correct": 3,
+        "avg_token_f1": 0.1122
+      }
+    }
+  }
+}
