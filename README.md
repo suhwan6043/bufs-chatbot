@@ -7,34 +7,149 @@
 
 ---
 
-## 아키텍처 개요
+## 아키텍처 개요 — 질문 입력에서 답변 출력까지
+
+### 진입 경로
 
 ```
-Next.js 프론트엔드  (frontend/, 포트 3000)
-      │  ko/en i18n · /admin · SSE 스트리밍
-      ▼
-NGINX  (reverse proxy, 포트 80) — 프로덕션 전용
-      │
-      ▼
-FastAPI 백엔드  (backend/, 포트 8000, uvicorn 단일 워커)
-      │
-      ├─ lifespan: 파이프라인 싱글톤 초기화 (Embedder / Reranker / Graph / ChromaDB)
-      │
-      └─ RAG 파이프라인 (app/pipeline/)
-           LanguageDetector   (ko/en <1ms)
-           QueryAnalyzer      (Intent · 엔티티 · 학번/학과/학기)
-           FollowUpDetector   (단턴 vs follow-up 분기)
-           QueryRewriter      (gemma3:4b Ollama 경량 재작성, follow-up 시)
-           QueryRouter        (Vector + Graph 병렬 라우팅, department 필터)
-              ├─ ChromaDB  (BGE-M3 임베딩 + BM25 하이브리드)
-              └─ AcademicGraph  (NetworkX + FAQ 역인덱스 · direct_answer 경로)
-           CommunitySelector  (동적 커뮤니티 선택으로 후보 축소)
-           Reranker           (BGE-Reranker-v2-m3, GPU, Top-5)
-           ContextMerger      (병합 + 토큰 예산 + evidence slicing 토글)
-           AnswerGenerator    (LLM — OpenAI 호환 or Ollama 네이티브)
-           ResponseValidator  (refusal · 환각 · 자기검증)
-           ChatLogger         (JSONL + SQLite chat_messages)
+[사용자]
+   │
+   ├─ 웹  Next.js (frontend/, 3000) ── SSE 스트리밍 (ko/en i18n, /admin)
+   │                                     │
+   │                                  NGINX (80) — 프로덕션 reverse proxy
+   │                                     │
+   │                                     ▼
+   └─ 직접 API ─────────────► FastAPI 백엔드 (backend/, 8000, uvicorn workers=1)
+                                          │
+                                          ├─ lifespan startup: 파이프라인 싱글톤 14건 워밍업
+                                          │  (Embedder · ChromaStore · BM25Index · Reranker
+                                          │   · QueryAnalyzer · QueryRouter · ContextMerger
+                                          │   · AnswerGenerator · ResponseValidator · AcademicGraph
+                                          │   · ChatLogger · DeptSearcher · Translator · Scheduler)
+                                          │
+                                          └─ 두 엔드포인트:
+                                               GET  /api/chat/stream  → SSE (event: token / clear / done / error)
+                                               POST /api/chat         → ChatResponse JSON (논스트리밍, 평가용)
 ```
+
+### 9 Stage 파이프라인 (`backend/routers/chat.py` + `app/pipeline/`)
+
+audit Step 2가 식별한 9 stage. 5가지 **조기 종료 경로**가 있어 모든 stage를 거치지 않을 수도 있다.
+
+```
+[A] 세션·JWT·언어 확보
+       └─ session_store.get_or_create + _resolve_user_id (JWT) + _handle_clarification_reply
+            └─ 직전 턴이 clarification 응답이면 추출 → 원질문 복원
+       │
+       ▼
+[B] Contact short-circuit ─────────► early return: "contact" path (LLM 우회, ~10ms)
+       └─ _format_contact_answer (departments.json 정규식 매칭)
+            └─ "영어전공 학과사무실 전화번호" 같은 패턴 즉답
+       │ (contact 아니면 통과)
+       ▼
+[C] 파이프라인 컴포넌트 확보
+       └─ get_analyzer / get_router / get_merger / get_generator / get_validator
+            └─ 미초기화면 error event 반환
+       │
+       ▼
+[D] 쿼리 이해 — 두 경로 (CONV_UNDERSTANDING_ENABLED 분기)
+       │
+       ├─ true (default, multi-task 1):
+       │     query_understanding.understand()  ─ gemma3:4b JSON 통합 호출
+       │        ├─ follow_up 감지 + 쿼리 재작성 + intent/entity/qt 분류 한 번에
+       │        └─ 3단계 폴백 (gemma3:4b → 메인 LLM → 룰)
+       │
+       └─ false (룰 경로):
+             follow_up_detector.detect (규칙) → query_rewriter.rewrite (gemma3:4b, 선택) → analyzer.analyze (정규식+임베딩)
+       │
+       ├─ _enrich_analysis  (학번/학과 프로필 주입, 성적표 컨텍스트 보강, PII 마스킹)
+       ▼
+[E] Clarification 게이트 ─────────► early return: "clarification" path
+       └─ _check_clarification_gate (필수 필드 누락 시 되묻기 메시지)
+            └─ "어느 학번이세요?" 등 자동 생성 (세션당 1회 제한)
+       │ (필드 충족이면 통과)
+       ▼
+[F] Search + Merge + Retry
+       │
+       ├─ router_inst.route_and_search(_search_query, analysis)
+       │     ├─ ChromaDB (BGE-M3 임베딩, n_results=15) + BM25 sparse 하이브리드
+       │     ├─ AcademicGraph.query_to_search_results (NetworkX, CommunitySelector로 동적 노드 선별)
+       │     └─ Reranker (bge-reranker-v2-m3, GPU, top_k=10, candidate_k=30)
+       │
+       ├─ merger.merge(vector_results, graph_results, ...)
+       │     RRF + intent별 cutoff + 토큰 예산 + evidence slicing + direct_answer 추출
+       │
+       └─ P4 저신뢰 재시도 (1회): confidence<0.3 & !direct_answer & !transcript
+             └─ generator.rewrite_query (LLM) → 재검색·재병합 → confidence 비교 후 채택
+       │
+       ▼
+[G] 조기 종료 3가지
+       │
+       ├─ 빈 context (formatted_context 공란) ─► early return: "empty_context" path
+       │     └─ "관련 정보를 찾을 수 없습니다" + 학사지원팀 연락처
+       │
+       ├─ direct_answer 트리거 ★ (`DIRECT_ANSWER_BYPASS_LLM=true` & graph direct_answer & lang=ko)
+       │     └─ ─► early return: "direct_answer" path (LLM 우회)
+       │     ※ default OFF. M7(2026-04-27)부터 컨텍스트로만 사용
+       │
+       └─ Cache hit (generator.get_cached_response) ─► early return: "cached" path
+             └─ 동일 질문 + 동일 컨텍스트 시 LLM 우회
+       │ (모두 미스면 통과)
+       ▼
+[H] LLM 스트리밍 생성  (~5-30s가 평균)
+       └─ async with _LLM_SEMAPHORE:   # 동시 LLM 상한 (OOM 방어, 기본 2)
+             async for token in generator.generate(question, context, history, intent, ...):
+                 if token == CLEAR:  # EN 원패스 모드 신호 → 누적 초기화
+                 yield token → SSE event=token  (stream만)
+       └─ soft warning (선택): clarification 미입력 필드 안내 prepend
+       │
+       ▼
+[I] 후처리 (KO만, Phase 4 품질 게이트)
+       ├─ verify_answer_against_context → 환각 시 거부 메시지 교체
+       ├─ verify_completeness → 누락 시 fill_from_context 보충
+       └─ validator.validate → warnings 첨부
+       │
+       ▼
+[J] Footer + Cache 저장 + 메시지 이력 + 로그
+       ├─ _get_contact_footer  (학사지원팀/학과 연락처 자동 첨부)
+       ├─ generator.store_cached_response  (cross-session cache write)
+       ├─ session_store.update(messages)
+       └─ _try_log (JSONL + chat_messages SQLite, PII 마스킹)
+       │
+       ▼
+응답
+   ├─ stream: SSE event=done { answer, source_urls, results, intent, duration_ms, timing }
+   └─ sync  : ChatResponse JSON (같은 페이로드)
+```
+
+### 5가지 조기 종료 (path 라벨)
+
+| Path | 조건 | 일반 latency | 빈도(5/7 측정) |
+|---|---|---:|---:|
+| `contact` | 부서·연락처 정규식 매칭 | <50ms | 3/172 |
+| `clarification` | 필수 필드 누락 (학번/학과 등) | <100ms | 0/172 |
+| `empty_context` | 검색 결과 0건 또는 신뢰도 매우 낮음 | <2s | 0/172 |
+| `direct_answer` | `DIRECT_ANSWER_BYPASS_LLM=true` + graph 직접답변 (★ default OFF, 무수정 약속) | <2s | 0/172 |
+| `cached` | 동일 질문 + 컨텍스트 cache hit | <30s* | 6/172 |
+| `generated` | 위 모두 미스 → LLM 생성 (정상 경로) | ~40s | 163/172 |
+
+*cache는 generate를 우회하나 search/merge는 그대로 실행 → `path=cached`도 understand timeout이 합산됨.
+
+### 모듈 SSOT
+
+| 디렉터리 | 역할 |
+|---|---|
+| `backend/routers/chat.py` | 9 stage 진입점 (chat_stream + chat_sync). audit P0-1로 점진 분리 중 |
+| `app/pipeline/query_understanding.py` | multi-task 1 통합 LLM 분류 (3단계 폴백) |
+| `app/pipeline/query_analyzer.py` | 룰 기반 Intent · 엔티티 추출 (정규식 + 임베딩 qt 분류) |
+| `app/pipeline/query_router.py` | Vector(BGE-M3) + Graph(NetworkX) 라우팅 + Reranker |
+| `app/pipeline/context_merger.py` | RRF + adaptive cutoff + budget + direct_answer 추출 |
+| `app/pipeline/answer_generator.py` | LLM 스트리밍 + cache + Phase 4 후처리 헬퍼 |
+| `app/pipeline/response_validator.py` | 환각 · refusal · 자기검증 |
+| `app/pipeline/clarification.py` | 필수 필드 게이트 (학번/학과/유형/성적표) |
+| `app/graphdb/academic_graph.py` | NetworkX 학사 그래프 + FAQ 역인덱스 + `_query_schedule`/`_query_registration` 등 god 4건 |
+| `app/contacts/dept_searcher.py` | 부서 연락처 정규식 검색 (Contact short-circuit + Footer) |
+| `app/logging/chat_logger.py` | JSONL + SQLite chat_messages (PII 마스킹, X-Test-Mode 우회) |
 
 **LLM 모델 SSOT**: 모델명·엔드포인트는 `.env` 또는 `app/config.py`가 단일 진실원천. README·코드에 모델명을 박아 넣지 않는다 (원칙 4).
 
