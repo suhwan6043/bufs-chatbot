@@ -463,6 +463,96 @@ def _build_generation_cache_kwargs(
     }
 
 
+# ── Stage D — Understanding/Rewrite/Analyze 분기 ──
+# audit P0-1a (2026-05-13): chat_stream(L562-633) + chat_sync(L1042-1100)
+# 동일 if/else 130 LOC 중복 해소. 동작 변경 없음 — 코드 이동만.
+
+async def _resolve_understand_or_rule(
+    *,
+    question: str,
+    prior_messages: list,
+    lang: str,
+    analyzer,
+    router_inst,
+    session_data: dict,
+    user_id: Optional[int],
+):
+    """multi-task 1 통합 understanding LLM 또는 룰 폴백 분기.
+
+    Returns:
+        tuple(analysis, search_query, follow_up_signal, transcript_context,
+              student_context, follow_up_ms, rewrite_ms, analyze_ms)
+
+    understanding_enabled=true 경로에서는 follow_up_ms=analyze_ms=0,
+    rewrite_ms에 통합 elapsed가 들어간다 (PIPELINE_TIMING 호환 유지).
+    """
+    from app.pipeline import follow_up_detector, query_rewriter
+    _conv_cfg = settings.conversation
+    search_query = question
+    follow_up_ms = rewrite_ms = analyze_ms = 0
+
+    if _conv_cfg.understanding_enabled:
+        from app.pipeline import query_understanding
+        _t_u = time.monotonic()
+        _understand = await query_understanding.understand(
+            question, prior_messages, lang=lang,
+        )
+        _ms_understand = int((time.monotonic() - _t_u) * 1000)
+        follow_up_signal = _understand.follow_up_signal
+        search_query = _understand.rewritten_query
+        analysis = _understand.analysis
+        if lang == "en":
+            analysis.lang = "en"
+        analysis, transcript_context, student_context = _enrich_analysis(
+            search_query, analysis, router_inst, session_data, user_id=user_id,
+        )
+        rewrite_ms = _ms_understand
+        logger.info(
+            "understand[%s] %dms intent=%s confidence=%.2f",
+            _understand.source, _ms_understand,
+            analysis.intent.value, _understand.intent_confidence,
+        )
+        if search_query != question:
+            logger.info(
+                "follow-up[%s] rewrite: '%s' → '%s'",
+                follow_up_signal.reason, question[:60], search_query[:60],
+            )
+    else:
+        _t_fu = time.monotonic()
+        follow_up_signal = follow_up_detector.detect(question, prior_messages)
+        follow_up_ms = int((time.monotonic() - _t_fu) * 1000)
+        if _conv_cfg.rewrite_enabled and follow_up_signal.is_follow_up:
+            _t_rw = time.monotonic()
+            try:
+                search_query = await query_rewriter.rewrite(
+                    question, prior_messages,
+                    skip_rule_stage=follow_up_signal.skip_rule_stage, lang=lang,
+                )
+            except Exception as e:
+                logger.debug("query_rewriter 실패, 원본 사용: %s", e)
+                search_query = question
+            rewrite_ms = int((time.monotonic() - _t_rw) * 1000)
+            if search_query != question:
+                logger.info(
+                    "follow-up[%s] rewrite: '%s' → '%s'",
+                    follow_up_signal.reason, question[:60], search_query[:60],
+                )
+        _t1 = time.monotonic()
+        analysis = analyzer.analyze(search_query)
+        if lang == "en":
+            analysis.lang = "en"
+        analysis, transcript_context, student_context = _enrich_analysis(
+            search_query, analysis, router_inst, session_data, user_id=user_id,
+        )
+        analyze_ms = int((time.monotonic() - _t1) * 1000)
+
+    return (
+        analysis, search_query, follow_up_signal,
+        transcript_context, student_context,
+        follow_up_ms, rewrite_ms, analyze_ms,
+    )
+
+
 # ── SSE 스트리밍 엔드포인트 ──
 
 @router.get("/stream")
@@ -558,79 +648,21 @@ async def chat_stream(
             )}
             return
 
-        # 멀티턴: follow-up 감지 + 쿼리 재작성 (retrieval/generation 양쪽에 사용)
-        from app.pipeline import follow_up_detector, query_rewriter
+        # 멀티턴: follow-up 감지 + 쿼리 재작성 → understanding LLM 또는 룰 폴백
+        # audit P0-1a: stream/sync 130 LOC 중복 → _resolve_understand_or_rule()로 통합
         from app.config import settings as _settings
         _conv_cfg = _settings.conversation
         prior_messages = session_data.get("messages") or []
-        search_query = question  # retrieval·LLM에 실제로 건네는 쿼리 (잠재적으로 rewritten)
         lang = session_data.get("lang", "ko")
-
-        if _conv_cfg.understanding_enabled:
-            # ── multi-task 1 (2026-05-11): 통합 쿼리 이해 (gemma3:4b JSON) ──
-            # follow_up_detector + query_rewriter + analyzer 룰 3종을 단일 LLM 호출로 통합.
-            # 실패 시 메인 LLM 폴백 → 룰 폴백 (3단계 폴백).
-            from app.pipeline import query_understanding
-            _t_u = time.monotonic()
-            _understand = await query_understanding.understand(
-                question, prior_messages, lang=lang,
-            )
-            _ms_understand = int((time.monotonic() - _t_u) * 1000)
-            follow_up_signal = _understand.follow_up_signal
-            search_query = _understand.rewritten_query
-            analysis = _understand.analysis
-            if lang == "en":
-                analysis.lang = "en"
-            analysis, transcript_context, student_context = _enrich_analysis(
-                search_query, analysis, router_inst, session_data, user_id=user_id
-            )
-            # 통합 호출은 분리 timing 불가 — 전체를 rewrite_ms로 기록 (PIPELINE_TIMING 호환)
-            _ms_follow_up = 0
-            _ms_rewrite = _ms_understand
-            _ms_analyze = 0
-            logger.info(
-                "understand[%s] %dms intent=%s confidence=%.2f",
-                _understand.source, _ms_understand,
-                analysis.intent.value, _understand.intent_confidence,
-            )
-            if search_query != question:
-                logger.info(
-                    "follow-up[%s] rewrite: '%s' → '%s'",
-                    follow_up_signal.reason, question[:60], search_query[:60],
-                )
-        else:
-            _t_fu = time.monotonic()
-            follow_up_signal = follow_up_detector.detect(question, prior_messages)
-            _ms_follow_up = int((time.monotonic() - _t_fu) * 1000)
-            _ms_rewrite = 0
-            if _conv_cfg.rewrite_enabled and follow_up_signal.is_follow_up:
-                _t_rw = time.monotonic()
-                try:
-                    search_query = await query_rewriter.rewrite(
-                        question,
-                        prior_messages,
-                        skip_rule_stage=follow_up_signal.skip_rule_stage,
-                        lang=lang,
-                    )
-                except Exception as e:
-                    logger.debug("query_rewriter 실패, 원본 사용: %s", e)
-                    search_query = question
-                _ms_rewrite = int((time.monotonic() - _t_rw) * 1000)
-                if search_query != question:
-                    logger.info(
-                        "follow-up[%s] rewrite: '%s' → '%s'",
-                        follow_up_signal.reason, question[:60], search_query[:60],
-                    )
-
-            # Stage 1: 질문 분석 (rewritten이 있으면 rewritten 기반으로 분석 → intent/entity 정확도↑)
-            _t1 = time.monotonic()
-            analysis = analyzer.analyze(search_query)
-            if lang == "en":
-                analysis.lang = "en"
-            analysis, transcript_context, student_context = _enrich_analysis(
-                search_query, analysis, router_inst, session_data, user_id=user_id
-            )
-            _ms_analyze = int((time.monotonic() - _t1) * 1000)
+        (
+            analysis, search_query, follow_up_signal,
+            transcript_context, student_context,
+            _ms_follow_up, _ms_rewrite, _ms_analyze,
+        ) = await _resolve_understand_or_rule(
+            question=question, prior_messages=prior_messages, lang=lang,
+            analyzer=analyzer, router_inst=router_inst,
+            session_data=session_data, user_id=user_id,
+        )
 
         # [Clarification] 필수 필드 누락 시 short-circuit, 또는 soft 경고 플래그
         _transcript_present = transcript_context is not None and bool(transcript_context.strip() if transcript_context else False)
@@ -1039,65 +1071,21 @@ async def chat_sync(
     generator = get_generator()
     validator = get_validator()
 
-    # 멀티턴: follow-up 감지 + 재작성 (스트리밍 엔드포인트와 동일 로직)
-    from app.pipeline import follow_up_detector, query_rewriter
+    # 멀티턴: follow-up 감지 + 재작성 → understanding LLM 또는 룰 폴백
+    # audit P0-1a: stream/sync 130 LOC 중복 → _resolve_understand_or_rule()로 통합
     from app.config import settings as _settings
     _conv_cfg = _settings.conversation
     prior_messages = session_data.get("messages") or []
-    search_query = question
     lang = session_data.get("lang", "ko")
-    _ms_rewrite = 0
-
-    if _conv_cfg.understanding_enabled:
-        # ── multi-task 1 (2026-05-11): 통합 쿼리 이해 (gemma3:4b JSON) ──
-        from app.pipeline import query_understanding
-        _t_u = time.monotonic()
-        _understand = await query_understanding.understand(
-            question, prior_messages, lang=lang,
-        )
-        _ms_understand = int((time.monotonic() - _t_u) * 1000)
-        follow_up_signal = _understand.follow_up_signal
-        search_query = _understand.rewritten_query
-        analysis = _understand.analysis
-        if lang == "en":
-            analysis.lang = "en"
-        analysis, transcript_context, student_context = _enrich_analysis(
-            search_query, analysis, router_inst, session_data, user_id=user_id
-        )
-        _ms_follow_up = 0
-        _ms_rewrite = _ms_understand
-        _ms_analyze = 0
-        logger.info(
-            "understand[%s] %dms intent=%s confidence=%.2f",
-            _understand.source, _ms_understand,
-            analysis.intent.value, _understand.intent_confidence,
-        )
-    else:
-        _t1 = time.monotonic()
-        follow_up_signal = follow_up_detector.detect(question, prior_messages)
-        _ms_follow_up = int((time.monotonic() - _t1) * 1000)
-        if _conv_cfg.rewrite_enabled and follow_up_signal.is_follow_up:
-            _t2 = time.monotonic()
-            try:
-                search_query = await query_rewriter.rewrite(
-                    question,
-                    prior_messages,
-                    skip_rule_stage=follow_up_signal.skip_rule_stage,
-                    lang=lang,
-                )
-            except Exception as e:
-                logger.debug("query_rewriter 실패 (sync), 원본 사용: %s", e)
-                search_query = question
-            _ms_rewrite = int((time.monotonic() - _t2) * 1000)
-
-        _t3 = time.monotonic()
-        analysis = analyzer.analyze(search_query)
-        if lang == "en":
-            analysis.lang = "en"
-        analysis, transcript_context, student_context = _enrich_analysis(
-            search_query, analysis, router_inst, session_data, user_id=user_id
-        )
-        _ms_analyze = int((time.monotonic() - _t3) * 1000)
+    (
+        analysis, search_query, follow_up_signal,
+        transcript_context, student_context,
+        _ms_follow_up, _ms_rewrite, _ms_analyze,
+    ) = await _resolve_understand_or_rule(
+        question=question, prior_messages=prior_messages, lang=lang,
+        analyzer=analyzer, router_inst=router_inst,
+        session_data=session_data, user_id=user_id,
+    )
 
     # [Clarification] 필수 필드 누락 시 short-circuit
     _transcript_present_sync = transcript_context is not None and bool(transcript_context.strip() if transcript_context else False)
