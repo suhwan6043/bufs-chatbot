@@ -42,6 +42,23 @@ logging.basicConfig(
 logging.getLogger("app.pipeline").setLevel(_lvl)
 logging.getLogger("backend").setLevel(_lvl)
 
+# 2026-05-18: 외부 라이브러리의 DEBUG 로그는 한글을 UTF-8 byte escape(\xed\x95\x99 등)
+# 또는 raw chunk(b'...')로 출력해 읽기 어려움. LOG_LEVEL=DEBUG여도 우리 코드만
+# 디버그 보이도록 외부는 WARNING으로 강제. (LOG_LEVEL=INFO이면 무의미하지만 무해.)
+for _noisy in (
+    "sse_starlette",       # SSE chunk raw bytes b'\xed\x95\x99...' 출력
+    "sse_starlette.sse",
+    "httpcore",            # HTTP wire-level DEBUG (httpx 의존)
+    "httpcore.http11",
+    "httpx",               # 요청·응답 DEBUG
+    "urllib3",
+    "chromadb",            # n_results 등 매 쿼리 DEBUG
+    "chromadb.telemetry",
+    "asyncio",
+    "uvicorn.access",      # access log 별도, INFO는 유지
+):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 logger.info("logging configured: level=%s (LOG_LEVEL env)", _lvl_name)
 
