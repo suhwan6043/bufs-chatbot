@@ -7,34 +7,149 @@
 
 ---
 
-## 아키텍처 개요
+## 아키텍처 개요 — 질문 입력에서 답변 출력까지
+
+### 진입 경로
 
 ```
-Next.js 프론트엔드  (frontend/, 포트 3000)
-      │  ko/en i18n · /admin · SSE 스트리밍
-      ▼
-NGINX  (reverse proxy, 포트 80) — 프로덕션 전용
-      │
-      ▼
-FastAPI 백엔드  (backend/, 포트 8000, uvicorn 단일 워커)
-      │
-      ├─ lifespan: 파이프라인 싱글톤 초기화 (Embedder / Reranker / Graph / ChromaDB)
-      │
-      └─ RAG 파이프라인 (app/pipeline/)
-           LanguageDetector   (ko/en <1ms)
-           QueryAnalyzer      (Intent · 엔티티 · 학번/학과/학기)
-           FollowUpDetector   (단턴 vs follow-up 분기)
-           QueryRewriter      (gemma3:4b Ollama 경량 재작성, follow-up 시)
-           QueryRouter        (Vector + Graph 병렬 라우팅, department 필터)
-              ├─ ChromaDB  (BGE-M3 임베딩 + BM25 하이브리드)
-              └─ AcademicGraph  (NetworkX + FAQ 역인덱스 · direct_answer 경로)
-           CommunitySelector  (동적 커뮤니티 선택으로 후보 축소)
-           Reranker           (BGE-Reranker-v2-m3, GPU, Top-5)
-           ContextMerger      (병합 + 토큰 예산 + evidence slicing 토글)
-           AnswerGenerator    (LLM — OpenAI 호환 or Ollama 네이티브)
-           ResponseValidator  (refusal · 환각 · 자기검증)
-           ChatLogger         (JSONL + SQLite chat_messages)
+[사용자]
+   │
+   ├─ 웹  Next.js (frontend/, 3000) ── SSE 스트리밍 (ko/en i18n, /admin)
+   │                                     │
+   │                                  NGINX (80) — 프로덕션 reverse proxy
+   │                                     │
+   │                                     ▼
+   └─ 직접 API ─────────────► FastAPI 백엔드 (backend/, 8000, uvicorn workers=1)
+                                          │
+                                          ├─ lifespan startup: 파이프라인 싱글톤 14건 워밍업
+                                          │  (Embedder · ChromaStore · BM25Index · Reranker
+                                          │   · QueryAnalyzer · QueryRouter · ContextMerger
+                                          │   · AnswerGenerator · ResponseValidator · AcademicGraph
+                                          │   · ChatLogger · DeptSearcher · Translator · Scheduler)
+                                          │
+                                          └─ 두 엔드포인트:
+                                               GET  /api/chat/stream  → SSE (event: token / clear / done / error)
+                                               POST /api/chat         → ChatResponse JSON (논스트리밍, 평가용)
 ```
+
+### 9 Stage 파이프라인 (`backend/routers/chat.py` + `app/pipeline/`)
+
+audit Step 2가 식별한 9 stage. 5가지 **조기 종료 경로**가 있어 모든 stage를 거치지 않을 수도 있다.
+
+```
+[A] 세션·JWT·언어 확보
+       └─ session_store.get_or_create + _resolve_user_id (JWT) + _handle_clarification_reply
+            └─ 직전 턴이 clarification 응답이면 추출 → 원질문 복원
+       │
+       ▼
+[B] Contact short-circuit ─────────► early return: "contact" path (LLM 우회, ~10ms)
+       └─ _format_contact_answer (departments.json 정규식 매칭)
+            └─ "영어전공 학과사무실 전화번호" 같은 패턴 즉답
+       │ (contact 아니면 통과)
+       ▼
+[C] 파이프라인 컴포넌트 확보
+       └─ get_analyzer / get_router / get_merger / get_generator / get_validator
+            └─ 미초기화면 error event 반환
+       │
+       ▼
+[D] 쿼리 이해 — 두 경로 (CONV_UNDERSTANDING_ENABLED 분기)
+       │
+       ├─ true (default, multi-task 1):
+       │     query_understanding.understand()  ─ gemma3:4b JSON 통합 호출
+       │        ├─ follow_up 감지 + 쿼리 재작성 + intent/entity/qt 분류 한 번에
+       │        └─ 3단계 폴백 (gemma3:4b → 메인 LLM → 룰)
+       │
+       └─ false (룰 경로):
+             follow_up_detector.detect (규칙) → query_rewriter.rewrite (gemma3:4b, 선택) → analyzer.analyze (정규식+임베딩)
+       │
+       ├─ _enrich_analysis  (학번/학과 프로필 주입, 성적표 컨텍스트 보강, PII 마스킹)
+       ▼
+[E] Clarification 게이트 ─────────► early return: "clarification" path
+       └─ _check_clarification_gate (필수 필드 누락 시 되묻기 메시지)
+            └─ "어느 학번이세요?" 등 자동 생성 (세션당 1회 제한)
+       │ (필드 충족이면 통과)
+       ▼
+[F] Search + Merge + Retry
+       │
+       ├─ router_inst.route_and_search(_search_query, analysis)
+       │     ├─ ChromaDB (BGE-M3 임베딩, n_results=15) + BM25 sparse 하이브리드
+       │     ├─ AcademicGraph.query_to_search_results (NetworkX, CommunitySelector로 동적 노드 선별)
+       │     └─ Reranker (bge-reranker-v2-m3, GPU, top_k=10, candidate_k=30)
+       │
+       ├─ merger.merge(vector_results, graph_results, ...)
+       │     RRF + intent별 cutoff + 토큰 예산 + evidence slicing + direct_answer 추출
+       │
+       └─ P4 저신뢰 재시도 (1회): confidence<0.3 & !direct_answer & !transcript
+             └─ generator.rewrite_query (LLM) → 재검색·재병합 → confidence 비교 후 채택
+       │
+       ▼
+[G] 조기 종료 3가지
+       │
+       ├─ 빈 context (formatted_context 공란) ─► early return: "empty_context" path
+       │     └─ "관련 정보를 찾을 수 없습니다" + 학사지원팀 연락처
+       │
+       ├─ direct_answer 트리거 ★ (`DIRECT_ANSWER_BYPASS_LLM=true` & graph direct_answer & lang=ko)
+       │     └─ ─► early return: "direct_answer" path (LLM 우회)
+       │     ※ default OFF. M7(2026-04-27)부터 컨텍스트로만 사용
+       │
+       └─ Cache hit (generator.get_cached_response) ─► early return: "cached" path
+             └─ 동일 질문 + 동일 컨텍스트 시 LLM 우회
+       │ (모두 미스면 통과)
+       ▼
+[H] LLM 스트리밍 생성  (~5-30s가 평균)
+       └─ async with _LLM_SEMAPHORE:   # 동시 LLM 상한 (OOM 방어, 기본 2)
+             async for token in generator.generate(question, context, history, intent, ...):
+                 if token == CLEAR:  # EN 원패스 모드 신호 → 누적 초기화
+                 yield token → SSE event=token  (stream만)
+       └─ soft warning (선택): clarification 미입력 필드 안내 prepend
+       │
+       ▼
+[I] 후처리 (KO만, Phase 4 품질 게이트)
+       ├─ verify_answer_against_context → 환각 시 거부 메시지 교체
+       ├─ verify_completeness → 누락 시 fill_from_context 보충
+       └─ validator.validate → warnings 첨부
+       │
+       ▼
+[J] Footer + Cache 저장 + 메시지 이력 + 로그
+       ├─ _get_contact_footer  (학사지원팀/학과 연락처 자동 첨부)
+       ├─ generator.store_cached_response  (cross-session cache write)
+       ├─ session_store.update(messages)
+       └─ _try_log (JSONL + chat_messages SQLite, PII 마스킹)
+       │
+       ▼
+응답
+   ├─ stream: SSE event=done { answer, source_urls, results, intent, duration_ms, timing }
+   └─ sync  : ChatResponse JSON (같은 페이로드)
+```
+
+### 5가지 조기 종료 (path 라벨)
+
+| Path | 조건 | 일반 latency | 빈도(5/7 측정) |
+|---|---|---:|---:|
+| `contact` | 부서·연락처 정규식 매칭 | <50ms | 3/172 |
+| `clarification` | 필수 필드 누락 (학번/학과 등) | <100ms | 0/172 |
+| `empty_context` | 검색 결과 0건 또는 신뢰도 매우 낮음 | <2s | 0/172 |
+| `direct_answer` | `DIRECT_ANSWER_BYPASS_LLM=true` + graph 직접답변 (★ default OFF, 무수정 약속) | <2s | 0/172 |
+| `cached` | 동일 질문 + 컨텍스트 cache hit | <30s* | 6/172 |
+| `generated` | 위 모두 미스 → LLM 생성 (정상 경로) | ~40s | 163/172 |
+
+*cache는 generate를 우회하나 search/merge는 그대로 실행 → `path=cached`도 understand timeout이 합산됨.
+
+### 모듈 SSOT
+
+| 디렉터리 | 역할 |
+|---|---|
+| `backend/routers/chat.py` | 9 stage 진입점 (chat_stream + chat_sync). audit P0-1로 점진 분리 중 |
+| `app/pipeline/query_understanding.py` | multi-task 1 통합 LLM 분류 (3단계 폴백) |
+| `app/pipeline/query_analyzer.py` | 룰 기반 Intent · 엔티티 추출 (정규식 + 임베딩 qt 분류) |
+| `app/pipeline/query_router.py` | Vector(BGE-M3) + Graph(NetworkX) 라우팅 + Reranker |
+| `app/pipeline/context_merger.py` | RRF + adaptive cutoff + budget + direct_answer 추출 |
+| `app/pipeline/answer_generator.py` | LLM 스트리밍 + cache + Phase 4 후처리 헬퍼 |
+| `app/pipeline/response_validator.py` | 환각 · refusal · 자기검증 |
+| `app/pipeline/clarification.py` | 필수 필드 게이트 (학번/학과/유형/성적표) |
+| `app/graphdb/academic_graph.py` | NetworkX 학사 그래프 + FAQ 역인덱스 + `_query_schedule`/`_query_registration` 등 god 4건 |
+| `app/contacts/dept_searcher.py` | 부서 연락처 정규식 검색 (Contact short-circuit + Footer) |
+| `app/logging/chat_logger.py` | JSONL + SQLite chat_messages (PII 마스킹, X-Test-Mode 우회) |
 
 **LLM 모델 SSOT**: 모델명·엔드포인트는 `.env` 또는 `app/config.py`가 단일 진실원천. README·코드에 모델명을 박아 넣지 않는다 (원칙 4).
 
@@ -125,10 +240,19 @@ Git log 기반 주요 마일스톤 (2026-03 이후):
 | `53e89f8` | 4월 20일 | Reranker Tier 1 고정 부스트 제거 (도메스틱 +22%p 과도) |
 | `cb825f4` | 4월 21일 | **LLM**: `LLM_API_TYPE=ollama` 네이티브 `/api/chat` + `think:false` 실동작 |
 | `654ce54` | 4월 21일 | Docker compose 의 `LLM_BASE_URL` 하드코딩 제거 (`.env` SSOT 원칙) |
-| `99a01df` | 4월 21일 | **현 베이스라인 확정**: 학사지원팀 피드백 반영 후 Contains-F1 = **83.54%** (+6.71pp) |
+| `99a01df` | 4월 21일 | **4/21 베이스라인**: 학사지원팀 피드백 반영 후 Contains-F1 = **83.54%** (+6.71pp) |
 | (4/22 본 턴) | 4월 22일 | ChromaDB `source_file` 경로 정규화 (중복 청크 방지) + LLM 응답 캐시 세션 간 공유 (8.4× 지연 단축) + admin `/cache/stats`·`/clear` API |
+| `2653a85` | 4월 말 | feat(indexing): v2 전체 코퍼스 인제스트 + FAQ/notice 통합 + 검색 prefix |
+| `95781c4` | 4월 말 | feat(indexing): v2 PDF pipeline (Surya 0.17 + page routing + section stack + VLM tables) + clarification gate |
+| (5/6 18:31) | 5월 6일 | **수동 재인제스트**: `data/chromadb_new` + `data/graphs/academic_graph.pkl` 재빌드. 학사일정/수강신청 노드 학년별 분리 + 시간 정보 + ISO 형식으로 저장 |
+| `00b985a` | 5월 11일 | **multi-task 1**: `query_understanding` LLM 통합 (3단계 폴백: gemma3:4b → 메인 LLM → 룰). 후속 측정에서 88% TIMEOUT으로 실효성 0 확인 |
+| 5/12 | 5월 12일 | **KO_PROMPT v1** 도입 — 토큰 280→560, "원문 그대로 복사" 명령 강화 |
+| `b41a804`→`be47c44` | 5월 13일 | **7-step code audit 완료** (28 커밋): chat.py god 4건 / understand 71.5% 시간 점유 / 14 PR 후보 식별. 보고서: `reports/code_audit/AUDIT_REPORT.md` |
+| `0947bac` | 5월 18일 | **P0-1a**: chat.py Stage D `_resolve_understand_or_rule` 헬퍼 추출 (130 LOC 중복 해소, CC -22) |
+| (5/18) | 5월 18일 | **회귀 진단** -14.64pp 식별 — 4/21 환경 → 5/18 환경 비교. **원인**: 5/6 재인제스트로 학사일정 노드 형식 변경 → graph context가 ISO 형식 raw 노출 → KO_PROMPT v1 "원문 복사" 명령에 따라 LLM이 ISO 그대로 답변. SCHEDULE/REGISTRATION 인텐트 22건 회귀 (전체 -24건의 92%). 보고서: `reports/regression_analysis/REPORT.md` |
+| (5/18 후속) | 5월 18일 | **학사일정 ISO→한글 복원** (`academic_graph.py` 5곳 패치): `_schedule_to_result`·장바구니·OCU 납부·학사일정 fallback·휴/복학 신청 context를 `_format_date`/`_format_period`로 한글 변환. audit P2-12 부분 적용 |
 
-**현재 메인 LLM**: `LLM_MODEL` 환경변수가 SSOT. 2026-04-22 시점 운영값은 `qwen3.5:9b` (tabby-api 원격). 코드·README에 모델명 하드코딩 없음 (원칙 4).
+**현재 메인 LLM**: `LLM_MODEL` 환경변수가 SSOT. 2026-05-18 시점 운영값은 `gemma4:26b` (H100 NVL MIG 47GB, SSH 터널). 코드·README에 모델명 하드코딩 없음 (원칙 4).
 
 ---
 
@@ -393,7 +517,9 @@ python -X utf8 scripts/eval_contains_f1.py \
 
 3개 데이터셋을 Docker 백엔드(`/api/chat` 경유) 로 돌리고 rule-based Contains-F1·Recall@5·MRR@5·Answerable/Unanswerable F1을 산출한다. 결과는 `reports/eval_contains_f1/combined_<tag>_<ts>.json` 에 저장.
 
-**기준선** (2026-04-21, commit `99a01df`, 학사지원팀 피드백 반영 후):
+**기준선 — 두 개 환경 분리 (2026-05-18 진단 후 갱신)**:
+
+**A. 4/21 stale baseline** (`99a01df`, `data/chromadb` 4/19 sub-dir, 학사지원팀 피드백 반영):
 
 | 데이터셋 | Contains-F1 | Recall@5 |
 |---|---|---|
@@ -401,6 +527,25 @@ python -X utf8 scripts/eval_contains_f1.py \
 | rag_eval_dataset_2026_1 (50문항) | 92.00% | — |
 | user_eval_dataset_50 (75문항) | 86.67% | — |
 | **OVERALL (164문항)** | **83.54%** | — |
+
+**B. 5/18 측정 — 현 환경 baseline** (`combined_p0_1a_20260518_143121`, P0-1a 적용 + 5/6 재인제스트 환경 `chromadb_new`):
+
+| 데이터셋 | Contains-F1 | Δ vs A |
+|---|---|---|
+| balanced_test_set | 58.97% | -7.70pp |
+| rag_eval_dataset_2026_1 | 78.00% | -14.00pp |
+| user_eval_dataset_50 | 68.00% | -18.67pp |
+| **OVERALL** | **68.90%** | **-14.64pp** |
+
+**회귀 진단** (`reports/regression_analysis/REPORT.md`):
+- SCHEDULE 인텐트 17/+15·REGISTRATION 5/+5 = 22건 (-24건 중 92%)
+- 원인: 5/6 재인제스트 + KO_PROMPT v1 "원문 그대로 복사" → graph context의 ISO 날짜를 LLM이 그대로 답변에 채택
+- P0-1a (코드 이동) 자체 영향 0pp 추정
+- **5/18 후속 patch**: `app/graphdb/academic_graph.py` 5곳 ISO→한글 변환 적용. 평가 검증 진행 중
+
+**비교 기준 선택**:
+- 신규 PR 회귀 평가는 **B (68.90%)** 와 비교 (현 환경)
+- A는 stale로 표기, 환경 비교용으로만 보존
 
 **NO-GO 기준** (`CLAUDE.md` 커밋 규칙):
 - 전체 -1pp 이상 회귀 → 커밋 보류

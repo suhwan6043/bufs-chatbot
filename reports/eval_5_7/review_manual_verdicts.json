@@ -1,0 +1,26 @@
+{
+  "_doc": "20 review 사례에 대한 Claude 직접 fact-check verdict. PDF·학사일정·scholarships.json·답변 본문 직접 검토. LLM judge 미사용.",
+  "_date": "2026-05-12",
+  "verdicts": {
+    "9":   {"verdict": "partial", "reason": "절대평가·P/NP 정확. OCU 상대평가 부분 누락."},
+    "33":  {"verdict": "correct", "reason": "성적포기제 정의·유의사항 7개 모두 정확 포함."},
+    "39":  {"verdict": "partial", "reason": "1학년 2.9, 2학년 2.10 정확. 3·4학년(2.11) 누락. 정정기간 3.6은 추가됐지만 핵심 누락."},
+    "41":  {"verdict": "correct", "reason": "성적포기제 GT와 거의 동일, 상세 포함."},
+    "46":  {"verdict": "correct", "reason": "'경찰학총론 목요일 5,6교시' GT 정확 일치."},
+    "50":  {"verdict": "correct", "reason": "부분적 성적포기제 GT 일치."},
+    "56":  {"verdict": "correct", "reason": "졸업유예 1회 1학기 최대 2회(1년) GT 일치."},
+    "77":  {"verdict": "correct", "reason": "미등록휴학 조건·방법·예외 모두 정확."},
+    "92":  {"verdict": "correct", "reason": "기숙사 식당 070-8220-7480 GT 정확. 어제 refusal에서 개선."},
+    "94":  {"verdict": "wrong", "reason": "학부 성적 조회 질문에 대학원 안내 — 청크 오선택. 어제 partial보다 회귀."},
+    "96":  {"verdict": "correct", "reason": "휴학 4회 + 병역·창업·임신 예외 + 연장 1회 GT 정확."},
+    "97":  {"verdict": "correct", "reason": "공인결석 취소 단계별 GT 정확."},
+    "103": {"verdict": "correct", "reason": "GT가 구체 숫자 없음 — H100도 동일하게 '학기 내 최대' + 체육특기자 1/2 정확."},
+    "106": {"verdict": "wrong", "reason": "자동차 주차 질문에 화상강의 주차(week) 안내 — '주차' 동음이의어 한계 (어제와 동일)."},
+    "111": {"verdict": "correct", "reason": "발급 가능 증명서 13종 + 수기발급 명시 — GT보다 더 완전."},
+    "118": {"verdict": "partial", "reason": "수료증명서 학칙 42조 명시 + 학적구분별 발급. 단 'follow-up: 수료학년 = 이수학점' 부분은 부족."},
+    "121": {"verdict": "correct", "reason": "성적확인 및 정정기간 2026-06-15~19 GT 정확."},
+    "123": {"verdict": "correct", "reason": "증명서 12종 + 발급 방법 GT 일치."},
+    "128": {"verdict": "correct", "reason": "수수료(국문 500/영문 1000) + 13종 목록 + 발급조건 매우 상세."},
+    "135": {"verdict": "correct", "reason": "2026 신입생 일정 (2.17 수강신청, 2.24~2.28 학점인정강좌 등) 정확. 어제 partial에서 개선."}
+  }
+}

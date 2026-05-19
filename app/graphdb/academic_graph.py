@@ -1174,6 +1174,14 @@ class AcademicGraph:
                                     e.get("course_name", "")),
             "SCHOLARSHIP":      lambda s,sid,st,e,q: s._query_scholarship(e, q),
             "LEAVE_OF_ABSENCE": lambda s,sid,st,e,q: s._query_leave_of_absence(e, q),
+            # ── multi-task 1 (2026-05-11): 분할 자식은 부모 핸들러 공유 ──
+            "REGISTRATION_GENERAL":      lambda s,sid,st,e,q: s._query_registration(sid, e, q),
+            "GRADE_OPTION":              lambda s,sid,st,e,q: s._query_registration(sid, e, q),
+            "REREGISTRATION":            lambda s,sid,st,e,q: s._query_registration(sid, e, q),
+            "SCHOLARSHIP_APPLY":         lambda s,sid,st,e,q: s._query_scholarship(e, q),
+            "SCHOLARSHIP_QUALIFICATION": lambda s,sid,st,e,q: s._query_scholarship(e, q),
+            "TUITION_BENEFIT":           lambda s,sid,st,e,q: s._query_scholarship(e, q),
+            # CERTIFICATE / CONTACT / FACILITY: 전용 그래프 노드 없음 → FAQ 그래프만 사용 (handler None)
         }
         handler = _INTENT_HANDLERS.get(intent)
         if handler:
@@ -1575,7 +1583,8 @@ class AcademicGraph:
     ) -> SearchResult:
         start = schedule.get("시작일", "")
         end = schedule.get("종료일", "")
-        period = start if start == end else f"{start}\u301C{end}"
+        # 2026-05-18 audit P2-12 부분 적용 (회귀 -14pp 해소): context 한글 변환
+        period = self._format_date(start) if start == end else self._format_period(start, end)
         event_name = schedule.get("이벤트명", "")
         semester = schedule.get("학기", "")
 
@@ -2143,7 +2152,8 @@ class AcademicGraph:
                 answer = f"수강신청 장바구니 신청 기간은 {self._format_period(start, end)}입니다."
                 if sm.get("비고"):
                     answer += f" ({self._safe_tilde(sm['비고'])})"
-                context = f"[학사일정]\n- 장바구니 신청: {start}~{end}"
+                _period_ko = self._format_period(start, end)
+                context = f"[학사일정]\n- 장바구니 신청: {_period_ko}"
                 return [self._make_direct_result(context, answer, score=1.3, node_data=sm)]
 
         if entities.get("basket_limit"):
@@ -2201,7 +2211,8 @@ class AcademicGraph:
                     end = ocu_data.get("납부종료")
                     if start and end:
                         answer = f"OCU 시스템 사용료 납부기간은 {self._format_period(start, end)}입니다."
-                        context = f"[OCU 납부기간]\n- 납부기간: {start}~{end}"
+                        _period_ko = self._format_period(start, end)
+                        context = f"[OCU 납부기간]\n- 납부기간: {_period_ko}"
                         return [self._make_direct_result(context, answer, score=1.3, node_data=ocu_data)]
 
                 # 초과학점 예외 전용 — "초과수강료"·"시스템사용료" 묻는 질문은 제외
@@ -2521,7 +2532,8 @@ class AcademicGraph:
             for s in sorted(standard, key=lambda x: x.get("시작일", "")):
                 start  = s.get("시작일", "")
                 end    = s.get("종료일", "")
-                period = start if start == end else f"{start}\u301C{end}"
+                # 2026-05-18 audit P2-12 부분 적용 (회귀 -14pp 해소): context 한글 변환
+                period = self._format_date(start) if start == end else self._format_period(start, end)
                 line   = f"- {s.get('이벤트명', '')}: {period} ({s.get('학기', '')})"
                 if s.get("시작시간"):           # OCU개강 등 시작시간 필드
                     line += f" {s['시작시간']}부터"
@@ -2852,7 +2864,8 @@ class AcademicGraph:
                     f"{_qualifier}온라인 휴/복학 신청 기간은 "
                     f"{self._format_period(start, end)}입니다."
                 )
-                context = f"[학사일정]\n- 온라인 휴/복학 신청: {start}~{end}"
+                _period_ko = self._format_period(start, end)
+                context = f"[학사일정]\n- 온라인 휴/복학 신청: {_period_ko}"
                 results.append(self._make_direct_result(context, answer, score=1.3, node_data=sm))
                 return results
 
@@ -2947,6 +2960,14 @@ class AcademicGraph:
         "LEAVE_OF_ABSENCE": ["휴복학"],
         "SCHEDULE": ["일정"],
         "EARLY_GRADUATION": ["졸업"],
+        # ── multi-task 1 (2026-05-11): 분할 자식은 부모 태그 상속 ──
+        "REGISTRATION_GENERAL":      ["수강신청"],
+        "GRADE_OPTION":              ["수강신청"],
+        "REREGISTRATION":            ["수강신청"],
+        "SCHOLARSHIP_APPLY":         ["장학금"],
+        "SCHOLARSHIP_QUALIFICATION": ["장학금"],
+        "TUITION_BENEFIT":           ["장학금", "등록금"],
+        # CERTIFICATE / CONTACT / FACILITY: 별도 태그 없음, 공지 검색은 키워드 fallback에 의존
     }
 
     def _query_notices(

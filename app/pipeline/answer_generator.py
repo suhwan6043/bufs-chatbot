@@ -22,6 +22,7 @@ from typing import Any, AsyncGenerator, Optional
 import httpx
 
 from app.config import settings
+from app.pipeline.prompts import SYSTEM_PROMPT  # KO_PROMPT_VERSION env로 v0/v1 토글
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,16 @@ _INTENT_FALLBACK_TERM: dict[str, dict] = {
     "COURSE_INFO":       {"ko": "교과목",     "en": "Course"},
     "ALTERNATIVE":       {"ko": "대체과목",   "en": "Alternative Course"},
     "TRANSCRIPT":        {"ko": "성적표",     "en": "Transcript"},
+    # ── multi-task 1 (2026-05-11): 분할 자식은 부모 용어 상속 ──
+    "REGISTRATION_GENERAL":      {"ko": "수강신청",   "en": "Course Registration"},
+    "GRADE_OPTION":              {"ko": "성적평가 선택", "en": "Grade Option"},
+    "REREGISTRATION":            {"ko": "재수강",     "en": "Re-registration"},
+    "SCHOLARSHIP_APPLY":         {"ko": "장학금 신청", "en": "Scholarship Application"},
+    "SCHOLARSHIP_QUALIFICATION": {"ko": "장학금 자격", "en": "Scholarship Qualification"},
+    "TUITION_BENEFIT":           {"ko": "등록금",     "en": "Tuition"},
+    "CERTIFICATE":               {"ko": "증명서",     "en": "Certificate"},
+    "CONTACT":                   {"ko": "학과사무실", "en": "Department Office"},
+    "FACILITY":                  {"ko": "학생포털",   "en": "Student Portal"},
 }
 
 # ── EN One-Pass 시스템 프롬프트 ───────────────────────────────────────────────
@@ -71,33 +82,12 @@ The [Context] is written in Korean. You MUST read and understand it directly.
 - Answer directly in English.\
 """
 
-# ── KO 시스템 프롬프트 (기존 유지) ──────────────────────────────────────────
-SYSTEM_PROMPT = """/no_think
-Respond with ONLY the final answer in Korean. No reasoning, no English.
-절대 'Thinking Process', 'Analyze', 'Reasoning', 분석 과정, 영어 해설, 내부 추론을 출력하지 마세요.
-오직 최종 한국어 답변 한 덩어리만 출력하세요. 답변이 아닌 모든 텍스트는 금지입니다.
-
-당신은 부산외국어대학교(BUFS) 학사 안내 AI입니다.
-
-## 핵심 규칙
-1. [컨텍스트]에 적힌 정보만 사용하세요. 추측·상식 금지.
-2. 숫자·날짜·URL은 컨텍스트 원문을 그대로 복사하세요. 절대 변경 금지.
-3. 컨텍스트에 FAQ(Q/A)가 있으면 해당 A를 답변의 뼈대로 사용하세요.
-4. 정보가 없으면 "관련 정보를 찾을 수 없습니다."로 답하세요. (담당 부서 안내는 시스템이 별도로 추가합니다.)
-5. OCU를 묻지 않은 질문에는 OCU 내용을 포함하지 마세요.
-
-## 답변 형식
-- 결론 문장으로 바로 시작하세요. 서론·메타 문구 금지.
-- 컨텍스트의 조건·예외("단", "제외")는 반드시 포함하세요.
-- 날짜·시간·절차·조건이 여러 개면 각 항목을 줄바꿈해서 나누세요.
-- 일정과 방법이 함께 있으면 한 문단에 몰아쓰지 말고 빈 줄로 구분하세요.
-- 학생 이름·학번은 답변에 포함하지 마세요.
-
-## 예시
-[컨텍스트] 졸업학점: 130, 교양이수학점: 43
-[질문] 졸업요건은?
-[답변] 졸업학점 130학점, 교양이수학점 43학점입니다.
-"""
+# ── KO 시스템 프롬프트 ────────────────────────────────────────
+# 2026-05-12: 인라인 정의를 app/pipeline/prompts/ 로 이동.
+# 환경변수 KO_PROMPT_VERSION=v0|v1 으로 즉시 토글 (rebuild 불요, restart만).
+# SYSTEM_PROMPT 심볼은 파일 상단 import로 주입됨.
+# 2026-05-13: origin/main PR #23 (feat/llm-rejection-msg-cleanup) 의 거절 문구
+# "담당 부서 하드코딩 제거" 의도를 prompts/system_ko_v1.py 의 거부 정책에 흡수.
 
 # 태그 최대 길이 기준 홀딩 버퍼 크기
 _TAG_HOLD = 16  # "<final_answer>" = 14자 + 여유 2자
@@ -171,7 +161,7 @@ class AnswerGenerator:
         key_material = self._stable_dump(key_payload)
         return hashlib.sha256(key_material.encode("utf-8")).hexdigest()
 
-    def get_cached_response(self, **cache_kwargs) -> Optional[str]:
+    def get_cached_response(self, *, share_across_sessions: bool = True, **cache_kwargs) -> Optional[str]:
         if self._cache_ttl_seconds <= 0 or self._cache_max_entries <= 0:
             return None
 
@@ -188,7 +178,7 @@ class AnswerGenerator:
             self._response_cache.move_to_end(cache_key)
             return answer
 
-    def store_cached_response(self, answer: str, **cache_kwargs) -> None:
+    def store_cached_response(self, answer: str, *, share_across_sessions: bool = True, **cache_kwargs) -> None:
         if (
             self._cache_ttl_seconds <= 0
             or self._cache_max_entries <= 0

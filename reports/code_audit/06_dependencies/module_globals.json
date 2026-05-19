@@ -1,0 +1,1700 @@
+[
+  {
+    "file": "app/config.py",
+    "line": 15,
+    "name": "_hf_token",
+    "value_kind": "call:os.getenv()"
+  },
+  {
+    "file": "app/config.py",
+    "line": 114,
+    "name": "_ADMIN_PW_DEFAULT",
+    "value_kind": "const:str"
+  },
+  {
+    "file": "app/models.py",
+    "line": 71,
+    "name": "_NEW_TO_LEGACY",
+    "value_kind": "dict[20]"
+  },
+  {
+    "file": "app/models.py",
+    "line": 96,
+    "name": "_LEGACY_TO_NEW",
+    "value_kind": "dict[11]"
+  },
+  {
+    "file": "app/shared_resources.py",
+    "line": 29,
+    "name": "_embedder_lock",
+    "value_kind": "call:threading.Lock()"
+  },
+  {
+    "file": "app/shared_resources.py",
+    "line": 30,
+    "name": "_chroma_lock",
+    "value_kind": "call:threading.Lock()"
+  },
+  {
+    "file": "app/shared_resources.py",
+    "line": 31,
+    "name": "_translator_lock",
+    "value_kind": "call:threading.Lock()"
+  },
+  {
+    "file": "app/shared_resources.py",
+    "line": 32,
+    "name": "_bm25_lock",
+    "value_kind": "call:threading.Lock()"
+  },
+  {
+    "file": "app/shared_resources.py",
+    "line": 33,
+    "name": "_reranker_lock",
+    "value_kind": "call:threading.Lock()"
+  },
+  {
+    "file": "app/shared_resources.py",
+    "line": 34,
+    "name": "_embedder",
+    "value_kind": "None"
+  },
+  {
+    "file": "app/shared_resources.py",
+    "line": 35,
+    "name": "_chroma_store",
+    "value_kind": "None"
+  },
+  {
+    "file": "app/shared_resources.py",
+    "line": 36,
+    "name": "_translator",
+    "value_kind": "None"
+  },
+  {
+    "file": "app/shared_resources.py",
+    "line": 37,
+    "name": "_bm25_index",
+    "value_kind": "None"
+  },
+  {
+    "file": "app/shared_resources.py",
+    "line": 38,
+    "name": "_reranker_model",
+    "value_kind": "None"
+  },
+  {
+    "file": "backend/crypto.py",
+    "line": 23,
+    "name": "_ENC_PREFIX",
+    "value_kind": "call:os.getenv()"
+  },
+  {
+    "file": "backend/crypto.py",
+    "line": 24,
+    "name": "_KEY_FILE",
+    "value_kind": "call:Path()"
+  },
+  {
+    "file": "backend/crypto.py",
+    "line": 29,
+    "name": "_cipher",
+    "value_kind": "None"
+  },
+  {
+    "file": "backend/database.py",
+    "line": 22,
+    "name": "_DB_PATH",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "backend/database.py",
+    "line": 23,
+    "name": "_PBKDF2_ITERATIONS",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "backend/database.py",
+    "line": 24,
+    "name": "_SALT_BYTES",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "backend/database.py",
+    "line": 25,
+    "name": "_lock",
+    "value_kind": "call:threading.Lock()"
+  },
+  {
+    "file": "backend/dependencies.py",
+    "line": 14,
+    "name": "_analyzer",
+    "value_kind": "None"
+  },
+  {
+    "file": "backend/dependencies.py",
+    "line": 15,
+    "name": "_router",
+    "value_kind": "None"
+  },
+  {
+    "file": "backend/dependencies.py",
+    "line": 16,
+    "name": "_merger",
+    "value_kind": "None"
+  },
+  {
+    "file": "backend/dependencies.py",
+    "line": 17,
+    "name": "_generator",
+    "value_kind": "None"
+  },
+  {
+    "file": "backend/dependencies.py",
+    "line": 18,
+    "name": "_validator",
+    "value_kind": "None"
+  },
+  {
+    "file": "backend/dependencies.py",
+    "line": 19,
+    "name": "_chat_logger",
+    "value_kind": "None"
+  },
+  {
+    "file": "backend/dependencies.py",
+    "line": 20,
+    "name": "_initialized",
+    "value_kind": "const:bool"
+  },
+  {
+    "file": "backend/dependencies.py",
+    "line": 21,
+    "name": "_lock",
+    "value_kind": "call:threading.Lock()"
+  },
+  {
+    "file": "backend/main.py",
+    "line": 34,
+    "name": "_lvl_name",
+    "value_kind": "call:upper()"
+  },
+  {
+    "file": "backend/main.py",
+    "line": 35,
+    "name": "_lvl",
+    "value_kind": "call:getattr()"
+  },
+  {
+    "file": "backend/main.py",
+    "line": 69,
+    "name": "_cors_origins",
+    "value_kind": "call:split()"
+  },
+  {
+    "file": "backend/session.py",
+    "line": 14,
+    "name": "_DEFAULT_TTL",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "backend/session.py",
+    "line": 15,
+    "name": "_CLEANUP_INTERVAL",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "evaluation/conftest.py",
+    "line": 36,
+    "name": "_vdb",
+    "value_kind": "call:ModuleType()"
+  },
+  {
+    "file": "evaluation/conftest.py",
+    "line": 42,
+    "name": "_qr_mod",
+    "value_kind": "call:ModuleType()"
+  },
+  {
+    "file": "evaluation/conftest.py",
+    "line": 47,
+    "name": "_rr_mod",
+    "value_kind": "call:ModuleType()"
+  },
+  {
+    "file": "evaluation/generate_synthetic.py",
+    "line": 45,
+    "name": "_ROOT",
+    "value_kind": "Attribute"
+  },
+  {
+    "file": "evaluation/generate_synthetic.py",
+    "line": 309,
+    "name": "_PROMPT_EN",
+    "value_kind": "const:str"
+  },
+  {
+    "file": "evaluation/generate_synthetic.py",
+    "line": 343,
+    "name": "_PROMPT_KO",
+    "value_kind": "const:str"
+  },
+  {
+    "file": "evaluation/test_llm_output_quality.py",
+    "line": 48,
+    "name": "_KO_WORD_RE",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "evaluation/test_llm_output_quality.py",
+    "line": 53,
+    "name": "_FRAMED_KO_RE",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "evaluation/test_llm_output_quality.py",
+    "line": 82,
+    "name": "_strip_paren_ko",
+    "value_kind": "Name"
+  },
+  {
+    "file": "pages/admin.py",
+    "line": 41,
+    "name": "_MAX_ATTEMPTS",
+    "value_kind": "Attribute"
+  },
+  {
+    "file": "pages/admin.py",
+    "line": 42,
+    "name": "_LOCKOUT_SECS",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "pages/admin.py",
+    "line": 43,
+    "name": "_TIMEOUT_SECS",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "pages/admin.py",
+    "line": 319,
+    "name": "_ADMIN_PAGES",
+    "value_kind": "dict[8]"
+  },
+  {
+    "file": "pages/admin.py",
+    "line": 501,
+    "name": "_GRAD_GROUP_OPTIONS",
+    "value_kind": "dict[6]"
+  },
+  {
+    "file": "pages/admin.py",
+    "line": 509,
+    "name": "_STUDENT_TYPES",
+    "value_kind": "list[3]"
+  },
+  {
+    "file": "pages/admin.py",
+    "line": 513,
+    "name": "_MAJOR_OPTIONS",
+    "value_kind": "dict[1]"
+  },
+  {
+    "file": "pages/admin.py",
+    "line": 521,
+    "name": "_GRAD_FIELDS",
+    "value_kind": "list[14]"
+  },
+  {
+    "file": "pages/admin.py",
+    "line": 1223,
+    "name": "_CRAWL_META",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "pages/admin.py",
+    "line": 1224,
+    "name": "_HASH_FILE",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "pages/admin.py",
+    "line": 1225,
+    "name": "_HIST_FILE",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "pages/logs.py",
+    "line": 75,
+    "name": "_MAX_ATTEMPTS",
+    "value_kind": "Attribute"
+  },
+  {
+    "file": "pages/logs.py",
+    "line": 76,
+    "name": "_LOCKOUT_SECS",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "pages/logs.py",
+    "line": 77,
+    "name": "_TIMEOUT_SECS",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "scripts/audit_synth_case_jsonl.py",
+    "line": 28,
+    "name": "_RE",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/build_unified_eval.py",
+    "line": 42,
+    "name": "_CATEGORY_TO_INTENT",
+    "value_kind": "dict[15]"
+  },
+  {
+    "file": "scripts/build_unified_eval.py",
+    "line": 61,
+    "name": "_FALLBACK_CATEGORIES",
+    "value_kind": "call:frozenset()"
+  },
+  {
+    "file": "scripts/build_unified_eval.py",
+    "line": 64,
+    "name": "_KO_SOURCE_MAP",
+    "value_kind": "dict[6]"
+  },
+  {
+    "file": "scripts/build_unified_eval.py",
+    "line": 72,
+    "name": "_EN_SOURCE_MAP",
+    "value_kind": "dict[14]"
+  },
+  {
+    "file": "scripts/cleanup_duplicate_chunks.py",
+    "line": 26,
+    "name": "_DUPLICATE_PATTERNS",
+    "value_kind": "list[2]"
+  },
+  {
+    "file": "scripts/demo_chat.py",
+    "line": 33,
+    "name": "_VALIDATION_WARNING_RE",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/eval_contains_f1.py",
+    "line": 46,
+    "name": "_SOURCE_ALIASES",
+    "value_kind": "dict[6]"
+  },
+  {
+    "file": "scripts/eval_f1_score.py",
+    "line": 431,
+    "name": "_REFUSAL_PATTERNS",
+    "value_kind": "list[8]"
+  },
+  {
+    "file": "scripts/eval_full.py",
+    "line": 39,
+    "name": "_SOURCE_ALIASES",
+    "value_kind": "dict[6]"
+  },
+  {
+    "file": "scripts/eval_full.py",
+    "line": 48,
+    "name": "_REFUSAL_PATTERNS",
+    "value_kind": "list[10]"
+  },
+  {
+    "file": "scripts/eval_full.py",
+    "line": 184,
+    "name": "_GEMINI_CLIENT",
+    "value_kind": "None"
+  },
+  {
+    "file": "scripts/eval_multilingual.py",
+    "line": 77,
+    "name": "_FALLBACK_CATEGORIES",
+    "value_kind": "set[2]"
+  },
+  {
+    "file": "scripts/eval_multilingual.py",
+    "line": 78,
+    "name": "_FALLBACK_GT_PATTERNS",
+    "value_kind": "list[3]"
+  },
+  {
+    "file": "scripts/eval_multilingual.py",
+    "line": 84,
+    "name": "_NOT_ANSWERABLE_PRED_PATTERNS",
+    "value_kind": "list[18]"
+  },
+  {
+    "file": "scripts/eval_multilingual.py",
+    "line": 265,
+    "name": "_GRAPH_ONLY_INTENTS",
+    "value_kind": "set[2]"
+  },
+  {
+    "file": "scripts/eval_ragas.py",
+    "line": 53,
+    "name": "_CLAUDE_MODELS",
+    "value_kind": "dict[3]"
+  },
+  {
+    "file": "scripts/eval_ragas.py",
+    "line": 58,
+    "name": "_anthropic_client",
+    "value_kind": "None"
+  },
+  {
+    "file": "scripts/eval_ragas.py",
+    "line": 89,
+    "name": "_GEMINI_MODELS",
+    "value_kind": "dict[3]"
+  },
+  {
+    "file": "scripts/eval_ragas.py",
+    "line": 94,
+    "name": "_genai_client",
+    "value_kind": "None"
+  },
+  {
+    "file": "scripts/eval_ragas.py",
+    "line": 165,
+    "name": "_",
+    "value_kind": "call:store.embedder.embed_query()"
+  },
+  {
+    "file": "scripts/eval_ragas.py",
+    "line": 549,
+    "name": "_REFUSAL_MARKERS",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "scripts/eval_rag_triad.py",
+    "line": 47,
+    "name": "_JUDGE_SYSTEM",
+    "value_kind": "const:str"
+  },
+  {
+    "file": "scripts/eval_retrieval_generation.py",
+    "line": 34,
+    "name": "_SOURCE_ALIASES",
+    "value_kind": "dict[6]"
+  },
+  {
+    "file": "scripts/eval_retrieval_generation.py",
+    "line": 43,
+    "name": "_REFUSAL_KW",
+    "value_kind": "list[5]"
+  },
+  {
+    "file": "scripts/ingest_all.py",
+    "line": 40,
+    "name": "_TYPE_MAP",
+    "value_kind": "dict[12]"
+  },
+  {
+    "file": "scripts/ingest_all.py",
+    "line": 55,
+    "name": "_PREFIX_MAP",
+    "value_kind": "dict[12]"
+  },
+  {
+    "file": "scripts/ingest_all.py",
+    "line": 70,
+    "name": "_METHOD_MAP",
+    "value_kind": "dict[12]"
+  },
+  {
+    "file": "scripts/ingest_all.py",
+    "line": 86,
+    "name": "_ROOT_NODE_MAP",
+    "value_kind": "dict[11]"
+  },
+  {
+    "file": "scripts/ingest_all_v2.py",
+    "line": 32,
+    "name": "_HERE",
+    "value_kind": "Attribute"
+  },
+  {
+    "file": "scripts/ingest_all_v2.py",
+    "line": 142,
+    "name": "_EMBEDDER",
+    "value_kind": "None"
+  },
+  {
+    "file": "scripts/ingest_pdf_v2.py",
+    "line": 20,
+    "name": "_HERE",
+    "value_kind": "Attribute"
+  },
+  {
+    "file": "scripts/ingest_static_page.py",
+    "line": 43,
+    "name": "_TYPE_MAP",
+    "value_kind": "dict[9]"
+  },
+  {
+    "file": "scripts/ingest_static_page.py",
+    "line": 55,
+    "name": "_PREFIX_MAP",
+    "value_kind": "dict[9]"
+  },
+  {
+    "file": "scripts/ingest_static_page.py",
+    "line": 67,
+    "name": "_METHOD_MAP",
+    "value_kind": "dict[9]"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 192,
+    "name": "_REG_GRADE_SCHEDULE_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 265,
+    "name": "_REG_MAX_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 270,
+    "name": "_REG_BASKET_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 271,
+    "name": "_REG_GPA_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 274,
+    "name": "_REG_TEACHER_DOUBLE_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 277,
+    "name": "_RETAKE_LIMIT_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 280,
+    "name": "_RETAKE_GRADE_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 281,
+    "name": "_CARRYOVER_PATTERN_NEW",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 282,
+    "name": "_CARRYOVER_PATTERN_OLD",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 283,
+    "name": "_CANCEL_DEADLINE_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 464,
+    "name": "_OCU_USAGE_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 465,
+    "name": "_OCU_MAX_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 466,
+    "name": "_OCU_GRAD_MAX_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 467,
+    "name": "_OCU_PAYMENT_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 468,
+    "name": "_OCU_OVERFLOW_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 469,
+    "name": "_OCU_ID_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 470,
+    "name": "_OCU_ATTENDANCE_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 471,
+    "name": "_OCU_START_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 565,
+    "name": "_GRADE_SELECT_PERIOD",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 568,
+    "name": "_GRADE_SELECT_MAX",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 569,
+    "name": "_GRADE_SELECT_TOTAL",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 570,
+    "name": "_GRADE_DROP_PERIOD",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 573,
+    "name": "_GRADE_DROP_SEM_MAX",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 574,
+    "name": "_GRADE_DROP_TOTAL_MAX",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 742,
+    "name": "_SECOND_MAJOR_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 843,
+    "name": "_GRAD_GROUP_PATTERNS",
+    "value_kind": "list[6]"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 852,
+    "name": "_CREDITS_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 854,
+    "name": "_LIBERAL_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 855,
+    "name": "_GLOBAL_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 856,
+    "name": "_JOB_COM_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "scripts/pdf_to_graph.py",
+    "line": 1037,
+    "name": "_DEPT_SKIP",
+    "value_kind": "set[7]"
+  },
+  {
+    "file": "scripts/rebuild_chromadb.py",
+    "line": 36,
+    "name": "_DUPLICATE_PATTERNS",
+    "value_kind": "list[2]"
+  },
+  {
+    "file": "tests/test_glossary.py",
+    "line": 9,
+    "name": "_TERMS_YAML",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "tests/test_transcript_analyzer.py",
+    "line": 27,
+    "name": "_DEFAULT_FIXTURE",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "tests/test_transcript_analyzer.py",
+    "line": 28,
+    "name": "_XLS_PATH",
+    "value_kind": "call:Path()"
+  },
+  {
+    "file": "tests/test_transcript_parser.py",
+    "line": 33,
+    "name": "_DEFAULT_FIXTURE",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "tests/test_transcript_parser.py",
+    "line": 34,
+    "name": "_XLS_PATH",
+    "value_kind": "call:Path()"
+  },
+  {
+    "file": "app/contacts/dept_search.py",
+    "line": 238,
+    "name": "_searcher",
+    "value_kind": "None"
+  },
+  {
+    "file": "app/contacts/__init__.py",
+    "line": 3,
+    "name": "__all__",
+    "value_kind": "list[2]"
+  },
+  {
+    "file": "app/crawler/pdf_downloader.py",
+    "line": 30,
+    "name": "_SUPPORTED_EXTS",
+    "value_kind": "set[7]"
+  },
+  {
+    "file": "app/crawler/__init__.py",
+    "line": 8,
+    "name": "__all__",
+    "value_kind": "list[10]"
+  },
+  {
+    "file": "app/embedding/__init__.py",
+    "line": 3,
+    "name": "__all__",
+    "value_kind": "list[1]"
+  },
+  {
+    "file": "app/graphdb/academic_graph.py",
+    "line": 35,
+    "name": "_REDIRECT_MARKERS",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "app/graphdb/academic_graph.py",
+    "line": 50,
+    "name": "_CONCRETE_DATA_RE",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "app/graphdb/academic_graph.py",
+    "line": 59,
+    "name": "_ANSWER_HEAD_CHARS",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "app/graphdb/academic_graph.py",
+    "line": 65,
+    "name": "_TROUBLESHOOT_SIGNALS",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "app/graphdb/academic_graph.py",
+    "line": 161,
+    "name": "_DEPT_TREE",
+    "value_kind": "dict[28]"
+  },
+  {
+    "file": "app/graphdb/schema_registry.py",
+    "line": 19,
+    "name": "_DISCOVERED_FIELDS_PATH",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "app/graphdb/schema_registry.py",
+    "line": 139,
+    "name": "_discovered_fields",
+    "value_kind": "call:_load_discovered()"
+  },
+  {
+    "file": "app/graphdb/__init__.py",
+    "line": 3,
+    "name": "__all__",
+    "value_kind": "list[1]"
+  },
+  {
+    "file": "app/ingestion/chunking.py",
+    "line": 41,
+    "name": "_COHORT_MIN",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "app/ingestion/chunking.py",
+    "line": 42,
+    "name": "_COHORT_MAX",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "app/ingestion/chunking_v2.py",
+    "line": 50,
+    "name": "_GARBAGE_RE",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "app/ingestion/chunking_v2.py",
+    "line": 60,
+    "name": "_MD_NEUTRAL_RE",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "app/ingestion/chunking_v2.py",
+    "line": 64,
+    "name": "_OCR_BR_RE",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "app/ingestion/chunking_v2.py",
+    "line": 65,
+    "name": "_OCR_INLINE_TAG_RE",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "app/ingestion/docx_extractor.py",
+    "line": 18,
+    "name": "_HEADING_STYLES",
+    "value_kind": "set[6]"
+  },
+  {
+    "file": "app/ingestion/docx_extractor.py",
+    "line": 24,
+    "name": "_MIN_SECTION_LEN",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "app/ingestion/hwp_extractor.py",
+    "line": 30,
+    "name": "_TAG_PARA_TEXT",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "app/ingestion/hwp_extractor.py",
+    "line": 31,
+    "name": "_TAG_PARA_HEADER",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "app/ingestion/hwp_extractor.py",
+    "line": 34,
+    "name": "_MIN_TEXT_LEN",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "app/ingestion/incremental_update.py",
+    "line": 33,
+    "name": "_NOTICE_URL_KEY",
+    "value_kind": "const:str"
+  },
+  {
+    "file": "app/ingestion/incremental_update.py",
+    "line": 34,
+    "name": "_ATTACH_TYPE",
+    "value_kind": "const:str"
+  },
+  {
+    "file": "app/ingestion/xlsx_extractor.py",
+    "line": 19,
+    "name": "_MIN_ROWS",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "app/ingestion/xlsx_extractor.py",
+    "line": 21,
+    "name": "_MAX_CELL_LEN",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "app/ingestion/__init__.py",
+    "line": 5,
+    "name": "__all__",
+    "value_kind": "list[8]"
+  },
+  {
+    "file": "app/logging/chat_logger.py",
+    "line": 28,
+    "name": "_skip_log_var",
+    "value_kind": "call:ContextVar()"
+  },
+  {
+    "file": "app/logging/__init__.py",
+    "line": 3,
+    "name": "__all__",
+    "value_kind": "list[1]"
+  },
+  {
+    "file": "app/pdf/section_stack.py",
+    "line": 67,
+    "name": "_HEADER_PATTERNS",
+    "value_kind": "list[6]"
+  },
+  {
+    "file": "app/pdf/section_tracker.py",
+    "line": 26,
+    "name": "_LEVEL1_MIN",
+    "value_kind": "const:float"
+  },
+  {
+    "file": "app/pdf/section_tracker.py",
+    "line": 27,
+    "name": "_LEVEL2_MIN",
+    "value_kind": "const:float"
+  },
+  {
+    "file": "app/pdf/section_tracker.py",
+    "line": 28,
+    "name": "_MIN_HEADER_LEN",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "app/pdf/section_tracker.py",
+    "line": 29,
+    "name": "_MAX_HEADER_LEN",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "app/pdf/timetable_parser.py",
+    "line": 23,
+    "name": "_PERIOD_BASE_HOUR",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "app/pdf/timetable_parser.py",
+    "line": 25,
+    "name": "_DAY_MAP",
+    "value_kind": "dict[7]"
+  },
+  {
+    "file": "app/pdf/timetable_parser.py",
+    "line": 37,
+    "name": "_PERIOD_TOKEN_RE",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "app/pdf/timetable_parser.py",
+    "line": 41,
+    "name": "_TIMETABLE_KEYWORDS",
+    "value_kind": "set[13]"
+  },
+  {
+    "file": "app/pdf/timetable_parser.py",
+    "line": 45,
+    "name": "_MIN_KEYWORD_MATCH",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "app/pdf/timetable_parser.py",
+    "line": 49,
+    "name": "_COL_PATTERNS",
+    "value_kind": "dict[14]"
+  },
+  {
+    "file": "app/pdf/timetable_parser.py",
+    "line": 82,
+    "name": "_CARRY_FORWARD_FIELDS",
+    "value_kind": "set[4]"
+  },
+  {
+    "file": "app/pdf/timetable_parser.py",
+    "line": 85,
+    "name": "_DEPT_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "app/pdf/timetable_parser.py",
+    "line": 89,
+    "name": "_DEPT_KEYWORDS",
+    "value_kind": "list[44]"
+  },
+  {
+    "file": "app/pdf/timetable_parser.py",
+    "line": 109,
+    "name": "_DISPLAY_ORDER",
+    "value_kind": "list[11]"
+  },
+  {
+    "file": "app/pdf/timetable_parser.py",
+    "line": 115,
+    "name": "_LABELS",
+    "value_kind": "dict[14]"
+  },
+  {
+    "file": "app/pdf/__init__.py",
+    "line": 5,
+    "name": "__all__",
+    "value_kind": "list[3]"
+  },
+  {
+    "file": "app/pipeline/answer_generator.py",
+    "line": 32,
+    "name": "_INTENT_FALLBACK_TERM",
+    "value_kind": "dict[19]"
+  },
+  {
+    "file": "app/pipeline/answer_generator.py",
+    "line": 93,
+    "name": "_TAG_HOLD",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "app/pipeline/answer_units.py",
+    "line": 32,
+    "name": "_PATTERNS",
+    "value_kind": "dict[9]"
+  },
+  {
+    "file": "app/pipeline/answer_units.py",
+    "line": 55,
+    "name": "_UNIT_TRIGGERS",
+    "value_kind": "list[12]"
+  },
+  {
+    "file": "app/pipeline/answer_units.py",
+    "line": 73,
+    "name": "_AMBIGUOUS_TO_WON",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "app/pipeline/answer_units.py",
+    "line": 135,
+    "name": "_REQUIRED_WHEN_EXPECTED",
+    "value_kind": "call:frozenset()"
+  },
+  {
+    "file": "app/pipeline/answer_units.py",
+    "line": 151,
+    "name": "_DISCRIMINATOR_CATEGORIES",
+    "value_kind": "list[8]"
+  },
+  {
+    "file": "app/pipeline/answer_units.py",
+    "line": 297,
+    "name": "_EXT_PHONE_IN_LINE",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "app/pipeline/answer_units.py",
+    "line": 398,
+    "name": "_CONSISTENCY_CHECK_UNITS",
+    "value_kind": "call:frozenset()"
+  },
+  {
+    "file": "app/pipeline/answer_units.py",
+    "line": 471,
+    "name": "_BI_VALUE_PATTERNS",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "app/pipeline/answer_units.py",
+    "line": 483,
+    "name": "_BI_VALUE_QUESTION_KWS",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "app/pipeline/clarification.py",
+    "line": 98,
+    "name": "_FALLBACK_TEMPLATES",
+    "value_kind": "dict[8]"
+  },
+  {
+    "file": "app/pipeline/clarification.py",
+    "line": 222,
+    "name": "_STUDENT_ID_PATTERNS",
+    "value_kind": "list[8]"
+  },
+  {
+    "file": "app/pipeline/clarification.py",
+    "line": 234,
+    "name": "_STUDENT_TYPE_PATTERNS_KO",
+    "value_kind": "dict[3]"
+  },
+  {
+    "file": "app/pipeline/clarification.py",
+    "line": 239,
+    "name": "_STUDENT_TYPE_PATTERNS_EN",
+    "value_kind": "dict[3]"
+  },
+  {
+    "file": "app/pipeline/community_selector.py",
+    "line": 21,
+    "name": "_DEFAULT_CONFIG_PATH",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "app/pipeline/community_selector.py",
+    "line": 133,
+    "name": "_default_selector",
+    "value_kind": "None"
+  },
+  {
+    "file": "app/pipeline/context_merger.py",
+    "line": 37,
+    "name": "_DEFAULT_CONTEXT_TOKENS",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "app/pipeline/context_merger.py",
+    "line": 48,
+    "name": "_INTENT_WEIGHTS",
+    "value_kind": "dict[19]"
+  },
+  {
+    "file": "app/pipeline/context_merger.py",
+    "line": 81,
+    "name": "_DEFAULT_WEIGHTS",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "app/pipeline/context_merger.py",
+    "line": 85,
+    "name": "_QT_WEIGHT_MODIFIERS",
+    "value_kind": "dict[4]"
+  },
+  {
+    "file": "app/pipeline/context_merger.py",
+    "line": 91,
+    "name": "_DEFAULT_QT_MOD",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "app/pipeline/context_merger.py",
+    "line": 97,
+    "name": "_INTENT_BUDGET",
+    "value_kind": "dict[19]"
+  },
+  {
+    "file": "app/pipeline/context_merger.py",
+    "line": 121,
+    "name": "_RRF_K",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "app/pipeline/context_merger.py",
+    "line": 128,
+    "name": "_ADAPTIVE_CUT_RATIO",
+    "value_kind": "const:float"
+  },
+  {
+    "file": "app/pipeline/context_merger.py",
+    "line": 129,
+    "name": "_ADAPTIVE_MIN_KEEP",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "app/pipeline/context_merger.py",
+    "line": 135,
+    "name": "_INTENT_CUTOFF_RATIO",
+    "value_kind": "dict[2]"
+  },
+  {
+    "file": "app/pipeline/follow_up_detector.py",
+    "line": 24,
+    "name": "_SINGULAR_PRONOUNS_KO",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "app/pipeline/follow_up_detector.py",
+    "line": 25,
+    "name": "_SINGULAR_PRONOUNS_EN",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "app/pipeline/follow_up_detector.py",
+    "line": 28,
+    "name": "_DISTRIBUTIVE_KO",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "app/pipeline/follow_up_detector.py",
+    "line": 29,
+    "name": "_ORDINAL_KO",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "app/pipeline/follow_up_detector.py",
+    "line": 30,
+    "name": "_DISTRIBUTIVE_EN",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "app/pipeline/follow_up_detector.py",
+    "line": 31,
+    "name": "_ORDINAL_EN",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "app/pipeline/follow_up_detector.py",
+    "line": 34,
+    "name": "_COMPARISON_KO",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "app/pipeline/follow_up_detector.py",
+    "line": 35,
+    "name": "_COMPARISON_EN",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "app/pipeline/follow_up_detector.py",
+    "line": 38,
+    "name": "_ELLIPTIC_KO",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "app/pipeline/follow_up_detector.py",
+    "line": 39,
+    "name": "_ELLIPTIC_EN",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "app/pipeline/follow_up_detector.py",
+    "line": 44,
+    "name": "_NEGATION_SHORT_KO",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "app/pipeline/ko_tokenizer.py",
+    "line": 21,
+    "name": "_TOKEN_RE",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "app/pipeline/ko_tokenizer.py",
+    "line": 26,
+    "name": "_KO_SUFFIXES",
+    "value_kind": "call:tuple()"
+  },
+  {
+    "file": "app/pipeline/ko_tokenizer.py",
+    "line": 132,
+    "name": "_BM25_STOPWORDS",
+    "value_kind": "call:frozenset()"
+  },
+  {
+    "file": "app/pipeline/language_detector.py",
+    "line": 8,
+    "name": "_KO_RE",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "app/pipeline/language_detector.py",
+    "line": 9,
+    "name": "_ALPHA_RE",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "app/pipeline/query_analyzer.py",
+    "line": 25,
+    "name": "_TERMS_YAML",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "app/pipeline/query_analyzer.py",
+    "line": 26,
+    "name": "_QT_YAML",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "app/pipeline/query_analyzer.py",
+    "line": 32,
+    "name": "_QT_NAME_TO_ENUM",
+    "value_kind": "dict[4]"
+  },
+  {
+    "file": "app/pipeline/query_analyzer.py",
+    "line": 40,
+    "name": "_QUESTION_WORDS",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "app/pipeline/query_rewriter.py",
+    "line": 30,
+    "name": "_PRONOUN_TOKENS_KO",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "app/pipeline/query_rewriter.py",
+    "line": 33,
+    "name": "_STOPWORDS",
+    "value_kind": "set[20]"
+  },
+  {
+    "file": "app/pipeline/query_rewriter.py",
+    "line": 132,
+    "name": "_SYSTEM_PROMPT_KO",
+    "value_kind": "const:str"
+  },
+  {
+    "file": "app/pipeline/query_rewriter.py",
+    "line": 145,
+    "name": "_SYSTEM_PROMPT_EN",
+    "value_kind": "const:str"
+  },
+  {
+    "file": "app/pipeline/query_understanding.py",
+    "line": 54,
+    "name": "_analyzer_singleton",
+    "value_kind": "None"
+  },
+  {
+    "file": "app/pipeline/query_understanding.py",
+    "line": 67,
+    "name": "_INTENT_DEFINITIONS",
+    "value_kind": "list[18]"
+  },
+  {
+    "file": "app/pipeline/query_understanding.py",
+    "line": 89,
+    "name": "_QTYPE_DEFINITIONS",
+    "value_kind": "list[4]"
+  },
+  {
+    "file": "app/pipeline/query_understanding.py",
+    "line": 136,
+    "name": "_FEW_SHOTS",
+    "value_kind": "list[4]"
+  },
+  {
+    "file": "app/pipeline/query_understanding.py",
+    "line": 312,
+    "name": "_JSON_BLOCK_RE",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "app/pipeline/reranker.py",
+    "line": 17,
+    "name": "_URL_IN_CHUNK_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "app/pipeline/translator.py",
+    "line": 39,
+    "name": "_LANG_NAMES",
+    "value_kind": "dict[7]"
+  },
+  {
+    "file": "app/pipeline/translator.py",
+    "line": 49,
+    "name": "_KO_PATTERN",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "app/pipeline/__init__.py",
+    "line": 10,
+    "name": "__all__",
+    "value_kind": "list[8]"
+  },
+  {
+    "file": "app/scheduler/crawl_scheduler.py",
+    "line": 32,
+    "name": "_LOG_FILE",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "app/scheduler/__init__.py",
+    "line": 5,
+    "name": "__all__",
+    "value_kind": "list[2]"
+  },
+  {
+    "file": "app/scheduler/__init__.py",
+    "line": 7,
+    "name": "_scheduler",
+    "value_kind": "None"
+  },
+  {
+    "file": "app/scheduler/__init__.py",
+    "line": 8,
+    "name": "_lock",
+    "value_kind": "call:threading.Lock()"
+  },
+  {
+    "file": "app/transcript/action_rules.py",
+    "line": 79,
+    "name": "_RULE_REGISTRY",
+    "value_kind": "list[0]"
+  },
+  {
+    "file": "app/transcript/analyzer.py",
+    "line": 20,
+    "name": "_GRADE_ORDER",
+    "value_kind": "dict[15]"
+  },
+  {
+    "file": "app/transcript/security.py",
+    "line": 29,
+    "name": "_STUDENT_ID_RE",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "app/transcript/security.py",
+    "line": 31,
+    "name": "_ALLOWED_EXTENSIONS",
+    "value_kind": "call:frozenset()"
+  },
+  {
+    "file": "app/transcript/security.py",
+    "line": 36,
+    "name": "_EXT_PATTERN",
+    "value_kind": "call:join()"
+  },
+  {
+    "file": "app/transcript/security.py",
+    "line": 37,
+    "name": "_SAFE_FILENAME_RE",
+    "value_kind": "call:re.compile()"
+  },
+  {
+    "file": "app/transcript/__init__.py",
+    "line": 25,
+    "name": "__all__",
+    "value_kind": "list[12]"
+  },
+  {
+    "file": "app/ui/chat_app.py",
+    "line": 36,
+    "name": "_event_loop",
+    "value_kind": "None"
+  },
+  {
+    "file": "app/ui/chat_app.py",
+    "line": 154,
+    "name": "_THINKING_TEMPLATE",
+    "value_kind": "const:str"
+  },
+  {
+    "file": "app/vectordb/__init__.py",
+    "line": 3,
+    "name": "__all__",
+    "value_kind": "list[1]"
+  },
+  {
+    "file": "app/pipeline/prompts/__init__.py",
+    "line": 14,
+    "name": "_VERSION",
+    "value_kind": "call:strip()"
+  },
+  {
+    "file": "app/pipeline/prompts/__init__.py",
+    "line": 25,
+    "name": "__all__",
+    "value_kind": "list[3]"
+  },
+  {
+    "file": "backend/routers/chat.py",
+    "line": 36,
+    "name": "_LLM_SEMAPHORE",
+    "value_kind": "call:asyncio.Semaphore()"
+  },
+  {
+    "file": "backend/routers/chat.py",
+    "line": 41,
+    "name": "_USER_MSG",
+    "value_kind": "dict[2]"
+  },
+  {
+    "file": "backend/routers/feedback.py",
+    "line": 21,
+    "name": "_FEEDBACK_DIR",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "backend/routers/source.py",
+    "line": 18,
+    "name": "_PROJECT_ROOT",
+    "value_kind": "Attribute"
+  },
+  {
+    "file": "backend/routers/user.py",
+    "line": 44,
+    "name": "_JWT_SECRET",
+    "value_kind": "call:os.getenv()"
+  },
+  {
+    "file": "backend/routers/user.py",
+    "line": 45,
+    "name": "_JWT_EXPIRE_HOURS",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "backend/routers/user.py",
+    "line": 48,
+    "name": "_MAX_ATTEMPTS",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "backend/routers/user.py",
+    "line": 49,
+    "name": "_LOCKOUT_SECONDS",
+    "value_kind": "const:int"
+  },
+  {
+    "file": "backend/routers/user.py",
+    "line": 50,
+    "name": "_login_attempts",
+    "value_kind": "dict[0]"
+  },
+  {
+    "file": "backend/routers/user.py",
+    "line": 51,
+    "name": "_blacklisted_tokens",
+    "value_kind": "call:set()"
+  },
+  {
+    "file": "backend/utils/i18n.py",
+    "line": 14,
+    "name": "_SUPPORTED",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "backend/utils/i18n.py",
+    "line": 41,
+    "name": "_API_MSG",
+    "value_kind": "dict[10]"
+  },
+  {
+    "file": "backend/utils/i18n.py",
+    "line": 99,
+    "name": "_STUDENT_TYPE_MAP_EN_TO_KO",
+    "value_kind": "dict[10]"
+  },
+  {
+    "file": "backend/utils/i18n.py",
+    "line": 112,
+    "name": "_VALID_STUDENT_TYPES_KO",
+    "value_kind": "Tuple"
+  },
+  {
+    "file": "backend/routers/admin/auth.py",
+    "line": 30,
+    "name": "_JWT_SECRET",
+    "value_kind": "call:os.getenv()"
+  },
+  {
+    "file": "backend/routers/admin/auth.py",
+    "line": 31,
+    "name": "_JWT_EXPIRE_MIN",
+    "value_kind": "call:int()"
+  },
+  {
+    "file": "backend/routers/admin/auth.py",
+    "line": 32,
+    "name": "_MAX_ATTEMPTS",
+    "value_kind": "Attribute"
+  },
+  {
+    "file": "backend/routers/admin/auth.py",
+    "line": 33,
+    "name": "_LOCKOUT_SECS",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "backend/routers/admin/auth.py",
+    "line": 36,
+    "name": "_failed_attempts",
+    "value_kind": "dict[0]"
+  },
+  {
+    "file": "backend/routers/admin/auth.py",
+    "line": 37,
+    "name": "_lockout_until",
+    "value_kind": "dict[0]"
+  },
+  {
+    "file": "backend/routers/admin/auth.py",
+    "line": 40,
+    "name": "_blacklisted_tokens",
+    "value_kind": "call:set()"
+  },
+  {
+    "file": "backend/routers/admin/contacts.py",
+    "line": 15,
+    "name": "_CONTACTS_FILE",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "backend/routers/admin/crawler.py",
+    "line": 17,
+    "name": "_CRAWL_META",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "backend/routers/admin/crawler.py",
+    "line": 18,
+    "name": "_HASH_FILE",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "backend/routers/admin/crawler.py",
+    "line": 19,
+    "name": "_HIST_FILE",
+    "value_kind": "BinOp"
+  },
+  {
+    "file": "backend/routers/admin/faq.py",
+    "line": 45,
+    "name": "_write_lock",
+    "value_kind": "call:asyncio.Lock()"
+  },
+  {
+    "file": "backend/routers/admin/faq.py",
+    "line": 46,
+    "name": "_ADMIN_ID_PREFIX",
+    "value_kind": "const:str"
+  },
+  {
+    "file": "backend/routers/admin/graduation.py",
+    "line": 21,
+    "name": "_GRAD_GROUP_OPTIONS",
+    "value_kind": "dict[6]"
+  },
+  {
+    "file": "backend/routers/admin/graduation.py",
+    "line": 25,
+    "name": "_STUDENT_TYPES",
+    "value_kind": "list[3]"
+  },
+  {
+    "file": "backend/routers/admin/logs.py",
+    "line": 15,
+    "name": "_INTENT_LABELS",
+    "value_kind": "dict[11]"
+  }
+]

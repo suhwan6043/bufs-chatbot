@@ -1,0 +1,30 @@
+
+[saved] reports\code_audit\01_structure\cc.json
+# Cyclomatic Complexity Top 20
+# total functions: 1677
+# average cc: 4.8
+# functions with cc >= 10: 192
+# functions with cc >= 20: 67
+
+#   file                                                    line   loc   cc   name
+--------------------------------------------------------------------------------------------------------------
+1   scripts/pdf_to_graph.py                                 1137   487   123  build_graph_from_pdf
+2   app/graphdb/academic_graph.py                           1992   330   95   _query_registration
+3   app/graphdb/academic_graph.py                           2323   232   86   _query_schedule
+4   backend/routers/chat.py                                 469    511   76   chat_stream
+5   app/pipeline/context_merger.py                          236    374   75   merge
+6   backend/routers/chat.py                                 514    464   73   _inner_generator
+7   app/graphdb/academic_graph.py                           1128   169   73   query_to_search_results
+8   app/pipeline/query_analyzer.py                          511    237   67   _analyze_en
+9   scripts/pdf_to_graph.py                                 288    172   57   parse_registration_rules
+10  app/graphdb/academic_graph.py                           1717   174   55   _query_graduation
+11  app/graphdb/academic_graph.py                           745    210   53   search_faq
+12  app/transcript/parser.py                                640    129   53   _extract_credits_summary
+13  scripts/ingest_all.py                                   117    343   52   main
+14  app/pipeline/answer_generator.py                        300    300   50   _build_prompt
+15  backend/routers/chat.py                                 233    112   49   _enrich_analysis
+16  backend/routers/chat.py                                 1002   338   47   chat_sync
+17  scripts/pdf_to_graph.py                                 859    94    47   parse_graduation_reqs
+18  scripts/make_report.py                                  146    496   45   main
+19  scripts/pdf_to_graph.py                                 748    90    43   parse_second_major_credits
+20  app/pipeline/query_analyzer.py                          843    126   42   _classify_intent

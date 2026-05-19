@@ -127,6 +127,16 @@ class QueryRouter:
         Intent.COURSE_INFO:    20,   # 유지: 시간표 청크 다수 필요
         Intent.MAJOR_CHANGE:   15,   # 10 → 15: 학번별 표 분산 대응
         Intent.GENERAL:        15,   # 유지
+        # ── multi-task 1 (2026-05-11): 분할 자식은 부모 값 상속 ──
+        Intent.REGISTRATION_GENERAL:      15,
+        Intent.GRADE_OPTION:              15,
+        Intent.REREGISTRATION:            15,
+        Intent.SCHOLARSHIP_APPLY:         15,
+        Intent.SCHOLARSHIP_QUALIFICATION: 15,
+        Intent.TUITION_BENEFIT:           15,
+        Intent.CERTIFICATE:               15,
+        Intent.CONTACT:                   10,  # 연락처는 적은 청크로 충분
+        Intent.FACILITY:                  15,
     }
 
     # ── 원칙 2: 인텐트별 우선 doc_type (Tier 1: domestic+guide 최우선) ──
@@ -145,6 +155,16 @@ class QueryRouter:
         Intent.SCHOLARSHIP:       ["domestic", "guide", "scholarship", "notice_attachment", "faq"],
         Intent.ALTERNATIVE:       ["domestic", "guide", "faq"],
         Intent.GENERAL:           ["domestic", "guide", "faq", "notice"],
+        # ── multi-task 1: 분할 자식 ──
+        Intent.REGISTRATION_GENERAL:      ["domestic", "guide", "faq"],
+        Intent.GRADE_OPTION:              ["domestic", "guide", "faq"],
+        Intent.REREGISTRATION:            ["domestic", "guide", "faq"],
+        Intent.SCHOLARSHIP_APPLY:         ["domestic", "guide", "scholarship", "notice_attachment", "faq"],
+        Intent.SCHOLARSHIP_QUALIFICATION: ["domestic", "guide", "scholarship", "notice_attachment", "faq"],
+        Intent.TUITION_BENEFIT:           ["domestic", "guide", "scholarship", "notice_attachment", "faq"],
+        Intent.CERTIFICATE:               ["guide", "faq", "domestic"],
+        Intent.CONTACT:                   ["guide", "faq", "domestic"],
+        Intent.FACILITY:                  ["guide", "domestic", "notice", "faq"],
     }
 
     _MIN_PHASE1_RESULTS = 3  # Phase 1 최소 결과 수 (미달 시 Phase 2 확장)

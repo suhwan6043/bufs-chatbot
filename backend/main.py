@@ -5,6 +5,7 @@ CAMCHAT FastAPI 백엔드 — 앱 팩토리.
 """
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
 # 2026-04-28 진단: lifespan init_all() 흐름 가시화 — uvicorn은 자체 logger만 등록하므로
@@ -23,11 +24,43 @@ from backend.database import init_db
 from backend.routers import health, chat, session, transcript, feedback, source, user
 from backend.routers.admin import router as admin_router
 
-logger = logging.getLogger(__name__)
-
 # 환경변수 로드 (.env)
 from dotenv import load_dotenv
 load_dotenv()
+
+# 2026-05-13: root logger 정상화 — 진단 결과 root level=WARNING + handlers=[] 였음.
+# 그 결과 app.pipeline.* 의 logger.info/debug 가 stdout에 출력 안 됨 (PIPELINE_TIMING
+# 만 print 경유로 보임). LOG_LEVEL env로 동적 설정, format에 logger name 포함.
+_lvl_name = os.getenv("LOG_LEVEL", "INFO").upper()
+_lvl = getattr(logging, _lvl_name, logging.INFO)
+logging.basicConfig(
+    level=_lvl,
+    format="%(asctime)s %(levelname)-7s %(name)s | %(message)s",
+    force=True,  # uvicorn pre-config 덮어쓰기
+)
+# app.pipeline.* 강제 명시 (정확한 진단용)
+logging.getLogger("app.pipeline").setLevel(_lvl)
+logging.getLogger("backend").setLevel(_lvl)
+
+# 2026-05-18: 외부 라이브러리의 DEBUG 로그는 한글을 UTF-8 byte escape(\xed\x95\x99 등)
+# 또는 raw chunk(b'...')로 출력해 읽기 어려움. LOG_LEVEL=DEBUG여도 우리 코드만
+# 디버그 보이도록 외부는 WARNING으로 강제. (LOG_LEVEL=INFO이면 무의미하지만 무해.)
+for _noisy in (
+    "sse_starlette",       # SSE chunk raw bytes b'\xed\x95\x99...' 출력
+    "sse_starlette.sse",
+    "httpcore",            # HTTP wire-level DEBUG (httpx 의존)
+    "httpcore.http11",
+    "httpx",               # 요청·응답 DEBUG
+    "urllib3",
+    "chromadb",            # n_results 등 매 쿼리 DEBUG
+    "chromadb.telemetry",
+    "asyncio",
+    "uvicorn.access",      # access log 별도, INFO는 유지
+):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
+logger = logging.getLogger(__name__)
+logger.info("logging configured: level=%s (LOG_LEVEL env)", _lvl_name)
 
 
 @asynccontextmanager
@@ -37,6 +70,27 @@ async def lifespan(app: FastAPI):
     init_db()
     init_all()
     logger.info("파이프라인 초기화 완료. 서버 준비됨.")
+
+    # 5/19 startup ENV 메타 1회 출력 — 단위테스트 재현성 + 회귀 비교용
+    try:
+        from app.config import settings
+        print("=" * 72, flush=True)
+        print("[ENV] BUFS chatbot backend startup metadata", flush=True)
+        print(f"[ENV] llm_model         {settings.llm.model}", flush=True)
+        print(f"[ENV] llm_base_url      {settings.llm.base_url}", flush=True)
+        print(f"[ENV] llm_api_type      {settings.llm.api_type}", flush=True)
+        print(f"[ENV] reranker_model    {settings.reranker.model_name} top_k={settings.reranker.top_k} candidate_k={settings.reranker.candidate_k}", flush=True)
+        print(f"[ENV] chroma_persist    {settings.chroma.persist_dir} collection={settings.chroma.collection_name}", flush=True)
+        print(f"[ENV] understand        enabled={settings.conversation.understanding_enabled} primary={settings.conversation.understand_model or '(rewrite default)'} timeout={settings.conversation.understand_timeout_sec}s fallback_timeout={settings.conversation.understand_fallback_timeout_sec}s", flush=True)
+        print(f"[ENV] ko_prompt         version={os.getenv('KO_PROMPT_VERSION', 'v1')}", flush=True)
+        print(f"[ENV] direct_answer     bypass_llm={settings.pipeline.direct_answer_bypass_llm}", flush=True)
+        print(f"[ENV] reranker_enabled  {settings.reranker.enabled}", flush=True)
+        print(f"[ENV] log_level         {os.getenv('LOG_LEVEL', 'INFO')}", flush=True)
+        print(f"[ENV] llm_max_concurrent {settings.llm.max_concurrent}", flush=True)
+        print("=" * 72, flush=True)
+    except Exception as e:
+        logger.warning("ENV 메타 출력 실패: %s", e)
+
     yield
     logger.info("FastAPI 서버 종료.")
 

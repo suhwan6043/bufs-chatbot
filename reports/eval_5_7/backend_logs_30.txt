@@ -1,0 +1,113 @@
+2026-05-13 09:05:22,646 WARNING backend.dependencies | ChromaDB warm query 실패: Unsupported input type: float. Expected one of: str, dict, PIL.Image.Image, np.ndarray, torch.Tensor
+PIPELINE_TIMING total=5ms follow_up=0ms rewrite=0ms analyze=0ms search=0ms merge=0ms retry=0ms generate=0ms validate=0ms intent=CONTACT qt=? follow_up=? endpoint=sync path=contact
+2026-05-13 09:05:59,536 INFO    app.pipeline.query_understanding | [understand-call] OK model=gemma3:4b timeout=8.0s elapsed=4744ms prompt_chars=3600 content_len=290 reasoning_len=0
+2026-05-13 09:05:59,536 INFO    app.pipeline.query_understanding | [understand-call] JSON_OK model=gemma3:4b intent=SCHEDULE keys=['is_follow_up', 'standalone_query', 'intent', 'intent_confidence', 'question_type', 'lang', 'entities']
+2026-05-13 09:06:02,446 ERROR   app.pipeline.answer_generator | 답변 생성 실패: Client error '404 Not Found' for url 'http://host.docker.internal:11434/api/chat'
+2026-05-13 09:06:02,446 WARNING backend.routers.chat | answer-context mismatch (sync): url:http://host.docker.internal:11434/api/chat' not in context
+PIPELINE_TIMING total=7660ms follow_up=0ms rewrite=4750ms analyze=0ms search=2870ms merge=0ms retry=0ms generate=15ms validate=0ms intent=SCHEDULE qt=overview follow_up=llm:llm endpoint=sync path=generated
+2026-05-13 09:06:03,999 INFO    app.pipeline.query_understanding | [understand-call] OK model=gemma3:4b timeout=8.0s elapsed=1540ms prompt_chars=3599 content_len=305 reasoning_len=0
+2026-05-13 09:06:03,999 INFO    app.pipeline.query_understanding | [understand-call] JSON_OK model=gemma3:4b intent=COURSE_INFO keys=['is_follow_up', 'standalone_query', 'intent', 'intent_confidence', 'question_type', 'lang', 'entities']
+2026-05-13 09:06:04,493 ERROR   app.pipeline.answer_generator | 답변 생성 실패: Client error '404 Not Found' for url 'http://host.docker.internal:11434/api/chat'
+2026-05-13 09:06:04,493 WARNING backend.routers.chat | answer-context mismatch (sync): url:http://host.docker.internal:11434/api/chat' not in context
+PIPELINE_TIMING total=2034ms follow_up=0ms rewrite=1540ms analyze=0ms search=480ms merge=0ms retry=0ms generate=13ms validate=0ms intent=COURSE_INFO qt=overview follow_up=llm:llm endpoint=sync path=generated
+2026-05-13 09:06:05,898 INFO    app.pipeline.query_understanding | [understand-call] OK model=gemma3:4b timeout=8.0s elapsed=1393ms prompt_chars=3596 content_len=288 reasoning_len=0
+2026-05-13 09:06:05,898 INFO    app.pipeline.query_understanding | [understand-call] JSON_OK model=gemma3:4b intent=SCHEDULE keys=['is_follow_up', 'standalone_query', 'intent', 'intent_confidence', 'question_type', 'lang', 'entities']
+2026-05-13 09:06:06,512 ERROR   app.pipeline.answer_generator | 답변 생성 실패: Client error '404 Not Found' for url 'http://host.docker.internal:11434/api/chat'
+2026-05-13 09:06:06,512 WARNING backend.routers.chat | answer-context mismatch (sync): url:http://host.docker.internal:11434/api/chat' not in context
+PIPELINE_TIMING total=2007ms follow_up=0ms rewrite=1393ms analyze=0ms search=599ms merge=0ms retry=0ms generate=13ms validate=0ms intent=SCHEDULE qt=factoid follow_up=llm:llm endpoint=sync path=generated
+2026-05-13 09:06:07,986 INFO    app.pipeline.query_understanding | [understand-call] OK model=gemma3:4b timeout=8.0s elapsed=1462ms prompt_chars=3598 content_len=301 reasoning_len=0
+2026-05-13 09:06:07,986 INFO    app.pipeline.query_understanding | [understand-call] JSON_OK model=gemma3:4b intent=SCHOLARSHIP_APPLY keys=['is_follow_up', 'standalone_query', 'intent', 'intent_confidence', 'question_type', 'lang', 'entities']
+2026-05-13 09:06:10,809 ERROR   app.pipeline.answer_generator | 답변 생성 실패: Client error '404 Not Found' for url 'http://host.docker.internal:11434/api/chat'
+2026-05-13 09:06:10,809 WARNING backend.routers.chat | answer-context mismatch (sync): url:http://host.docker.internal:11434/api/chat' not in context
+PIPELINE_TIMING total=4286ms follow_up=0ms rewrite=1463ms analyze=0ms search=2808ms merge=0ms retry=0ms generate=13ms validate=0ms intent=SCHOLARSHIP_APPLY qt=procedural follow_up=llm:llm endpoint=sync path=generated
+2026-05-13 09:18:21,602 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8019ms prompt_chars=3607
+2026-05-13 09:18:41,610 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20008ms prompt_chars=3607
+PIPELINE_TIMING total=47271ms follow_up=0ms rewrite=28028ms analyze=0ms search=1848ms merge=0ms retry=0ms generate=17393ms validate=0ms intent=REGISTRATION qt=factoid follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:19:45,509 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8008ms prompt_chars=3602
+2026-05-13 09:20:05,518 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20009ms prompt_chars=3602
+PIPELINE_TIMING total=59194ms follow_up=0ms rewrite=28019ms analyze=0ms search=1213ms merge=0ms retry=0ms generate=29960ms validate=0ms intent=REGISTRATION qt=factoid follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:20:44,721 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8007ms prompt_chars=3607
+2026-05-13 09:21:04,728 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20007ms prompt_chars=3607
+PIPELINE_TIMING total=29760ms follow_up=0ms rewrite=28016ms analyze=0ms search=1744ms merge=0ms retry=0ms generate=0ms validate=0ms intent=REGISTRATION qt=factoid follow_up=no_history endpoint=sync path=cached
+2026-05-13 09:21:14,513 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8008ms prompt_chars=3603
+2026-05-13 09:21:34,520 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20008ms prompt_chars=3603
+PIPELINE_TIMING total=49770ms follow_up=0ms rewrite=28017ms analyze=0ms search=4042ms merge=0ms retry=0ms generate=17710ms validate=0ms intent=COURSE_INFO qt=overview follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:22:04,302 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8007ms prompt_chars=3604
+2026-05-13 09:22:24,320 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20018ms prompt_chars=3604
+PIPELINE_TIMING total=47728ms follow_up=0ms rewrite=28026ms analyze=0ms search=498ms merge=0ms retry=0ms generate=19202ms validate=0ms intent=SCHEDULE qt=factoid follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:22:52,041 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8009ms prompt_chars=3595
+2026-05-13 09:23:12,050 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20009ms prompt_chars=3595
+PIPELINE_TIMING total=56909ms follow_up=0ms rewrite=28019ms analyze=0ms search=829ms merge=0ms retry=0ms generate=28059ms validate=0ms intent=GRADUATION_REQ qt=overview follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:23:48,959 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8008ms prompt_chars=3598
+2026-05-13 09:24:08,967 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20008ms prompt_chars=3598
+PIPELINE_TIMING total=48519ms follow_up=0ms rewrite=28017ms analyze=0ms search=548ms merge=0ms retry=0ms generate=19953ms validate=0ms intent=GENERAL qt=overview follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:24:37,519 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8008ms prompt_chars=3603
+2026-05-13 09:24:57,530 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20010ms prompt_chars=3603
+PIPELINE_TIMING total=46512ms follow_up=0ms rewrite=28019ms analyze=0ms search=676ms merge=0ms retry=0ms generate=17814ms validate=0ms intent=GENERAL qt=procedural follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:25:24,041 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8008ms prompt_chars=3610
+2026-05-13 09:25:44,048 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20008ms prompt_chars=3610
+PIPELINE_TIMING total=46280ms follow_up=0ms rewrite=28017ms analyze=0ms search=1060ms merge=0ms retry=0ms generate=17202ms validate=0ms intent=LEAVE_OF_ABSENCE qt=reasoning follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:26:10,331 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8009ms prompt_chars=3607
+2026-05-13 09:26:30,341 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20009ms prompt_chars=3607
+PIPELINE_TIMING total=48425ms follow_up=0ms rewrite=28018ms analyze=0ms search=2392ms merge=0ms retry=0ms generate=18014ms validate=0ms intent=GRADUATION_REQ qt=factoid follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:26:58,770 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8008ms prompt_chars=3601
+2026-05-13 09:27:18,777 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20008ms prompt_chars=3601
+PIPELINE_TIMING total=46496ms follow_up=0ms rewrite=28017ms analyze=0ms search=1718ms merge=0ms retry=0ms generate=16759ms validate=0ms intent=GENERAL qt=factoid follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:27:45,278 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8009ms prompt_chars=3622
+2026-05-13 09:28:05,285 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20008ms prompt_chars=3622
+PIPELINE_TIMING total=48531ms follow_up=0ms rewrite=28017ms analyze=0ms search=435ms merge=0ms retry=0ms generate=20077ms validate=0ms intent=SCHEDULE qt=factoid follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:28:33,821 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8010ms prompt_chars=3596
+2026-05-13 09:28:53,829 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20008ms prompt_chars=3596
+PIPELINE_TIMING total=47444ms follow_up=0ms rewrite=28018ms analyze=0ms search=531ms merge=0ms retry=0ms generate=18892ms validate=0ms intent=SCHEDULE qt=overview follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:29:21,277 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8009ms prompt_chars=3597
+2026-05-13 09:29:41,287 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20011ms prompt_chars=3597
+PIPELINE_TIMING total=46736ms follow_up=0ms rewrite=28020ms analyze=0ms search=514ms merge=0ms retry=0ms generate=18200ms validate=0ms intent=GENERAL qt=procedural follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:30:08,024 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8010ms prompt_chars=3594
+2026-05-13 09:30:28,035 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20010ms prompt_chars=3594
+PIPELINE_TIMING total=47858ms follow_up=0ms rewrite=28021ms analyze=0ms search=998ms merge=0ms retry=0ms generate=18838ms validate=0ms intent=GENERAL qt=overview follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:30:55,893 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8009ms prompt_chars=3597
+2026-05-13 09:31:15,900 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20008ms prompt_chars=3597
+PIPELINE_TIMING total=52352ms follow_up=0ms rewrite=28018ms analyze=0ms search=1634ms merge=0ms retry=0ms generate=22698ms validate=0ms intent=REGISTRATION qt=factoid follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:31:48,262 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8012ms prompt_chars=3609
+2026-05-13 09:32:08,272 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20011ms prompt_chars=3609
+PIPELINE_TIMING total=52203ms follow_up=0ms rewrite=28024ms analyze=0ms search=1831ms merge=0ms retry=0ms generate=22345ms validate=0ms intent=GRADUATION_REQ qt=factoid follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:32:40,472 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8009ms prompt_chars=3603
+2026-05-13 09:33:00,481 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20008ms prompt_chars=3603
+PIPELINE_TIMING total=49860ms follow_up=0ms rewrite=28017ms analyze=0ms search=1310ms merge=0ms retry=0ms generate=20531ms validate=0ms intent=REGISTRATION qt=factoid follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:33:30,345 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8009ms prompt_chars=3601
+2026-05-13 09:33:50,353 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20009ms prompt_chars=3601
+PIPELINE_TIMING total=44927ms follow_up=0ms rewrite=28019ms analyze=0ms search=243ms merge=0ms retry=0ms generate=16664ms validate=0ms intent=SCHEDULE qt=factoid follow_up=no_history endpoint=sync path=generated
+PIPELINE_TIMING total=0ms follow_up=0ms rewrite=0ms analyze=0ms search=0ms merge=0ms retry=0ms generate=0ms validate=0ms intent=CONTACT qt=? follow_up=? endpoint=sync path=contact
+2026-05-13 09:34:15,323 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8013ms prompt_chars=3604
+2026-05-13 09:34:35,330 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20008ms prompt_chars=3604
+PIPELINE_TIMING total=50152ms follow_up=0ms rewrite=28023ms analyze=0ms search=1138ms merge=0ms retry=0ms generate=20989ms validate=0ms intent=LEAVE_OF_ABSENCE qt=procedural follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:35:05,480 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8008ms prompt_chars=3609
+2026-05-13 09:35:25,489 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20008ms prompt_chars=3609
+PIPELINE_TIMING total=51953ms follow_up=0ms rewrite=28017ms analyze=0ms search=943ms merge=0ms retry=0ms generate=22991ms validate=0ms intent=GRADUATION_REQ qt=factoid follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:35:57,446 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8009ms prompt_chars=3600
+2026-05-13 09:36:17,455 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20009ms prompt_chars=3600
+PIPELINE_TIMING total=51115ms follow_up=0ms rewrite=28019ms analyze=0ms search=950ms merge=0ms retry=0ms generate=22144ms validate=0ms intent=REGISTRATION qt=factoid follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:36:48,572 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8009ms prompt_chars=3604
+2026-05-13 09:37:08,581 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20010ms prompt_chars=3604
+PIPELINE_TIMING total=53649ms follow_up=0ms rewrite=28020ms analyze=0ms search=1952ms merge=0ms retry=0ms generate=23675ms validate=0ms intent=GRADUATION_REQ qt=factoid follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:37:42,231 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8008ms prompt_chars=3606
+2026-05-13 09:38:02,239 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20008ms prompt_chars=3606
+PIPELINE_TIMING total=47875ms follow_up=0ms rewrite=28017ms analyze=0ms search=1446ms merge=0ms retry=0ms generate=18410ms validate=0ms intent=COURSE_INFO qt=procedural follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:38:30,119 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8009ms prompt_chars=3599
+2026-05-13 09:38:50,127 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20009ms prompt_chars=3599
+PIPELINE_TIMING total=48066ms follow_up=0ms rewrite=28019ms analyze=0ms search=1150ms merge=0ms retry=0ms generate=18896ms validate=0ms intent=GENERAL qt=overview follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:39:18,194 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8007ms prompt_chars=3599
+2026-05-13 09:39:38,200 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20008ms prompt_chars=3599
+PIPELINE_TIMING total=48178ms follow_up=0ms rewrite=28016ms analyze=0ms search=3517ms merge=0ms retry=0ms generate=16644ms validate=0ms intent=COURSE_INFO qt=overview follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:40:06,381 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8008ms prompt_chars=3594
+2026-05-13 09:40:26,391 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20009ms prompt_chars=3594
+PIPELINE_TIMING total=62963ms follow_up=0ms rewrite=28018ms analyze=0ms search=755ms merge=0ms retry=0ms generate=34189ms validate=0ms intent=SCHOLARSHIP qt=overview follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:41:09,369 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8008ms prompt_chars=3596
+2026-05-13 09:41:29,378 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20009ms prompt_chars=3596
+PIPELINE_TIMING total=49570ms follow_up=0ms rewrite=28017ms analyze=0ms search=1493ms merge=0ms retry=0ms generate=20057ms validate=0ms intent=LEAVE_OF_ABSENCE qt=overview follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:41:58,950 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8008ms prompt_chars=3603
+2026-05-13 09:42:18,956 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20007ms prompt_chars=3603
+PIPELINE_TIMING total=51397ms follow_up=0ms rewrite=28016ms analyze=0ms search=1847ms merge=0ms retry=0ms generate=21532ms validate=0ms intent=GENERAL qt=procedural follow_up=no_history endpoint=sync path=generated
+2026-05-13 09:42:50,370 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma3:4b timeout=8.0s actual=8008ms prompt_chars=3598
+2026-05-13 09:43:10,379 WARNING app.pipeline.query_understanding | [understand-call] TIMEOUT model=gemma4:26b timeout=20.0s actual=20009ms prompt_chars=3598
+PIPELINE_TIMING total=47109ms follow_up=0ms rewrite=28018ms analyze=0ms search=1364ms merge=0ms retry=0ms generate=17725ms validate=0ms intent=LEAVE_OF_ABSENCE qt=factoid follow_up=no_history endpoint=sync path=generated

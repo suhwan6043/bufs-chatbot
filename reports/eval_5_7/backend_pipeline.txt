@@ -1,0 +1,416 @@
+﻿
+2026-05-11 11:00:12,084 [-] INFO backend.routers.chat:chat_sync:879 - understand[rule_fallback] 13056ms intent=GRADUATI
+PIPELINE_TIMING total=47012ms follow_up=0ms rewrite=13056ms analyze=0ms search=1561ms merge=0ms retry=0ms generate=3237
+3ms validate=0ms intent=GRADUATION_REQ qt=factoid follow_up=no_history endpoint=sync path=generated
+2026-05-11 11:00:56,201 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 1649ms intent=COURSE_INFO confide
+2026-05-11 11:01:21,694 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2953ms intent=COURSE_INFO confide
+2026-05-11 11:02:13,186 [-] INFO backend.routers.chat:chat_sync:879 - understand[rule_fallback] 13023ms intent=COURSE_I
+2026-05-11 11:03:13,946 [-] INFO backend.routers.chat:chat_sync:879 - understand[rule_fallback] 13018ms intent=COURSE_I
+2026-05-11 11:03:57,862 [-] INFO backend.routers.chat:chat_sync:879 - understand[rule_fallback] 13028ms intent=SCHEDULE
+PIPELINE_TIMING total=24162ms follow_up=0ms rewrite=1649ms analyze=0ms search=17032ms merge=0ms retry=0ms generate=5478
+ms validate=0ms intent=COURSE_INFO qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=41412ms follow_up=0ms rewrite=2953ms analyze=0ms search=32503ms merge=0ms retry=0ms generate=5953
+ms validate=0ms intent=COURSE_INFO qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=60740ms follow_up=0ms rewrite=13023ms analyze=0ms search=43249ms merge=0ms retry=0ms generate=446
+6ms validate=0ms intent=COURSE_INFO qt=factoid follow_up=no_history endpoint=sync path=generated
+2026-05-11 11:04:11,418 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2626ms intent=GRADE_OPTION confid
+2026-05-11 11:05:05,392 [-] INFO backend.routers.chat:chat_sync:879 - understand[rule_fallback] 13022ms intent=GENERAL 
+2026-05-11 11:05:22,319 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2341ms intent=GRADE_OPTION confid
+2026-05-11 11:06:06,383 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2085ms intent=GRADE_OPTION confid
+2026-05-11 11:06:58,983 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2701ms intent=REREGISTRATION conf
+2026-05-11 11:07:30,935 [-] INFO backend.routers.chat:chat_sync:879 - understand[rule_fallback] 13019ms intent=GRADUATI
+2026-05-11 11:08:10,705 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2808ms intent=GRADUATION_REQ conf
+PIPELINE_TIMING total=43892ms follow_up=0ms rewrite=13018ms analyze=0ms search=28016ms merge=0ms retry=0ms generate=285
+5ms validate=0ms intent=COURSE_INFO qt=overview follow_up=no_history endpoint=sync path=generated
+PIPELINE_TIMING total=23937ms follow_up=0ms rewrite=13028ms analyze=0ms search=2601ms merge=0ms retry=0ms generate=8307
+ms validate=0ms intent=SCHEDULE qt=factoid follow_up=no_history endpoint=sync path=generated
+PIPELINE_TIMING total=43553ms follow_up=0ms rewrite=2626ms analyze=0ms search=1907ms merge=0ms retry=0ms generate=39017
+ms validate=0ms intent=GRADE_OPTION qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=27578ms follow_up=0ms rewrite=13022ms analyze=0ms search=9678ms merge=0ms retry=0ms generate=4876
+ms validate=0ms intent=GENERAL qt=overview follow_up=no_history endpoint=sync path=generated
+PIPELINE_TIMING total=44311ms follow_up=0ms rewrite=2341ms analyze=0ms search=8862ms merge=0ms retry=0ms generate=33106
+ms validate=0ms intent=GRADE_OPTION qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=51954ms follow_up=0ms rewrite=2085ms analyze=0ms search=5310ms merge=0ms retry=0ms generate=44557
+ms validate=0ms intent=GRADE_OPTION qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=21613ms follow_up=0ms rewrite=2701ms analyze=0ms search=5672ms merge=0ms retry=0ms generate=13239
+ms validate=0ms intent=REREGISTRATION qt=reasoning follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=49961ms follow_up=0ms rewrite=13019ms analyze=0ms search=6542ms merge=0ms retry=0ms generate=3039
+8ms validate=0ms intent=GRADUATION_REQ qt=factoid follow_up=no_history endpoint=sync path=generated
+PIPELINE_TIMING total=23280ms follow_up=0ms rewrite=2808ms analyze=0ms search=3754ms merge=0ms retry=0ms generate=16716
+ms validate=0ms intent=GRADUATION_REQ qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=28526ms follow_up=0ms rewrite=13021ms analyze=0ms search=2511ms merge=0ms retry=0ms generate=1299
+1ms validate=0ms intent=GENERAL qt=overview follow_up=no_history endpoint=sync path=generated
+PIPELINE_TIMING total=24347ms follow_up=0ms rewrite=2225ms analyze=0ms search=3954ms merge=0ms retry=0ms generate=18167
+ms validate=0ms intent=LEAVE_OF_ABSENCE qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=20556ms follow_up=0ms rewrite=2358ms analyze=0ms search=4640ms merge=0ms retry=0ms generate=13557
+ms validate=0ms intent=LEAVE_OF_ABSENCE qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=16341ms follow_up=0ms rewrite=2107ms analyze=0ms search=3671ms merge=0ms retry=0ms generate=10561
+ms validate=0ms intent=LEAVE_OF_ABSENCE qt=procedural follow_up=llm:llm endpoint=sync path=generated
+2026-05-11 11:08:44,238 [-] INFO backend.routers.chat:chat_sync:879 - understand[rule_fallback] 13021ms intent=GENERAL 
+2026-05-11 11:09:01,977 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2225ms intent=LEAVE_OF_ABSENCE co
+2026-05-11 11:09:26,481 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2358ms intent=LEAVE_OF_ABSENCE co
+2026-05-11 11:09:46,831 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2107ms intent=LEAVE_OF_ABSENCE co
+2026-05-11 11:10:03,345 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2234ms intent=GRADUATION_REQ conf
+2026-05-11 11:10:23,307 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2079ms intent=GENERAL confidence=
+2026-05-11 11:10:46,117 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2574ms intent=GRADUATION_REQ conf
+2026-05-11 11:11:13,135 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2379ms intent=MAJOR_CHANGE confid
+2026-05-11 11:11:37,244 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2184ms intent=EARLY_GRADUATION co
+2026-05-11 11:12:24,698 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2466ms intent=EARLY_GRADUATION co
+2026-05-11 11:12:46,352 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2322ms intent=EARLY_GRADUATION co
+PIPELINE_TIMING total=20086ms follow_up=0ms rewrite=2234ms analyze=0ms search=6827ms merge=0ms retry=0ms generate=11022
+ms validate=0ms intent=GRADUATION_REQ qt=reasoning follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=22288ms follow_up=0ms rewrite=2079ms analyze=0ms search=1693ms merge=9ms retry=0ms generate=18505
+ms validate=0ms intent=GENERAL qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=27193ms follow_up=0ms rewrite=2574ms analyze=0ms search=5781ms merge=0ms retry=0ms generate=18836
+ms validate=0ms intent=GRADUATION_REQ qt=reasoning follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=24273ms follow_up=0ms rewrite=2379ms analyze=0ms search=2479ms merge=0ms retry=0ms generate=19412
+ms validate=0ms intent=MAJOR_CHANGE qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=47145ms follow_up=0ms rewrite=2184ms analyze=0ms search=9169ms merge=0ms retry=0ms generate=35790
+ms validate=0ms intent=EARLY_GRADUATION qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=21761ms follow_up=0ms rewrite=2466ms analyze=0ms search=5302ms merge=0ms retry=0ms generate=13992
+ms validate=0ms intent=EARLY_GRADUATION qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=39742ms follow_up=0ms rewrite=2322ms analyze=0ms search=14283ms merge=0ms retry=0ms generate=2313
+5ms validate=0ms intent=EARLY_GRADUATION qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=35718ms follow_up=0ms rewrite=2497ms analyze=0ms search=12799ms merge=0ms retry=0ms generate=2041
+9ms validate=0ms intent=LEAVE_OF_ABSENCE qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=15026ms follow_up=0ms rewrite=2352ms analyze=0ms search=8609ms merge=0ms retry=0ms generate=4063m
+s validate=0ms intent=LEAVE_OF_ABSENCE qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=13734ms follow_up=0ms rewrite=2227ms analyze=0ms search=4671ms merge=0ms retry=0ms generate=6834m
+s validate=0ms intent=LEAVE_OF_ABSENCE qt=reasoning follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=13686ms follow_up=0ms rewrite=2300ms analyze=0ms search=4541ms merge=0ms retry=0ms generate=6843m
+s validate=0ms intent=LEAVE_OF_ABSENCE qt=factoid follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=34342ms follow_up=0ms rewrite=2116ms analyze=0ms search=14636ms merge=0ms retry=0ms generate=1758
+8ms validate=0ms intent=EARLY_GRADUATION qt=overview follow_up=llm:llm endpoint=sync path=generated
+2026-05-11 11:13:26,292 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2497ms intent=LEAVE_OF_ABSENCE co
+2026-05-11 11:14:01,906 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2352ms intent=LEAVE_OF_ABSENCE co
+2026-05-11 11:14:16,819 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2227ms intent=LEAVE_OF_ABSENCE co
+2026-05-11 11:14:30,643 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2300ms intent=LEAVE_OF_ABSENCE co
+2026-05-11 11:14:44,180 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2116ms intent=EARLY_GRADUATION co
+2026-05-11 11:15:18,873 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2433ms intent=TRANSCRIPT confiden
+2026-05-11 11:15:28,891 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2126ms intent=EARLY_GRADUATION co
+2026-05-11 11:15:52,030 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2137ms intent=LEAVE_OF_ABSENCE co
+2026-05-11 11:16:15,960 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2547ms intent=LEAVE_OF_ABSENCE co
+2026-05-11 11:16:31,321 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2131ms intent=LEAVE_OF_ABSENCE co
+2026-05-11 11:16:59,368 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2725ms intent=LEAVE_OF_ABSENCE co
+2026-05-11 11:17:41,577 [-] INFO backend.routers.chat:chat_sync:879 - understand[rule_fallback] 13018ms intent=LEAVE_OF
+2026-05-11 11:18:14,684 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2268ms intent=LEAVE_OF_ABSENCE co
+PIPELINE_TIMING total=10302ms follow_up=0ms rewrite=2433ms analyze=0ms search=3842ms merge=0ms retry=0ms generate=4025m
+s validate=0ms intent=TRANSCRIPT qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=23106ms follow_up=0ms rewrite=2126ms analyze=0ms search=1578ms merge=0ms retry=0ms generate=19399
+ms validate=0ms intent=EARLY_GRADUATION qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=23490ms follow_up=0ms rewrite=2137ms analyze=0ms search=8135ms merge=0ms retry=0ms generate=13216
+ms validate=0ms intent=LEAVE_OF_ABSENCE qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=15755ms follow_up=0ms rewrite=2547ms analyze=0ms search=7294ms merge=0ms retry=0ms generate=5913m
+s validate=0ms intent=LEAVE_OF_ABSENCE qt=reasoning follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=27425ms follow_up=0ms rewrite=2131ms analyze=0ms search=4406ms merge=0ms retry=0ms generate=20885
+ms validate=0ms intent=LEAVE_OF_ABSENCE qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=31906ms follow_up=0ms rewrite=2725ms analyze=0ms search=6230ms merge=0ms retry=0ms generate=22948
+ms validate=0ms intent=LEAVE_OF_ABSENCE qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=43814ms follow_up=0ms rewrite=13018ms analyze=0ms search=5692ms merge=0ms retry=0ms generate=2510
+2ms validate=0ms intent=LEAVE_OF_ABSENCE qt=overview follow_up=no_history endpoint=sync path=generated
+PIPELINE_TIMING total=18003ms follow_up=0ms rewrite=2268ms analyze=0ms search=4270ms merge=0ms retry=0ms generate=11463
+ms validate=0ms intent=LEAVE_OF_ABSENCE qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=36698ms follow_up=0ms rewrite=2291ms analyze=0ms search=6212ms merge=0ms retry=0ms generate=28193
+ms validate=0ms intent=SCHOLARSHIP_APPLY qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=32836ms follow_up=0ms rewrite=2414ms analyze=0ms search=5498ms merge=0ms retry=0ms generate=24922
+ms validate=0ms intent=SCHOLARSHIP_QUALIFICATION qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=20168ms follow_up=0ms rewrite=2090ms analyze=0ms search=6365ms merge=0ms retry=0ms generate=11710
+ms validate=0ms intent=CONTACT qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=44735ms follow_up=0ms rewrite=2347ms analyze=0ms search=14486ms merge=0ms retry=0ms generate=2789
+9ms validate=0ms intent=SCHOLARSHIP_APPLY qt=overview follow_up=llm:llm endpoint=sync path=generated
+2026-05-11 11:18:32,721 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2291ms intent=SCHOLARSHIP_APPLY c
+2026-05-11 11:19:09,572 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2414ms intent=SCHOLARSHIP_QUALIFI
+2026-05-11 11:19:42,122 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2090ms intent=CONTACT confidence=
+2026-05-11 11:20:02,575 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2347ms intent=SCHOLARSHIP_APPLY c
+2026-05-11 11:20:47,470 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2469ms intent=ALTERNATIVE confide
+2026-05-11 11:20:56,532 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2108ms intent=SCHOLARSHIP_APPLY c
+2026-05-11 11:21:20,302 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2029ms intent=ALTERNATIVE confide
+2026-05-11 11:21:43,143 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2117ms intent=GRADUATION_REQ conf
+2026-05-11 11:22:03,536 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2350ms intent=COURSE_INFO confide
+2026-05-11 11:22:14,737 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2086ms intent=CONTACT confidence=
+2026-05-11 11:22:30,955 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2152ms intent=COURSE_INFO confide
+PIPELINE_TIMING total=9411ms follow_up=0ms rewrite=2469ms analyze=0ms search=3143ms merge=0ms retry=0ms generate=3797ms
+ validate=0ms intent=ALTERNATIVE qt=factoid follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=23807ms follow_up=0ms rewrite=2108ms analyze=0ms search=3769ms merge=0ms retry=0ms generate=17928
+ms validate=0ms intent=SCHOLARSHIP_APPLY qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=22710ms follow_up=0ms rewrite=2029ms analyze=0ms search=2883ms merge=0ms retry=0ms generate=17796
+ms validate=0ms intent=ALTERNATIVE qt=factoid follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=20121ms follow_up=0ms rewrite=2117ms analyze=0ms search=14663ms merge=0ms retry=0ms generate=3339
+ms validate=0ms intent=GRADUATION_REQ qt=factoid follow_up=llm:llm endpoint=sync path=generated
+2026-05-11 11:23:05,839 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2636ms intent=COURSE_INFO confide
+2026-05-11 11:23:29,787 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 1977ms intent=GENERAL confidence=
+2026-05-11 11:23:40,232 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2015ms intent=GENERAL confidence=
+2026-05-11 11:24:03,705 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2252ms intent=TRANSCRIPT confiden
+2026-05-11 11:24:22,948 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2145ms intent=SCHEDULE confidence
+2026-05-11 11:24:59,410 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2763ms intent=LEAVE_OF_ABSENCE co
+2026-05-11 11:25:29,866 [-] INFO backend.routers.chat:chat_sync:879 - understand[rule_fallback] 12181ms intent=REGISTRA
+2026-05-11 11:25:49,671 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2317ms intent=LEAVE_OF_ABSENCE co
+PIPELINE_TIMING total=11412ms follow_up=0ms rewrite=2350ms analyze=0ms search=5067ms merge=0ms retry=0ms generate=3993m
+s validate=0ms intent=COURSE_INFO qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=0ms follow_up=0ms rewrite=0ms analyze=0ms search=0ms merge=0ms retry=0ms generate=0ms validate=0m
+s intent=CONTACT qt=? follow_up=? endpoint=sync path=contact
+PIPELINE_TIMING total=14924ms follow_up=0ms rewrite=2086ms analyze=0ms search=10205ms merge=0ms retry=0ms generate=2631
+ms validate=0ms intent=CONTACT qt=factoid follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=34377ms follow_up=0ms rewrite=2152ms analyze=0ms search=11642ms merge=0ms retry=0ms generate=2058
+1ms validate=0ms intent=COURSE_INFO qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=24578ms follow_up=0ms rewrite=2636ms analyze=0ms search=2756ms merge=0ms retry=0ms generate=19184
+ms validate=0ms intent=COURSE_INFO qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=10372ms follow_up=0ms rewrite=1977ms analyze=0ms search=4374ms merge=0ms retry=0ms generate=4020m
+s validate=0ms intent=GENERAL qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=23215ms follow_up=0ms rewrite=2015ms analyze=0ms search=2126ms merge=0ms retry=0ms generate=19073
+ms validate=0ms intent=GENERAL qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=19317ms follow_up=0ms rewrite=2252ms analyze=0ms search=2331ms merge=0ms retry=0ms generate=14732
+ms validate=0ms intent=TRANSCRIPT qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=35810ms follow_up=0ms rewrite=2145ms analyze=0ms search=12972ms merge=0ms retry=0ms generate=2069
+1ms validate=0ms intent=SCHEDULE qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=21003ms follow_up=0ms rewrite=2763ms analyze=0ms search=6395ms merge=0ms retry=0ms generate=11844
+ms validate=0ms intent=LEAVE_OF_ABSENCE qt=factoid follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=29637ms follow_up=0ms rewrite=12181ms analyze=0ms search=6733ms merge=0ms retry=0ms generate=1072
+1ms validate=0ms intent=REGISTRATION qt=procedural follow_up=no_history endpoint=sync path=generated
+PIPELINE_TIMING total=8993ms follow_up=0ms rewrite=2317ms analyze=0ms search=2746ms merge=0ms retry=0ms generate=3928ms
+ validate=0ms intent=LEAVE_OF_ABSENCE qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=13285ms follow_up=0ms rewrite=2192ms analyze=0ms search=2163ms merge=0ms retry=0ms generate=8928m
+s validate=0ms intent=LEAVE_OF_ABSENCE qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=13095ms follow_up=0ms rewrite=2243ms analyze=0ms search=2252ms merge=0ms retry=0ms generate=8599m
+s validate=0ms intent=LEAVE_OF_ABSENCE qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=9627ms follow_up=0ms rewrite=2202ms analyze=0ms search=5223ms merge=0ms retry=0ms generate=2200ms
+ validate=0ms intent=LEAVE_OF_ABSENCE qt=factoid follow_up=llm:llm endpoint=sync path=generated
+2026-05-11 11:25:58,573 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2192ms intent=LEAVE_OF_ABSENCE co
+2026-05-11 11:26:11,948 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2243ms intent=LEAVE_OF_ABSENCE co
+2026-05-11 11:26:25,036 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2202ms intent=LEAVE_OF_ABSENCE co
+2026-05-11 11:26:34,616 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2117ms intent=LEAVE_OF_ABSENCE co
+2026-05-11 11:26:54,538 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2203ms intent=REREGISTRATION conf
+2026-05-11 11:27:07,345 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2146ms intent=LEAVE_OF_ABSENCE co
+2026-05-11 11:27:14,924 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2008ms intent=LEAVE_OF_ABSENCE co
+2026-05-11 11:27:24,674 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 1954ms intent=FACILITY confidence
+2026-05-11 11:27:33,684 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2017ms intent=FACILITY confidence
+2026-05-11 11:27:41,703 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2065ms intent=CERTIFICATE confide
+2026-05-11 11:27:59,716 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2345ms intent=CERTIFICATE confide
+PIPELINE_TIMING total=19795ms follow_up=0ms rewrite=2117ms analyze=0ms search=4472ms merge=0ms retry=0ms generate=13204
+ms validate=0ms intent=LEAVE_OF_ABSENCE qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=12827ms follow_up=0ms rewrite=2203ms analyze=0ms search=2871ms merge=0ms retry=0ms generate=7751m
+s validate=0ms intent=REREGISTRATION qt=factoid follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=7680ms follow_up=0ms rewrite=2146ms analyze=0ms search=2640ms merge=0ms retry=0ms generate=2892ms
+ validate=0ms intent=LEAVE_OF_ABSENCE qt=factoid follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=9787ms follow_up=0ms rewrite=2008ms analyze=0ms search=4347ms merge=0ms retry=0ms generate=3429ms
+ validate=0ms intent=LEAVE_OF_ABSENCE qt=factoid follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=8904ms follow_up=0ms rewrite=1954ms analyze=0ms search=1797ms merge=0ms retry=0ms generate=5151ms
+ validate=0ms intent=FACILITY qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=7947ms follow_up=0ms rewrite=2017ms analyze=0ms search=1894ms merge=0ms retry=0ms generate=4033ms
+ validate=0ms intent=FACILITY qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=17723ms follow_up=0ms rewrite=2065ms analyze=0ms search=2506ms merge=0ms retry=0ms generate=13151
+ms validate=0ms intent=CERTIFICATE qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=10808ms follow_up=0ms rewrite=2345ms analyze=0ms search=2699ms merge=0ms retry=0ms generate=5762m
+s validate=0ms intent=CERTIFICATE qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=7874ms follow_up=0ms rewrite=2245ms analyze=0ms search=1803ms merge=0ms retry=0ms generate=3824ms
+ validate=0ms intent=MAJOR_CHANGE qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=18785ms follow_up=0ms rewrite=2118ms analyze=0ms search=2753ms merge=0ms retry=0ms generate=13913
+ms validate=0ms intent=CERTIFICATE qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=8173ms follow_up=0ms rewrite=2078ms analyze=0ms search=1892ms merge=0ms retry=0ms generate=4202ms
+ validate=0ms intent=MAJOR_CHANGE qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=13572ms follow_up=0ms rewrite=2074ms analyze=0ms search=7834ms merge=0ms retry=0ms generate=3662m
+s validate=0ms intent=LEAVE_OF_ABSENCE qt=factoid follow_up=llm:llm endpoint=sync path=generated
+2026-05-11 11:28:10,466 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2245ms intent=MAJOR_CHANGE confid
+2026-05-11 11:28:18,248 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2118ms intent=CERTIFICATE confide
+2026-05-11 11:28:37,002 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2078ms intent=MAJOR_CHANGE confid
+2026-05-11 11:28:45,183 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2074ms intent=LEAVE_OF_ABSENCE co
+2026-05-11 11:28:58,730 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2039ms intent=CERTIFICATE confide
+2026-05-11 11:29:11,764 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2253ms intent=CERTIFICATE confide
+2026-05-11 11:29:20,833 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2144ms intent=CERTIFICATE confide
+2026-05-11 11:29:28,468 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2102ms intent=CERTIFICATE confide
+2026-05-11 11:29:42,415 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2251ms intent=CERTIFICATE confide
+2026-05-11 11:29:57,077 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2148ms intent=GENERAL confidence=
+2026-05-11 11:30:41,132 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2676ms intent=GENERAL confidence=
+2026-05-11 11:31:13,710 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2093ms intent=TRANSCRIPT confiden
+2026-05-11 11:31:40,720 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2488ms intent=GRADUATION_REQ conf
+PIPELINE_TIMING total=12785ms follow_up=0ms rewrite=2039ms analyze=0ms search=2603ms merge=0ms retry=0ms generate=8140m
+s validate=0ms intent=CERTIFICATE qt=factoid follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=9140ms follow_up=0ms rewrite=2253ms analyze=0ms search=2148ms merge=0ms retry=0ms generate=4738ms
+ validate=0ms intent=CERTIFICATE qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=7668ms follow_up=0ms rewrite=2144ms analyze=0ms search=1735ms merge=0ms retry=0ms generate=3786ms
+ validate=0ms intent=CERTIFICATE qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=13774ms follow_up=0ms rewrite=2102ms analyze=0ms search=3590ms merge=0ms retry=0ms generate=8080m
+s validate=0ms intent=CERTIFICATE qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=14727ms follow_up=0ms rewrite=2251ms analyze=0ms search=1871ms merge=0ms retry=0ms generate=10603
+ms validate=0ms intent=CERTIFICATE qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=43504ms follow_up=0ms rewrite=2148ms analyze=0ms search=4276ms merge=0ms retry=0ms generate=37079
+ms validate=0ms intent=GENERAL qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=33128ms follow_up=0ms rewrite=2676ms analyze=0ms search=4420ms merge=0ms retry=0ms generate=26030
+ms validate=0ms intent=GENERAL qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=26588ms follow_up=0ms rewrite=2093ms analyze=0ms search=1582ms merge=0ms retry=0ms generate=22911
+ms validate=0ms intent=TRANSCRIPT qt=factoid follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=27391ms follow_up=0ms rewrite=2488ms analyze=0ms search=10703ms merge=0ms retry=0ms generate=1419
+8ms validate=0ms intent=GRADUATION_REQ qt=reasoning follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=46420ms follow_up=0ms rewrite=2323ms analyze=0ms search=4716ms merge=0ms retry=0ms generate=39379
+ms validate=0ms intent=CERTIFICATE qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=49594ms follow_up=0ms rewrite=2436ms analyze=0ms search=6128ms merge=0ms retry=0ms generate=41028
+ms validate=0ms intent=GRADE_OPTION qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=44377ms follow_up=0ms rewrite=13023ms analyze=0ms search=16166ms merge=0ms retry=0ms generate=151
+86ms validate=0ms intent=REGISTRATION qt=factoid follow_up=no_history endpoint=sync path=generated
+PIPELINE_TIMING total=41976ms follow_up=0ms rewrite=2348ms analyze=0ms search=1747ms merge=0ms retry=0ms generate=37879
+ms validate=0ms intent=GENERAL qt=overview follow_up=llm:llm endpoint=sync path=generated
+2026-05-11 11:32:07,956 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2323ms intent=CERTIFICATE confide
+2026-05-11 11:32:54,518 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2436ms intent=GRADE_OPTION confid
+2026-05-11 11:33:54,710 [-] INFO backend.routers.chat:chat_sync:879 - understand[rule_fallback] 13023ms intent=REGISTRA
+2026-05-11 11:34:28,442 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2348ms intent=GENERAL confidence=
+2026-05-11 11:35:10,607 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2512ms intent=FACILITY confidence
+2026-05-11 11:35:48,079 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2737ms intent=CERTIFICATE confide
+PIPELINE_TIMING total=37218ms follow_up=0ms rewrite=2512ms analyze=0ms search=2667ms merge=0ms retry=0ms generate=32037
+ms validate=0ms intent=FACILITY qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=47254ms follow_up=0ms rewrite=2737ms analyze=0ms search=2488ms merge=0ms retry=0ms generate=42027
+ms validate=0ms intent=CERTIFICATE qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=23085ms follow_up=0ms rewrite=2185ms analyze=0ms search=3608ms merge=0ms retry=0ms generate=17290
+ms validate=0ms intent=FACILITY qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=17890ms follow_up=0ms rewrite=2279ms analyze=0ms search=6821ms merge=0ms retry=0ms generate=8787m
+s validate=0ms intent=FACILITY qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=29370ms follow_up=0ms rewrite=2322ms analyze=0ms search=9633ms merge=0ms retry=0ms generate=17413
+ms validate=0ms intent=SCHEDULE qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=39946ms follow_up=0ms rewrite=2587ms analyze=0ms search=10620ms merge=0ms retry=0ms generate=2673
+6ms validate=0ms intent=SCHEDULE qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=15489ms follow_up=0ms rewrite=2468ms analyze=0ms search=6267ms merge=0ms retry=0ms generate=6751m
+s validate=0ms intent=SCHEDULE qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=23559ms follow_up=0ms rewrite=2173ms analyze=0ms search=14567ms merge=0ms retry=0ms generate=6817
+ms validate=0ms intent=SCHEDULE qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=59709ms follow_up=0ms rewrite=2255ms analyze=0ms search=30429ms merge=0ms retry=0ms generate=2702
+3ms validate=0ms intent=COURSE_INFO qt=overview follow_up=llm:llm endpoint=sync path=generated
+2026-05-11 11:36:34,791 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2185ms intent=FACILITY confidence
+2026-05-11 11:36:57,998 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2279ms intent=FACILITY confidence
+2026-05-11 11:37:15,942 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2322ms intent=SCHEDULE confidence
+2026-05-11 11:37:45,591 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2587ms intent=SCHEDULE confidence
+2026-05-11 11:38:25,438 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2468ms intent=SCHEDULE confidence
+2026-05-11 11:38:40,643 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2173ms intent=SCHEDULE confidence
+2026-05-11 11:39:04,294 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2255ms intent=COURSE_INFO confide
+2026-05-11 11:40:14,804 [-] INFO backend.routers.chat:chat_sync:879 - understand[rule_fallback] 13032ms intent=GENERAL 
+2026-05-11 11:41:24,776 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2490ms intent=GRADUATION_REQ conf
+2026-05-11 11:41:53,616 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2688ms intent=MAJOR_CHANGE confid
+2026-05-11 11:43:26,981 [-] INFO backend.routers.chat:chat_sync:879 - understand[rule_fallback] 13021ms intent=GENERAL 
+2026-05-11 11:43:53,108 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2141ms intent=GRADUATION_REQ conf
+2026-05-11 11:44:35,038 [-] INFO backend.routers.chat:chat_sync:879 - understand[rule_fallback] 13019ms intent=GRADUATI
+2026-05-11 11:45:01,584 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2567ms intent=REGISTRATION_GENERA
+2026-05-11 11:45:16,781 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2201ms intent=REGISTRATION_GENERA
+PIPELINE_TIMING total=38812ms follow_up=0ms rewrite=13032ms analyze=0ms search=3513ms merge=0ms retry=0ms generate=2226
+5ms validate=0ms intent=GENERAL qt=overview follow_up=no_history endpoint=sync path=generated
+2026-05-11 11:45:50,523 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2744ms intent=REGISTRATION_GENERA
+2026-05-11 11:46:09,670 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2183ms intent=REGISTRATION_GENERA
+2026-05-11 11:46:43,452 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2520ms intent=COURSE_INFO confide
+2026-05-11 11:47:01,489 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2186ms intent=EARLY_GRADUATION co
+PIPELINE_TIMING total=28619ms follow_up=0ms rewrite=2490ms analyze=0ms search=6244ms merge=0ms retry=0ms generate=19883
+ms validate=0ms intent=GRADUATION_REQ qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=82999ms follow_up=0ms rewrite=2688ms analyze=0ms search=9753ms merge=0ms retry=0ms generate=70556
+ms validate=0ms intent=MAJOR_CHANGE qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=36980ms follow_up=0ms rewrite=13021ms analyze=0ms search=4374ms merge=0ms retry=0ms generate=1958
+2ms validate=0ms intent=GENERAL qt=procedural follow_up=no_history endpoint=sync path=generated
+PIPELINE_TIMING total=31042ms follow_up=0ms rewrite=2141ms analyze=0ms search=7374ms merge=0ms retry=0ms generate=21525
+ms validate=0ms intent=GRADUATION_REQ qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=36988ms follow_up=0ms rewrite=13019ms analyze=0ms search=8297ms merge=0ms retry=0ms generate=1567
+0ms validate=0ms intent=GRADUATION_REQ qt=factoid follow_up=no_history endpoint=sync path=generated
+PIPELINE_TIMING total=15553ms follow_up=0ms rewrite=2567ms analyze=0ms search=4685ms merge=0ms retry=0ms generate=8298m
+s validate=0ms intent=REGISTRATION_GENERAL qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=33191ms follow_up=0ms rewrite=2201ms analyze=0ms search=5228ms merge=0ms retry=0ms generate=25760
+ms validate=0ms intent=REGISTRATION_GENERAL qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=19695ms follow_up=0ms rewrite=2744ms analyze=0ms search=3109ms merge=0ms retry=0ms generate=13841
+ms validate=0ms intent=REGISTRATION_GENERAL qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=33435ms follow_up=0ms rewrite=2183ms analyze=0ms search=4815ms merge=0ms retry=0ms generate=26435
+ms validate=0ms intent=REGISTRATION_GENERAL qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=18353ms follow_up=0ms rewrite=2520ms analyze=0ms search=3974ms merge=0ms retry=0ms generate=11857
+ms validate=0ms intent=COURSE_INFO qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=14657ms follow_up=0ms rewrite=2186ms analyze=0ms search=5653ms merge=0ms retry=0ms generate=6816m
+s validate=0ms intent=EARLY_GRADUATION qt=factoid follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=19905ms follow_up=0ms rewrite=2127ms analyze=0ms search=5370ms merge=0ms retry=0ms generate=12405
+ms validate=0ms intent=SCHEDULE qt=factoid follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=10887ms follow_up=0ms rewrite=2078ms analyze=0ms search=2579ms merge=0ms retry=0ms generate=6228m
+s validate=0ms intent=CERTIFICATE qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=12188ms follow_up=0ms rewrite=2076ms analyze=0ms search=2225ms merge=0ms retry=0ms generate=7886m
+s validate=0ms intent=CERTIFICATE qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=28372ms follow_up=0ms rewrite=2013ms analyze=0ms search=4722ms merge=0ms retry=0ms generate=21635
+ms validate=0ms intent=FACILITY qt=procedural follow_up=llm:llm endpoint=sync path=generated
+2026-05-11 11:47:16,098 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2127ms intent=SCHEDULE confidence
+2026-05-11 11:47:35,968 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2078ms intent=CERTIFICATE confide
+PIPELINE_TIMING total=18728ms follow_up=0ms rewrite=2309ms analyze=0ms search=13538ms merge=0ms retry=0ms generate=2878
+ms validate=0ms intent=SCHEDULE qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=11260ms follow_up=0ms rewrite=2166ms analyze=0ms search=5129ms merge=0ms retry=0ms generate=3962m
+s validate=0ms intent=TUITION_BENEFIT qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=35324ms follow_up=0ms rewrite=2146ms analyze=0ms search=7176ms merge=0ms retry=0ms generate=26000
+ms validate=0ms intent=GRADUATION_REQ qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=46684ms follow_up=0ms rewrite=2317ms analyze=0ms search=23091ms merge=0ms retry=0ms generate=2127
+4ms validate=0ms intent=COURSE_INFO qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=42350ms follow_up=0ms rewrite=2604ms analyze=0ms search=4840ms merge=0ms retry=0ms generate=34904
+ms validate=0ms intent=GRADUATION_REQ qt=overview follow_up=llm:llm endpoint=sync path=generated
+2026-05-11 11:47:46,865 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2076ms intent=CERTIFICATE confide
+2026-05-11 11:47:59,004 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2013ms intent=FACILITY confidence
+2026-05-11 11:48:27,706 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2309ms intent=SCHEDULE confidence
+2026-05-11 11:48:46,302 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2166ms intent=TUITION_BENEFIT con
+2026-05-11 11:48:57,574 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2146ms intent=GRADUATION_REQ conf
+2026-05-11 11:49:33,079 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2317ms intent=COURSE_INFO confide
+2026-05-11 11:50:20,059 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2604ms intent=GRADUATION_REQ conf
+PIPELINE_TIMING total=10158ms follow_up=0ms rewrite=2671ms analyze=0ms search=2779ms merge=0ms retry=0ms generate=4706m
+s validate=0ms intent=GRADE_OPTION qt=factoid follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=12223ms follow_up=0ms rewrite=2089ms analyze=0ms search=7155ms merge=0ms retry=0ms generate=2978m
+s validate=0ms intent=REGISTRATION_GENERAL qt=factoid follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=15490ms follow_up=0ms rewrite=1988ms analyze=0ms search=7012ms merge=0ms retry=0ms generate=6488m
+s validate=0ms intent=GRADE_OPTION qt=reasoning follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=17490ms follow_up=0ms rewrite=2181ms analyze=0ms search=6064ms merge=0ms retry=0ms generate=9243m
+s validate=0ms intent=COURSE_INFO qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=8548ms follow_up=0ms rewrite=2259ms analyze=0ms search=2952ms merge=0ms retry=0ms generate=3334ms
+ validate=0ms intent=CONTACT qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=52941ms follow_up=0ms rewrite=2043ms analyze=0ms search=13196ms merge=0ms retry=0ms generate=3770
+0ms validate=0ms intent=COURSE_INFO qt=overview follow_up=llm:llm endpoint=sync path=generated
+2026-05-11 11:51:02,484 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2671ms intent=GRADE_OPTION confid
+2026-05-11 11:51:12,071 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2089ms intent=REGISTRATION_GENERA
+2026-05-11 11:51:24,213 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 1988ms intent=GRADE_OPTION confid
+2026-05-11 11:51:39,908 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2181ms intent=COURSE_INFO confide
+2026-05-11 11:51:57,487 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2259ms intent=CONTACT confidence=
+2026-05-11 11:52:05,830 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2043ms intent=COURSE_INFO confide
+2026-05-11 11:52:59,515 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2780ms intent=SCHEDULE confidence
+2026-05-11 11:53:46,486 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2544ms intent=SCHEDULE confidence
+2026-05-11 11:54:00,685 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2214ms intent=TUITION_BENEFIT con
+2026-05-11 11:54:21,710 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2056ms intent=FACILITY confidence
+2026-05-11 11:54:29,493 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 1951ms intent=FACILITY confidence
+2026-05-11 11:54:42,343 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2004ms intent=FACILITY confidence
+2026-05-11 11:54:58,267 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2145ms intent=GRADE_OPTION confid
+2026-05-11 11:55:46,809 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2458ms intent=GRADUATION_REQ conf
+PIPELINE_TIMING total=47197ms follow_up=0ms rewrite=2780ms analyze=0ms search=14417ms merge=0ms retry=0ms generate=2999
+7ms validate=0ms intent=SCHEDULE qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=14520ms follow_up=0ms rewrite=2544ms analyze=0ms search=7870ms merge=0ms retry=0ms generate=4104m
+s validate=0ms intent=SCHEDULE qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=21159ms follow_up=0ms rewrite=2214ms analyze=0ms search=14467ms merge=0ms retry=0ms generate=4476
+ms validate=0ms intent=TUITION_BENEFIT qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=7860ms follow_up=0ms rewrite=2056ms analyze=0ms search=1969ms merge=0ms retry=0ms generate=3833ms
+ validate=0ms intent=FACILITY qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=12772ms follow_up=0ms rewrite=1951ms analyze=0ms search=2950ms merge=0ms retry=0ms generate=7869m
+s validate=0ms intent=FACILITY qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=15773ms follow_up=0ms rewrite=2004ms analyze=0ms search=8133ms merge=0ms retry=0ms generate=5634m
+s validate=0ms intent=FACILITY qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=48210ms follow_up=0ms rewrite=2145ms analyze=0ms search=1892ms merge=0ms retry=0ms generate=44171
+ms validate=0ms intent=GRADE_OPTION qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=56617ms follow_up=0ms rewrite=2458ms analyze=0ms search=7529ms merge=0ms retry=0ms generate=46627
+ms validate=0ms intent=GRADUATION_REQ qt=overview follow_up=llm:llm endpoint=sync path=generated
+2026-05-11 11:56:43,779 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2783ms intent=CONTACT confidence=
+PIPELINE_TIMING total=10539ms follow_up=0ms rewrite=2783ms analyze=0ms search=3213ms merge=0ms retry=0ms generate=4540m
+s validate=0ms intent=CONTACT qt=factoid follow_up=llm:llm endpoint=sync path=generated
+2026-05-11 11:56:53,665 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2123ms intent=FACILITY confidence
+2026-05-11 11:57:16,649 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2439ms intent=SCHEDULE confidence
+2026-05-11 11:58:01,521 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2535ms intent=GENERAL confidence=
+2026-05-11 12:00:02,000 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2993ms intent=REGISTRATION_GENERA
+2026-05-11 12:02:12,048 [-] INFO backend.routers.chat:chat_sync:879 - understand[rule_fallback] 13022ms intent=GRADUATI
+2026-05-11 12:04:12,056 [-] INFO backend.routers.chat:chat_sync:879 - understand[rule_fallback] 13020ms intent=REGISTRA
+2026-05-11 12:05:29,426 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2997ms intent=REREGISTRATION conf
+PIPELINE_TIMING total=22656ms follow_up=0ms rewrite=2123ms analyze=0ms search=1528ms merge=0ms retry=0ms generate=19003
+ms validate=0ms intent=FACILITY qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=44768ms follow_up=0ms rewrite=2439ms analyze=0ms search=14660ms merge=0ms retry=0ms generate=2766
+7ms validate=0ms intent=SCHEDULE qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=143802ms follow_up=0ms rewrite=2993ms analyze=0ms search=10405ms merge=0ms retry=0ms generate=130
+402ms validate=0ms intent=REGISTRATION_GENERAL qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=143783ms follow_up=0ms rewrite=13022ms analyze=0ms search=10750ms merge=0ms retry=0ms generate=12
+0009ms validate=0ms intent=GRADUATION_REQ qt=procedural follow_up=no_history endpoint=sync path=generated
+PIPELINE_TIMING total=401358ms follow_up=0ms rewrite=2535ms analyze=0ms search=1749ms merge=0ms retry=0ms generate=3970
+71ms validate=0ms intent=GENERAL qt=overview follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=87377ms follow_up=0ms rewrite=13020ms analyze=0ms search=10703ms merge=0ms retry=0ms generate=636
+52ms validate=0ms intent=REGISTRATION qt=factoid follow_up=no_history endpoint=sync path=generated
+PIPELINE_TIMING total=26317ms follow_up=0ms rewrite=2997ms analyze=0ms search=6055ms merge=0ms retry=0ms generate=17263
+ms validate=0ms intent=REREGISTRATION qt=procedural follow_up=llm:llm endpoint=sync path=generated
+PIPELINE_TIMING total=4696ms follow_up=0ms rewrite=2585ms analyze=0ms search=2110ms merge=0ms retry=0ms generate=0ms va
+lidate=0ms intent=GENERAL qt=overview follow_up=llm:llm endpoint=sync path=cached
+2026-05-11 12:06:36,502 [-] INFO backend.routers.chat:chat_sync:879 - understand[llm] 2585ms intent=GENERAL confidence=
+
+
