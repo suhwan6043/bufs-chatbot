@@ -98,3 +98,21 @@ def test_long_query_with_subject_not_follow_up():
         _hist([("장학금?", "...")]),
     )
     assert sig.is_follow_up is False
+
+
+# ── 조사+구두점 바로 종료 케이스 (회귀 방지) ──
+
+def test_topic_particle_ending_with_question_mark_not_follow_up():
+    # "전공은?" — 은 뒤 공백 없이 ? 종료. 주어 있으므로 follow-up 아님.
+    sig = detect("전공은?", _hist([("장학금?", "...")]))
+    assert sig.is_follow_up is False
+
+def test_topic_particle_variants_not_follow_up():
+    for q in ("복수전공은?", "수강신청은?", "학점은?", "휴학은?"):
+        sig = detect(q, _hist([("장학금?", "...")]))
+        assert sig.is_follow_up is False, f"'{q}' should not be follow-up"
+
+def test_elliptic_with_topic_still_follow_up():
+    # "그럼 신청은?" — 생략 접속사 "그럼" → rule 4 우선 적용 → follow-up
+    sig = detect("그럼 신청은?", _hist([("자격?", "...")]))
+    assert sig.is_follow_up is True

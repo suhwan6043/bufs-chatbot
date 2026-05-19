@@ -66,9 +66,9 @@ def _has_subject_ko(text: str) -> bool:
     한국어 주어 존재 휴리스틱.
 
     조사 "은/는/이/가/께서" + 선행 2자 이상 체언이 있으면 주어로 본다.
-    완벽한 파싱은 아니지만 follow-up 감지용으로 충분.
+    후행 문자: 공백·문장부호·문자열 끝 모두 허용 ("전공은?", "학점은" 등 지원).
     """
-    if re.search(r"[가-힣A-Za-z0-9]{2,}(은|는|이|가|께서)\s", text):
+    if re.search(r"[가-힣A-Za-z0-9]{2,}(은|는|이|가|께서)(?=\s|[?!.,]|$)", text):
         return True
     return False
 
