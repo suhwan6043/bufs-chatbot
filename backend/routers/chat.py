@@ -736,6 +736,13 @@ async def chat_stream(
                vector_n=len(search_results.get("vector_results", [])),
                graph_n=len(search_results.get("graph_results", [])),
                elapsed_ms=_ms_search)
+        # 검색 후보 상세 (DEBUG일 때만, 사용자 요청)
+        from app.logging.io_logger import log_candidates as _logc, is_debug as _dbg
+        if _dbg():
+            _logc("router-vector", sid, search_results.get("vector_results", []),
+                  label="vec", max_show=10)
+            _logc("router-graph", sid, search_results.get("graph_results", []),
+                  label="grp", max_show=5)
 
         # Stage 3: 컨텍스트 병합
         _t3 = time.monotonic()
@@ -1046,6 +1053,7 @@ async def chat_stream(
         _ms_val = int((time.monotonic() - _t6) * 1000)
         log_io("validator", "OUT", sid=sid,
                passed=bool(_val_passed), warnings=len(_val_warnings),
+               warnings_text=f"'{' | '.join(_val_warnings)[:200]}'" if _val_warnings else "''",
                elapsed_ms=_ms_val)
 
         # 연락처 꼬리말
@@ -1218,6 +1226,12 @@ async def chat_sync(
            search_q=f"'{_search_query[:80]}'", intent=analysis.intent.value if analysis.intent else "?")
     search_results = router_inst.route_and_search(_search_query, analysis)
     _ms_search = int((time.monotonic() - _t4) * 1000)
+    from app.logging.io_logger import log_candidates as _logc, is_debug as _dbg
+    if _dbg():
+        _logc("router-vector", sid, search_results.get("vector_results", []),
+              label="vec", max_show=10)
+        _logc("router-graph", sid, search_results.get("graph_results", []),
+              label="grp", max_show=5)
     log_io("router", "OUT", sid=sid,
            vector_n=len(search_results.get("vector_results", [])),
            graph_n=len(search_results.get("graph_results", [])),
@@ -1445,6 +1459,7 @@ async def chat_sync(
     _ms_val = int((time.monotonic() - _t7) * 1000)
     log_io("validator", "OUT", sid=sid,
            passed=bool(_val_passed), warnings=len(_val_warnings),
+           warnings_text=f"'{' | '.join(_val_warnings)[:200]}'" if _val_warnings else "''",
            elapsed_ms=_ms_val)
 
     # 연락처 꼬리말

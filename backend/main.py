@@ -70,6 +70,27 @@ async def lifespan(app: FastAPI):
     init_db()
     init_all()
     logger.info("파이프라인 초기화 완료. 서버 준비됨.")
+
+    # 5/19 startup ENV 메타 1회 출력 — 단위테스트 재현성 + 회귀 비교용
+    try:
+        from app.config import settings
+        print("=" * 72, flush=True)
+        print("[ENV] BUFS chatbot backend startup metadata", flush=True)
+        print(f"[ENV] llm_model         {settings.llm.model}", flush=True)
+        print(f"[ENV] llm_base_url      {settings.llm.base_url}", flush=True)
+        print(f"[ENV] llm_api_type      {settings.llm.api_type}", flush=True)
+        print(f"[ENV] reranker_model    {settings.reranker.model_name} top_k={settings.reranker.top_k} candidate_k={settings.reranker.candidate_k}", flush=True)
+        print(f"[ENV] chroma_persist    {settings.chroma.persist_dir} collection={settings.chroma.collection_name}", flush=True)
+        print(f"[ENV] understand        enabled={settings.conversation.understanding_enabled} primary={settings.conversation.understand_model or '(rewrite default)'} timeout={settings.conversation.understand_timeout_sec}s fallback_timeout={settings.conversation.understand_fallback_timeout_sec}s", flush=True)
+        print(f"[ENV] ko_prompt         version={os.getenv('KO_PROMPT_VERSION', 'v1')}", flush=True)
+        print(f"[ENV] direct_answer     bypass_llm={settings.pipeline.direct_answer_bypass_llm}", flush=True)
+        print(f"[ENV] reranker_enabled  {settings.reranker.enabled}", flush=True)
+        print(f"[ENV] log_level         {os.getenv('LOG_LEVEL', 'INFO')}", flush=True)
+        print(f"[ENV] llm_max_concurrent {settings.llm.max_concurrent}", flush=True)
+        print("=" * 72, flush=True)
+    except Exception as e:
+        logger.warning("ENV 메타 출력 실패: %s", e)
+
     yield
     logger.info("FastAPI 서버 종료.")
 
