@@ -93,7 +93,21 @@ class Reranker:
         Returns:
             재순위화된 SearchResult 리스트
         """
+        # 5/19 IN/OUT 로그 (docker logs 실시간 가시화)
+        import time as _time
+        from app.logging.io_logger import log_io, log_candidates, is_debug
+        _t = _time.monotonic()
+        _top_k_req = top_k or settings.reranker.top_k
+        log_io("reranker", "IN", candidates=len(results), top_k=_top_k_req,
+               candidate_k=settings.reranker.candidate_k,
+               model=settings.reranker.model_name,
+               asks_url=bool(analysis and analysis.entities.get("asks_url")))
+        if is_debug():
+            log_candidates("reranker", None, results, label="cand-in", max_show=30)
+
         if not results:
+            log_io("reranker", "OUT", selected=0, reason="empty_input",
+                   elapsed_ms=int((_time.monotonic() - _t) * 1000))
             return results
 
         top_k = top_k or settings.reranker.top_k
@@ -206,4 +220,14 @@ class Reranker:
             relative_threshold,
             effective_threshold,
         )
+
+        # 5/19 OUT 로그
+        log_io("reranker", "OUT",
+               selected=len(reranked), rejected=len(results) - len(reranked),
+               top_score=round(top_score, 4),
+               cutoff_rel=round(relative_threshold, 4),
+               cutoff_eff=round(effective_threshold, 4),
+               elapsed_ms=int((_time.monotonic() - _t) * 1000))
+        if is_debug():
+            log_candidates("reranker", None, reranked, label="cand-out", max_show=10)
         return reranked
