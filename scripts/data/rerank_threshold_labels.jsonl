@@ -1,0 +1,23 @@
+{"idx": 1, "label": "correct", "question": "졸업학점 알려줘", "answer": "2023학번 내국인 학생의 졸업학점은 120학점입니다.", "canonical_q": "졸업학점이 몇 학점인가요?", "note": "일반 Q + 기본 학번 프로필 답변"}
+{"idx": 2, "label": "partial", "question": "졸업 요건", "answer": "2023학번 내국인 학생의 졸업학점은 120학점입니다.", "canonical_q": "졸업학점이 몇 학점인가요?", "note": "Q는 요건 전체, A는 학점만"}
+{"idx": 3, "label": "correct", "question": "수강신청 기간", "answer": "- 수강신청_1학년: 2026년 2월 9일 ... ", "canonical_q": "수강신청 일정이 어떻게 되나요?", "note": "직접 매칭"}
+{"idx": 4, "label": "correct", "question": "졸업요건 중 전공과 교양 기준 알려줘", "answer": "2023학번 내국인 졸업요건: 졸업학점 120, 교양 30 ...", "canonical_q": "졸업요건이 어떻게 되나요?", "note": "다항목 cover"}
+{"idx": 5, "label": "correct", "question": "졸업학점 영역별로 알려줘", "answer": "2023학번 내국인 졸업요건: 졸업학점 120, 교양 30 ...", "canonical_q": "졸업요건이 어떻게 되나요?", "note": "영역별 cover"}
+{"idx": 6, "label": "partial", "question": "수강신청 일정 알려줘", "answer": "[주요 학사일정] 장바구니, 개강 ...", "canonical_q": "학사일정이 어떻게 되나요?", "note": "수강신청 일정 ≠ 학사일정 전체"}
+{"idx": 7, "label": "correct", "question": "계절학기 학점 제한 알려줘", "answer": "계절학기 학점 제한은 학번에 관계없이 ...", "canonical_q": "계절학기 학점 제한이 어떻게 되나요?", "note": "직접 매칭"}
+{"idx": 8, "label": "correct", "question": "중간고사 기간 언제야?", "answer": "중간고사 기간은 2026년 4월 20일부터 4월 24일까지입니다.", "canonical_q": "중간고사 기간이 언제인가요?", "note": "직접 매칭"}
+{"idx": 9, "label": "partial", "question": "학사 관련 자주 묻는 질문을 알려줘", "answer": "1. [학적] 휴학 및 복학 신청 ...", "canonical_q": "휴복학 신청 기간과 방법이 어떻게 되나요?", "note": "Q는 FAQ 개요, A는 한 FAQ 본문"}
+{"idx": 10, "label": "correct", "question": "학사일정 알려줘", "answer": "[주요 학사일정] 장바구니, 개강 ...", "canonical_q": "학사일정이 어떻게 되나요?", "note": "직접 매칭"}
+{"idx": 11, "label": "correct", "question": "이번 학기 주요 학사일정을 알려줘", "answer": "[주요 학사일정] 장바구니, 개강 ...", "canonical_q": "학사일정이 어떻게 되나요?", "note": "직접 매칭"}
+{"idx": 12, "label": "correct", "question": "수강신청 날짜 알려줘", "answer": "수강신청_1학년: 2026년 2월 9일 ...", "canonical_q": "수강신청 일정이 어떻게 되나요?", "note": "직접 매칭"}
+{"idx": 13, "label": "partial", "question": "재수강 후보 2과목 (6학점) — B0 이하 성적 과목 — 평점 향상·졸업 학점 영향 검토 필요", "answer": "재수강은 C+이하 과목만 가능합니다. 재수강 후 받을 수 있는 최고 성적은 A입니다.", "canonical_q": "재수강 가능 기준이 뭔가요?", "note": "구체 케이스 vs 일반 규칙"}
+{"idx": 14, "label": "partial", "question": "재수강 후보 3과목 (9학점) — B0 이하 성적 과목 — 평점 향상·졸업 학점 영향 검토 필요", "answer": "재수강은 C+이하 과목만 가능합니다. 재수강 후 받을 수 있는 최고 성적은 A입니다.", "canonical_q": "재수강 가능 기준이 뭔가요?", "note": "구체 케이스 vs 일반 규칙"}
+{"idx": 15, "label": "wrong", "question": "졸업 학점 요건 충족 — 총 131/130학점 취득 완료. 졸업인증·졸업시험 등 개별 요건은 학사지원팀 확인.", "answer": "2023학번 내국인 학생의 졸업학점은 120학점입니다.", "canonical_q": "졸업학점이 몇 학점인가요?", "note": "PR #54 — 131/130 충족 확인에 120학점 기준 반환"}
+{"idx": 16, "label": "partial", "question": "4학년 2학기 이수중인데 졸업까지 3학점이 모자릅니다 이다음 계절학기를 듣고나서 졸업이 가능할까요?", "answer": "계절학기 한 학기에 최대 6학점까지 취득 가능합니다. 졸업까지 최대 24학점까지 인정됩니다.", "canonical_q": "계절학기 학점 제한이 어떻게 되나요?", "note": "가능 여부 직접 답 없음"}
+{"idx": 17, "label": "correct", "question": "수강신청이 아니라 휴학이라니까요", "answer": "휴학생은 수강신청이 불가합니다. 수강신청을 하려면 먼저 복학 신청이 필요합니다.", "canonical_q": "휴학생도 수강신청이 가능한가요?", "note": "follow-up clarification에 적절 응답"}
+{"idx": 18, "label": "wrong", "question": "휴학을 정규학기 3/4 이후에 하려고 하는데 입영날짜가 3/4선 이후이기 때문이다. 가능한다?", "answer": "온라인 휴/복학 신청 기간은 2026년 7월 6일부터 8월 30일까지입니다.", "canonical_q": "휴복학 신청 기간이 언제인가요?", "note": "PR #75 — yes/no 질문에 기간 답변"}
+{"idx": 19, "label": "wrong", "question": "이번학기 언제까지 휴학가능해요?", "answer": "온라인 휴/복학 신청 기간은 2026년 7월 6일부터 8월 30일까지입니다.", "canonical_q": "휴복학 신청 기간이 언제인가요?", "note": "PR #106 — 의미 모호"}
+{"idx": 20, "label": "wrong", "question": "재입학 언제해요?", "answer": "온라인 휴/복학 신청 기간은 2026년 7월 6일부터 8월 30일까지입니다.", "canonical_q": "휴복학 신청 기간이 언제인가요?", "note": "PR #114 — 토픽 다름 (재입학 vs 휴복학)"}
+{"idx": 21, "label": "partial", "question": "학생증", "answer": "1. 재발급 신청 장소: 대학본부 1층 학사지원팀 ...", "canonical_q": "학생증 재발급은 어디서 하나요?", "note": "Q는 학생증 전반, A는 재발급만"}
+{"idx": 22, "label": "partial", "question": "계절학기", "answer": "계절학기는 추가 수강신청 기간은 없으나 ...", "canonical_q": "계절학기 추가 수강신청이 가능한가요?", "note": "Q는 계절학기 전반, A는 정정기간만"}
+{"idx": 23, "label": "partial", "question": "계절학기가 뭐야", "answer": "계절학기는 추가 수강신청 기간은 없으나 ...", "canonical_q": "계절학기 추가 수강신청이 가능한가요?", "note": "Q는 정의 요청, A는 운영"}

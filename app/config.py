@@ -53,6 +53,9 @@ class LLMConfig:
     timeout: int = int(_env_llm("LLM_TIMEOUT", "OLLAMA_TIMEOUT", "60"))
     response_cache_ttl_seconds: int = int(os.getenv("LLM_RESPONSE_CACHE_TTL", "3600"))
     response_cache_max_entries: int = int(os.getenv("LLM_RESPONSE_CACHE_MAX_SIZE", "256"))
+    # 동시 LLM 스트리밍 상한 (백엔드 측 백프레셔). Ollama OLLAMA_NUM_PARALLEL과
+    # 일치시키는 것이 권장 (예: 12GB VRAM에서 둘 다 2). 초과 요청은 큐에서 대기.
+    max_concurrent: int = int(os.getenv("LLM_MAX_CONCURRENT", "2"))
     # "ollama" → 네이티브 /api/chat (think:false 실제 동작), "openai" → /v1/chat/completions
     api_type: str = os.getenv("LLM_API_TYPE", "openai")
     # P1.1 픽스(2026-05-18): 평가 재현성용 seed. 미설정(None)이면 LLM 기본 비결정성 유지.
@@ -249,6 +252,16 @@ class PipelineConfig:
         "DIRECT_ANSWER_BYPASS_LLM", "false"
     ).strip().lower() in ("1", "true", "yes")
 
+    # ── direct_answer bypass 게이트 (2026-05-13) ──────────────────
+    # context_merger의 direct_answer 채택 시 CrossEncoder raw logit이 이 임계치
+    # 미만이면 거부 → LLM 경로로 위임.
+    # 운영 로그 23쌍 실측(scripts/measure_rerank_bypass_threshold.py) 기반:
+    #   - WRONG p75=0.627, mean=0.215  /  CORRECT min=0.276, mean=0.701
+    #   - 임계치 0.20: WRONG 3/4 차단, CORRECT 10/10 통과, PARTIAL 2/9 통과
+    # PARTIAL은 LLM 경유가 안전하므로 차단 다수 정상 거동.
+    rerank_bypass_threshold: float = float(
+        os.getenv("RERANK_BYPASS_THRESHOLD", "0.20")
+    )
 
 @dataclass
 class TranscriptRulesConfig:
