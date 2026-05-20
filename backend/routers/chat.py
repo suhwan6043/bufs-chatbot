@@ -8,6 +8,7 @@ chat_app.py:generate_response_stream() (1701~1914줄) 로직을 1:1 이식.
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 from typing import AsyncGenerator, Optional
@@ -564,6 +565,32 @@ async def chat_stream(
         _t2 = time.monotonic()
         search_results = router_inst.route_and_search(_search_query, analysis)
         _ms_search = int((time.monotonic() - _t2) * 1000)
+
+        # ── 실험: FAQ 비활성 토글 — env FAQ_DISABLED=1 또는 헤더 X-FAQ-Disabled: 1 ──
+        # 매 요청마다 평가되어 백엔드 재시작 없이 즉시 효과 (2026-05-19).
+        # FAQ가 노이즈인지 검증용.
+        _faq_disabled = (
+            os.getenv("FAQ_DISABLED", "").lower() in ("1", "true", "yes", "on")
+            or request.headers.get("X-FAQ-Disabled", "").lower() in ("1", "true", "yes", "on")
+        )
+        if _faq_disabled:
+            def _is_faq(r):
+                m = r.metadata or {}
+                return m.get("doc_type") == "faq" or m.get("node_type") == "FAQ"
+            _orig_v = len(search_results.get("vector_results") or [])
+            _orig_g = len(search_results.get("graph_results") or [])
+            search_results["vector_results"] = [
+                r for r in (search_results.get("vector_results") or []) if not _is_faq(r)
+            ]
+            search_results["graph_results"] = [
+                r for r in (search_results.get("graph_results") or []) if not _is_faq(r)
+            ]
+            logger.info(
+                "[faq-disabled] sid=%s vector=%d→%d graph=%d→%d",
+                _sid_short, _orig_v, len(search_results["vector_results"]),
+                _orig_g, len(search_results["graph_results"]),
+            )
+
         # ── TRACE: [router-OUT] (vector/graph 검색 후보 + 상위 점수) ──
         _vr = search_results.get("vector_results") or []
         _gr = search_results.get("graph_results") or []
@@ -761,7 +788,7 @@ async def chat_stream(
         logger.info(
             "[generator-IN] sid=%s model=%s prompt_ctx_chars=%d intent=%s qt=%s lang=%s "
             "history_turns=%d search_n=%d notice_urls=%d pdf_pages=%s",
-            _sid_short, settings.llm.model_name,
+            _sid_short, settings.llm.model,
             len(merged.formatted_context or ""),
             analysis.intent.value if analysis.intent else "?",
             analysis.question_type.value if analysis.question_type else "?",
@@ -1119,6 +1146,30 @@ async def chat_sync(
     _t4 = time.monotonic()
     search_results = router_inst.route_and_search(_search_query, analysis)
     _ms_search = int((time.monotonic() - _t4) * 1000)
+
+    # ── 실험: FAQ 비활성 토글 — env 또는 헤더 (sync path) ──
+    _faq_disabled = (
+        os.getenv("FAQ_DISABLED", "").lower() in ("1", "true", "yes", "on")
+        or request.headers.get("X-FAQ-Disabled", "").lower() in ("1", "true", "yes", "on")
+    )
+    if _faq_disabled:
+        _sid_short_sync = sid[:8] if sid else "-"
+        def _is_faq(r):
+            m = r.metadata or {}
+            return m.get("doc_type") == "faq" or m.get("node_type") == "FAQ"
+        _orig_v = len(search_results.get("vector_results") or [])
+        _orig_g = len(search_results.get("graph_results") or [])
+        search_results["vector_results"] = [
+            r for r in (search_results.get("vector_results") or []) if not _is_faq(r)
+        ]
+        search_results["graph_results"] = [
+            r for r in (search_results.get("graph_results") or []) if not _is_faq(r)
+        ]
+        logger.info(
+            "[faq-disabled] sid=%s vector=%d→%d graph=%d→%d (sync)",
+            _sid_short_sync, _orig_v, len(search_results["vector_results"]),
+            _orig_g, len(search_results["graph_results"]),
+        )
     _t5 = time.monotonic()
     merged = merger.merge(
         vector_results=search_results["vector_results"],
@@ -1230,7 +1281,7 @@ async def chat_sync(
     logger.info(
         "[generator-IN] sid=%s model=%s prompt_ctx_chars=%d intent=%s qt=%s lang=%s "
         "history_turns=%d search_n=%d notice_urls=%d pdf_pages=%s",
-        _sid_short, settings.llm.model_name,
+        _sid_short, settings.llm.model,
         len(merged.formatted_context or ""),
         analysis.intent.value if analysis.intent else "?",
         analysis.question_type.value if analysis.question_type else "?",
@@ -1450,8 +1501,12 @@ async def get_faq_by_id(faq_id: str):
         except Exception:
             return []
 
-    items = _load(Path(settings.admin_faq.academic_faq_path)) + _load(
-        Path(settings.admin_faq.admin_faq_path)
+    # codex P1: library/취업/외국학생지원팀 등 별도 도메인 FAQ까지 조회 대상에 포함.
+    # 라이브러리 FAQ 코퍼스 상세 조회가 누락되던 회귀 차단.
+    items = (
+        _load(Path(settings.admin_faq.academic_faq_path))
+        + _load(Path(settings.admin_faq.admin_faq_path))
+        + _load(Path(settings.admin_faq.library_faq_path))
     )
     for it in items:
         if it.get("id") == faq_id:

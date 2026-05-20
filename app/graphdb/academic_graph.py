@@ -1997,9 +1997,20 @@ class AcademicGraph:
             answer = " ".join(answer_parts) if answer_parts else ""
             return [self._make_direct_result("\n".join(lines), answer, score=1.3)]
 
-        # 수강신청 사이트/URL 질문
+        # 수강신청 사이트/URL 질문 — 단, 트러블슈팅 의도면 URL 단락 회피.
+        # codex P2: "로그인이 안 돼" + "사이트" 류 케이스에서 URL만 반환되어
+        # 문제 해결 안내가 누락되던 회귀 차단.
         q_norm = self._normalize_text(question)
-        if any(kw in q_norm for kw in ("사이트", "주소", "홈페이지", "url")):
+        _TROUBLESHOOTING_KW = (
+            "안돼", "안 돼", "안되", "안 되", "안됨", "안 됨",
+            "오류", "에러", "error", "실패", "실패해", "안열",
+            "안열려", "안 열려", "막혀", "막힘", "접속불가",
+            "접속 안", "장애", "되지 않", "되지않", "처리되지",
+            "처리 되지", "왜", "어떻게 해", "방법을", "해결",
+            "문제", "안나와", "안 나와",
+        )
+        _is_troubleshoot = any(kw in q_norm for kw in _TROUBLESHOOTING_KW)
+        if not _is_troubleshoot and any(kw in q_norm for kw in ("사이트", "주소", "홈페이지", "url")):
             url = rule.get("수강신청사이트", "")
             if url:
                 answer = f"수강신청 사이트 주소는 {url} 입니다."

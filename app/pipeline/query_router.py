@@ -355,11 +355,13 @@ class QueryRouter:
         """
         # EARLY_GRADUATION: 학번 없어도 일반 자격·일정 안내 가능
         # SCHOLARSHIP: 장학금 정보는 학번 무관하게 조회 가능
+        # COURSE_INFO: 익명 첫턴 ("과목이 안 보여요" 등) FAQ fallback 보존
         no_id_intents = (
             Intent.SCHEDULE, Intent.ALTERNATIVE,
             Intent.REGISTRATION, Intent.EARLY_GRADUATION,
             Intent.SCHOLARSHIP, Intent.LEAVE_OF_ABSENCE,
             Intent.GRADUATION_REQ, Intent.MAJOR_CHANGE,
+            Intent.COURSE_INFO,  # 익명 사용자 강의·과목 FAQ 탐색 (codex P1)
             Intent.GENERAL,  # FAQ 검색용 — 학번 없어도 FAQ 탐색 필요
         )
 
