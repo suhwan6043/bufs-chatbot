@@ -81,8 +81,18 @@ def detect_cohort(text: str) -> Tuple[int, int]:
 
 
 def make_chunk_id(source_file: str, page_num: int, suffix: str, text: str) -> str:
-    """중복 방지용 청크 ID를 생성합니다."""
-    content = f"{source_file}:{page_num}:{suffix}:{text[:50]}"
+    """중복 방지용 청크 ID를 생성합니다.
+
+    P0.3 픽스(2026-05-18): 이전엔 ``text[:50]`` 을 ID 결정에 사용해 같은 prefix 50자를
+    공유하는 청크(다학번 표 반복 행, 섹션 머리말 반복 등) 가 ChromaDB upsert 시
+    덮어쓰여 데이터가 조용히 소실됐다. 텍스트 전체의 SHA256 해시를 입력에 반영하여
+    동일 (source, page, suffix) 라도 텍스트가 다르면 다른 ID 가 나오도록 보장한다.
+
+    형식·길이는 MD5 32자 hex 그대로 유지 — 기존 ChromaDB·코드 호환.
+    같은 (source, page, suffix, text) 입력은 항상 같은 ID 반환 (증분 인제스트 결정성).
+    """
+    text_digest = hashlib.sha256((text or "").encode("utf-8")).hexdigest()
+    content = f"{source_file}:{page_num}:{suffix}:{text_digest}"
     return hashlib.md5(content.encode()).hexdigest()
 
 

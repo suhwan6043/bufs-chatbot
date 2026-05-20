@@ -6,13 +6,50 @@ CAMCHAT FastAPI 백엔드 — 앱 팩토리.
 
 import logging
 from contextlib import asynccontextmanager
+from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
+
+from backend.trace_context import TraceFilter
 
 # 2026-04-28 진단: lifespan init_all() 흐름 가시화 — uvicorn은 자체 logger만 등록하므로
 # 우리 logger.info는 default로 silenced. force=True로 root handler 강제 설치.
+#
+# 2026-05-09: 영속 파일 로깅 추가.
+#   - StreamHandler: stdout (기존 docker logs와 동일 — 컨테이너 재시작 시 손실)
+#   - TimedRotatingFileHandler: data/logs/backend/app.log (호스트 볼륨 마운트로 영구 보존)
+#     매일 자정 회전 + 30일치 보존. 함수명·라인번호 포함.
+#   compose의 volume `../data:/app/data` 마운트로 호스트 bufs-chatbot/data/logs/backend/ 에 저장됨.
+#
+# 2026-05-10: 요청 단위 trace_id 자동 prefix.
+#   format에 [%(trace_id)s] 포함 — chat 라우터에서 set_trace_id() 호출하면 같은 요청의
+#   모든 logger 출력에 동일 ID 박힘. `grep <8자리>`로 한 요청 흐름 통째 재구성 가능.
+#   StreamHandler·FileHandler 양쪽 모두 TraceFilter 부착.
+_TRACE_FMT = "%(asctime)s [%(trace_id)s] %(levelname)s %(name)s:%(funcName)s:%(lineno)d - %(message)s"
+
+_trace_filter = TraceFilter()
+
+_LOG_DIR = Path("data/logs/backend")
+_LOG_DIR.mkdir(parents=True, exist_ok=True)
+_file_handler = TimedRotatingFileHandler(
+    _LOG_DIR / "app.log",
+    when="midnight",
+    backupCount=30,
+    encoding="utf-8",
+)
+_file_handler.setFormatter(logging.Formatter(_TRACE_FMT))
+_file_handler.addFilter(_trace_filter)
+
+_stream_handler = logging.StreamHandler()
+_stream_handler.setFormatter(logging.Formatter(_TRACE_FMT))
+_stream_handler.addFilter(_trace_filter)
+
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s %(levelname)s %(name)s: %(message)s',
     force=True,
+    handlers=[
+        _stream_handler,  # stdout → docker logs (단기, 재시작 시 손실)
+        _file_handler,    # 파일 → 호스트 영구 보존
+    ],
 )
 
 from fastapi import FastAPI

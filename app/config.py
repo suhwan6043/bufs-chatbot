@@ -6,6 +6,7 @@ BUFS Academic Chatbot - 설정 관리
 import os
 from pathlib import Path
 from dataclasses import dataclass, field
+from typing import Optional
 
 from dotenv import load_dotenv
 
@@ -28,6 +29,19 @@ def _env_llm(primary: str, fallback: str, default: str) -> str:
     return os.getenv(primary) or os.getenv(fallback) or default
 
 
+def _parse_optional_int(value: str) -> Optional[int]:
+    """빈 문자열·"none"·"null"이면 None 반환, 그 외엔 int 변환. 평가 재현성용 seed 등에 사용."""
+    if value is None:
+        return None
+    s = value.strip()
+    if not s or s.lower() in {"none", "null", "off", "false"}:
+        return None
+    try:
+        return int(s)
+    except ValueError:
+        return None
+
+
 @dataclass
 class LLMConfig:
     base_url: str = _env_llm("LLM_BASE_URL", "OLLAMA_BASE_URL", "http://localhost:11434")
@@ -41,6 +55,9 @@ class LLMConfig:
     response_cache_max_entries: int = int(os.getenv("LLM_RESPONSE_CACHE_MAX_SIZE", "256"))
     # "ollama" → 네이티브 /api/chat (think:false 실제 동작), "openai" → /v1/chat/completions
     api_type: str = os.getenv("LLM_API_TYPE", "openai")
+    # P1.1 픽스(2026-05-18): 평가 재현성용 seed. 미설정(None)이면 LLM 기본 비결정성 유지.
+    # Ollama는 options.seed로 전달, OpenAI 호환은 seed 필드로 전달.
+    seed: Optional[int] = _parse_optional_int(os.getenv("LLM_SEED", ""))
 
 
 @dataclass
@@ -144,7 +161,8 @@ class AdminFaqConfig:
     academic_faq_path: str = os.getenv(
         "ACADEMIC_FAQ_PATH", str(DATA_DIR / "faq_academic.json")
     )
-    # 도서관 FAQ — academic 과 동등 등급의 큐레이션 코퍼스
+    # 도서관·취업·외국학생지원팀 등 별도 도메인 FAQ
+    # 2026-05-19: scripts/ingest_all.py:385 가 참조하던 누락 필드 보강.
     library_faq_path: str = os.getenv(
         "LIBRARY_FAQ_PATH", str(DATA_DIR / "faq_library.json")
     )
@@ -222,28 +240,14 @@ class PipelineConfig:
     evidence_slicing_context_lines: int = int(
         os.getenv("EVIDENCE_SLICING_CONTEXT_LINES", "2")
     )
-
-    # ── EN 쿼리 dense retrieval 전략 ──────────────────────────────
-    # EN 쿼리는 EnTermMapper로 ko_query를 추출한 뒤, 길이 임계치 이상이면
-    # ko_query만 임베딩에 사용 (mono-lingual KO 매칭, 점수 강함).
-    # 임계치 미만이면 ko_query + EN 원문 결합 (cross-lingual, 점수 약함).
-    #
-    # 2026-05-04 실측: bge-m3 cross-lingual 점수가 mono-lingual 대비 ~65배 낮아
-    # 정답 chunk가 retrieve돼도 다운스트림 confidence 기준 미달로 거절됨.
-    # 짧은 KO 학술 용어(예: "성적증명서" 5자, "학생증" 3자)도 단독 모드로
-    # 보내야 retrieval 신호가 살아남는다 — 임계치를 낮게 잡는다.
-    en_vector_ko_query_threshold: int = int(
-        os.getenv("EN_VECTOR_KO_QUERY_THRESHOLD", "3")
-    )
-
-    # ── 출처 표기 검증 경고 노출 ──────────────────────────────────
-    # 2026-05-06: response_validator의 "답변에 출처(페이지 번호)가 명시되지 않았습니다"
-    # 경고를 응답 본문에 합칠지 여부. 시연 시 사용자에게 미완성 인상을 줘서 기본 OFF.
-    # frontend는 별도로 "*검증 경고:*" 블록을 정규식 마스킹하므로 이 토글과 독립.
-    validation_source_warning_enabled: bool = (
-        os.getenv("VALIDATION_SOURCE_WARNING_ENABLED", "false").strip().lower()
-        in ("1", "true", "yes")
-    )
+    # M7 (2026-04-27): direct_answer 단락 응답(LLM 우회)은 기본 OFF.
+    # direct_answer는 컨텍스트의 일부로만 사용되고, LLM이 항상 생성한다.
+    # .env DIRECT_ANSWER_BYPASS_LLM=true 시 (구) 우회 동작 복구.
+    # chat.py:591/962 의 if 조건이 참조하지만 main의 PipelineConfig에 필드 자체가
+    # 누락되어 있어 호출 시 AttributeError 발생. multi-task 1 범위 밖의 hotfix.
+    direct_answer_bypass_llm: bool = os.getenv(
+        "DIRECT_ANSWER_BYPASS_LLM", "false"
+    ).strip().lower() in ("1", "true", "yes")
 
 
 @dataclass
@@ -299,6 +303,29 @@ class ConversationConfig:
 
     # ── follow-up 감지 ──
     follow_up_max_words: int = int(os.getenv("CONV_FOLLOW_UP_MAX_WORDS", "5"))
+
+    # ── multi-task 1 (2026-05-11): 통합 쿼리 이해 (LLM JSON) ──
+    # follow_up_detector + query_rewriter + query_analyzer 룰 3종을 gemma3:4b
+    # 단일 JSON 호출로 통합. 실패 시 메인 LLM 폴백 → 룰 폴백 (3단계 폴백).
+    # 원칙 4(하드코딩 금지): 모델·임계치는 env 오버라이드.
+    #
+    # 활성화 방법: .env에 CONV_UNDERSTANDING_ENABLED=true 명시 + backend 재시작.
+    # default OFF 사유: 평가 통과 전 운영 영향 회피. 평가 절차는 scripts/eval_contains_f1.py
+    # 로 164문항 contains-F1 회귀 -1pp 이내 확인 후 default ON 전환(별도 PR).
+    understanding_enabled: bool = os.getenv("CONV_UNDERSTANDING_ENABLED", "false").lower() == "true"
+    # 1차 모델 — 비우면 rewrite_model(gemma3:4b)와 동일
+    understand_model: str = os.getenv("CONV_UNDERSTAND_MODEL", "")
+    # 1차 모델 전용 엔드포인트 — 비우면 rewrite_base_url 또는 메인 LLM URL
+    understand_base_url: str = os.getenv("CONV_UNDERSTAND_BASE_URL", "")
+    # 1차 타임아웃 — sanity check 결과 CPU 호스트에서 gemma3:4b가 4초 (1100토큰
+    # 프롬프트). GPU 컨테이너에서는 0.5~1s 예상. 보수적 3.0s default.
+    understand_timeout_sec: float = float(os.getenv("CONV_UNDERSTAND_TIMEOUT_SEC", "3.0"))
+    understand_max_tokens: int = int(os.getenv("CONV_UNDERSTAND_MAX_TOKENS", "320"))
+    # 2차 폴백 모델 — 비우면 메인 settings.llm.model (qwen3:8b 등)
+    understand_fallback_model: str = os.getenv("CONV_UNDERSTAND_FALLBACK_MODEL", "")
+    understand_fallback_base_url: str = os.getenv("CONV_UNDERSTAND_FALLBACK_BASE_URL", "")
+    # 2차 타임아웃 — qwen3:8b 같은 큰 모델 응답 시간 + JSON 모드 처리 여유.
+    understand_fallback_timeout_sec: float = float(os.getenv("CONV_UNDERSTAND_FALLBACK_TIMEOUT_SEC", "10.0"))
 
 
 @dataclass

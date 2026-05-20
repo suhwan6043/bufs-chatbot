@@ -14,6 +14,7 @@ from typing import AsyncGenerator, Optional
 from fastapi import APIRouter, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
+from app.config import settings
 from backend.dependencies import (
     get_analyzer,
     get_chat_logger,
@@ -27,25 +28,6 @@ from backend.schemas.chat import ChatResponse, SearchResultItem, SourceURL
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/chat", tags=["chat"])
-
-
-# ── 사용자 노출 메시지 다국어화 (KO 기본, EN 미정의 시 KO fallback) ──
-# i18n.ts의 admin·UI 라벨과는 별개 — 백엔드 응답·검증 라벨은 여기서 관리.
-_USER_MSG: dict[str, dict[str, str]] = {
-    "stream_error": {
-        "ko": "처리 중 오류가 발생했습니다. 다시 시도해 주세요.",
-        "en": "An error occurred while processing your request. Please try again.",
-    },
-    "validation_warning_label": {
-        "ko": "*검증 경고:*",
-        "en": "*Validation warning:*",
-    },
-}
-
-
-def _user_msg(key: str, lang: str = "ko") -> str:
-    entry = _USER_MSG.get(key, {})
-    return entry.get(lang) or entry.get("ko", "")
 
 
 def _resolve_user_id(access_token: Optional[str]) -> Optional[int]:
@@ -68,55 +50,34 @@ def _resolve_user_id(access_token: Optional[str]) -> Optional[int]:
 
 # ── 연락처 단락 처리 (LLM 없이 즉시 응답) ──
 
-def _format_contact_answer(question: str, lang: str = "ko") -> str:
-    """연락처 쿼리 즉답. lang에 따라 라벨 다국어화 (EN/KO).
-
-    부서명(예: 영어학부)은 departments.json의 한국어 표기 유지 — 학교 측 공식 명칭이며,
-    EN 사용자에게도 한국어 명칭이 포함된 답변이 행정 문의 시 일관성을 보장.
-    """
+def _format_contact_answer(question: str) -> str:
+    """chat_app.py:_format_contact_answer() 동일 로직."""
     try:
         from app.contacts import get_dept_searcher
         searcher = get_dept_searcher()
         if not searcher.is_contact_query(question):
             return ""
-        # EN 쿼리는 EnTermMapper로 KO 키워드 주입 후 검색 (is_contact_query와 동일 경로)
-        search_q = searcher._en_to_ko_query(question) if lang == "en" else question
-        results = searcher.search(search_q, top_k=3)
+        results = searcher.search(question, top_k=3)
         if not results:
             return ""
-        if lang == "en":
-            header = "\U0001f4de **Contact Information**\n"
-            ext_label = "Ext."
-            office_prefix = " | Office: "
-        else:
-            header = "\U0001f4de **연락처 안내**\n"
-            ext_label = "내선"
-            office_prefix = " | 사무실: "
-        lines = [header]
+        lines = ["\U0001f4de **연락처 안내**\n"]
         for r in results:
             college_info = f" ({r.college})" if r.college else ""
-            office_info = f"{office_prefix}{r.office}" if r.office else ""
+            office_info = f" | 사무실: {r.office}" if r.office else ""
             lines.append(
                 f"- **{r.name}**{college_info}: "
-                f"`{ext_label} {r.extension}` / {r.phone}{office_info}"
+                f"`내선 {r.extension}` / {r.phone}{office_info}"
             )
         return "\n".join(lines)
     except Exception:
         return ""
 
 
-def _get_contact_footer(intent, entities: dict, question: str, lang: str = "ko") -> str:
-    """답변 꼬리말로 학사/학과 연락처 첨부. lang에 따라 라벨 다국어화."""
+def _get_contact_footer(intent, entities: dict, question: str) -> str:
+    """chat_app.py:_get_contact_footer() 동일 로직."""
     try:
         from app.models import Intent
         from app.contacts import get_dept_searcher
-
-        if lang == "en":
-            dept_label = "Contact"
-            haksa_label = "Academic Affairs"
-        else:
-            dept_label = "문의"
-            haksa_label = "학사 문의"
 
         _DEPT_KW = ("졸업시험", "과 행사", "학과 행사", "과행사", "학과행사")
         if any(kw in question for kw in _DEPT_KW):
@@ -125,7 +86,7 @@ def _get_contact_footer(intent, entities: dict, question: str, lang: str = "ko")
                 results = get_dept_searcher().search(dept, top_k=1)
                 if results:
                     r = results[0]
-                    return f"\n\n---\n\U0001f4de **{r.name}** {dept_label}: `{r.phone}`"
+                    return f"\n\n---\n\U0001f4de **{r.name}** 문의: `{r.phone}`"
 
         _ACADEMIC = {
             Intent.GRADUATION_REQ, Intent.EARLY_GRADUATION,
@@ -136,91 +97,10 @@ def _get_contact_footer(intent, entities: dict, question: str, lang: str = "ko")
         if intent in _ACADEMIC:
             haksa = get_dept_searcher().search("학사지원팀", top_k=1)
             if haksa:
-                return f"\n\n---\n\U0001f4de {haksa_label}: **{haksa[0].name}** `{haksa[0].phone}`"
+                return f"\n\n---\n\U0001f4de 학사 문의: **{haksa[0].name}** `{haksa[0].phone}`"
     except Exception:
         pass
     return ""
-
-
-# ── Clarification 게이트 헬퍼 ────────────────────────────────────────────────
-# 필수 정보(학번/학과/유형/성적표) 누락 시 되묻기 처리. 팀원 작성 프로필 주입 블록
-# 뒤에 실행되어, 프로필이 여전히 부족하면 short-circuit. 1회 제한(세션당 필드당).
-def _handle_clarification_reply(
-    session_data: dict, question: str, lang: str,
-) -> tuple[str, bool]:
-    """
-    이전 턴이 clarification이었으면 현 턴 응답에서 필드 추출 → 프로필 업데이트.
-
-    Returns:
-        (effective_question, profile_updated)
-        - effective_question: 원질문 재실행 대상이면 그 값, 아니면 원 question
-        - profile_updated: 프로필 변경됐는지
-    """
-    from app.pipeline import clarification as _clr
-    if not _clr.ENABLED:
-        return question, False
-    pending = session_data.get("pending_clarification") or {}
-    if not pending:
-        return question, False
-    last_asked = pending.get("fields") or []
-    if not last_asked:
-        return question, False
-    extracted = _clr.detect_clarification_reply(question, last_asked, lang=lang)
-    if not extracted:
-        # 응답 아님 — pending 해제 (무한 대기 방지)
-        session_data.pop("pending_clarification", None)
-        return question, False
-    # 프로필 병합
-    profile = dict(session_data.get("user_profile") or {})
-    for k, v in extracted.items():
-        if k in ("student_id", "department", "student_type") and v:
-            profile[k] = v
-    session_data["user_profile"] = profile
-    # 원질문 복원
-    original_q = pending.get("original_question")
-    session_data.pop("pending_clarification", None)
-    if original_q:
-        logger.info("clarification reply 적용: extracted=%s → 원질문 재실행", extracted)
-        return original_q, True
-    return question, True
-
-
-def _check_clarification_gate(
-    analysis, session_data: dict, question: str, lang: str,
-    transcript_present: bool,
-) -> tuple[Optional[str], list[str]]:
-    """
-    누락 필수 필드 확인 + clarification 메시지 구성.
-
-    Returns:
-        (clarification_message_or_None, already_asked_fields)
-        - clarification_message: short-circuit으로 반환할 텍스트 (None이면 통과)
-        - already_asked_fields: soft 경고 주입 대상 필드 (clarification_message와 배타)
-    """
-    from app.pipeline import clarification as _clr
-    if not _clr.ENABLED:
-        return None, []
-    profile = session_data.get("user_profile") or {}
-    log = session_data.get("clarification_log") or {}
-    missing = _clr.check_required_fields(
-        analysis, profile, log, transcript_present=transcript_present,
-    )
-    if missing:
-        # short-circuit 준비 — 로그 갱신 + pending 저장
-        new_log = _clr.update_log(log, missing)
-        session_data["clarification_log"] = new_log
-        session_data["pending_clarification"] = {
-            "fields": missing,
-            "original_question": question,
-        }
-        msg = _clr.build_clarification_message(analysis.intent, lang, missing)
-        return msg, []
-    # 통과 — soft 경고 대상 확인
-    already = _clr.get_already_asked_missing(
-        analysis, profile, log, transcript_present=transcript_present,
-    )
-    return None, already
-
 
 
 def _enrich_analysis(question: str, analysis, router_inst, session_data: dict,
@@ -417,7 +297,28 @@ def _build_generation_cache_kwargs(
     analysis,
     student_context: str,
     history: list[dict] | None = None,
+    is_follow_up: bool = False,
 ) -> dict:
+    """
+    2026-04-22 (플랜 wild-splashing-volcano Phase C.4):
+    `share_across_sessions` 를 여기서 결정한다.
+
+    규칙:
+      - follow-up 질문이 아니고
+      - 로그인 사용자의 개인 컨텍스트가 없으며 (student_context 빈 문자열)
+      - 학번 특수화가 없는 경우
+      → 세션 간 cache hit 허용.
+
+    그 외(멀티턴 대화 · 개인화 답변)는 기존 동작 유지 — 세션별 키 격리.
+    """
+    has_personal_context = bool((student_context or "").strip())
+    has_student_id = bool((analysis.student_id or "").strip())
+    share_across_sessions = (
+        not is_follow_up
+        and not has_personal_context
+        and not has_student_id
+    )
+
     return {
         "question": question,
         "context": merged.formatted_context,
@@ -431,6 +332,7 @@ def _build_generation_cache_kwargs(
         "intent": analysis.intent.value if analysis.intent else None,
         "entities": analysis.entities,
         "history": history,
+        "share_across_sessions": share_across_sessions,
     }
 
 
@@ -464,48 +366,40 @@ async def chat_stream(
     async def event_generator() -> AsyncGenerator[dict, None]:
         _t0 = time.monotonic()
 
-        # 예외 메시지 다국어화용 lang 사전 조회 (정상 경로엔 영향 없음)
-        _err_lang = "ko"
-        try:
-            _, _sd_peek = session_store.get_or_create(session_id)
-            _err_lang = _sd_peek.get("lang", "ko")
-        except Exception:
-            pass
-
         try:
             async for event in _inner_generator(_t0):
                 yield event
         except Exception as e:
             logger.error("채팅 파이프라인 오류: %s", e, exc_info=True)
             yield {"event": "error", "data": json.dumps(
-                {"message": _user_msg("stream_error", _err_lang)},
+                {"message": "처리 중 오류가 발생했습니다. 다시 시도해 주세요."},
                 ensure_ascii=False,
             )}
 
     async def _inner_generator(_t0: float) -> AsyncGenerator[dict, None]:
-        # 2026-04-28 fix: closure 변수 `question` 재할당 → Python이 local 추정 →
-        # `_handle_clarification_reply(session_data, question, ...)`에서
-        # UnboundLocalError. nonlocal로 outer scope 참조 명시.
-        nonlocal question
-
         # 세션 확인/생성
         sid, session_data = session_store.get_or_create(session_id)
 
         # JWT 토큰이 있으면 user_id 추출 (비로그인은 None — 개인 DB 저장 스킵)
         user_id = _resolve_user_id(access_token)
 
-        # [Clarification] 이전 턴이 되묻기였으면 응답에서 필드 추출 → 원질문 재실행
-        _current_lang = session_data.get("lang", "ko")
-        effective_question, _profile_updated = _handle_clarification_reply(
-            session_data, question, _current_lang,
+        # ── TRACE: [chat-IN] — 요청 진입 ──
+        _sid_short = sid[:8] if sid else "-"
+        _prior_n = len(session_data.get("messages") or [])
+        logger.info(
+            "[chat-IN] sid=%s path=stream q_chars=%d q=%r user=%s prior_msgs=%d lang=%s",
+            _sid_short, len(question), question[:80], user_id or "anon",
+            _prior_n, session_data.get("lang", "ko"),
         )
-        # 하류 파이프라인은 effective_question 기준으로 동작 (재실행 시 원질문 사용)
-        question = effective_question
 
         # 연락처 단락 처리
-        contact_answer = _format_contact_answer(question, lang=_current_lang)
+        contact_answer = _format_contact_answer(question)
         if contact_answer:
             _try_log_simple(question, contact_answer, sid, "CONTACT", _t0, user_id=user_id)
+            logger.info(
+                "[chat-OUT] sid=%s path=contact_short_circuit answer_chars=%d total_ms=%d",
+                _sid_short, len(contact_answer), int((time.monotonic() - _t0) * 1000),
+            )
             yield {"event": "done", "data": json.dumps({
                 "answer": contact_answer,
                 "source_urls": [],
@@ -514,6 +408,17 @@ async def chat_stream(
                 "duration_ms": int((time.monotonic() - _t0) * 1000),
             }, ensure_ascii=False)}
             return
+
+        # ── TRACE: [lang-detect] — 언어 판정 ──
+        try:
+            from app.pipeline.language_detector import detect_language as _detect_lang
+            _detected_lang = _detect_lang(question)
+            logger.info(
+                "[lang-detect] sid=%s detected=%s session_lang=%s",
+                _sid_short, _detected_lang, session_data.get("lang", "ko"),
+            )
+        except Exception as _e:
+            logger.debug("lang-detect 실패: %s", _e)
 
         # 파이프라인 컴포넌트
         analyzer = get_analyzer()
@@ -535,64 +440,147 @@ async def chat_stream(
         _conv_cfg = _settings.conversation
         prior_messages = session_data.get("messages") or []
         search_query = question  # retrieval·LLM에 실제로 건네는 쿼리 (잠재적으로 rewritten)
-        _t_fu = time.monotonic()
-        follow_up_signal = follow_up_detector.detect(question, prior_messages)
-        _ms_follow_up = int((time.monotonic() - _t_fu) * 1000)
-        _ms_rewrite = 0
-        if _conv_cfg.rewrite_enabled and follow_up_signal.is_follow_up:
-            _t_rw = time.monotonic()
-            try:
-                search_query = await query_rewriter.rewrite(
-                    question,
-                    prior_messages,
-                    skip_rule_stage=follow_up_signal.skip_rule_stage,
-                    lang=session_data.get("lang", "ko"),
-                )
-            except Exception as e:
-                logger.debug("query_rewriter 실패, 원본 사용: %s", e)
-                search_query = question
-            _ms_rewrite = int((time.monotonic() - _t_rw) * 1000)
+        lang = session_data.get("lang", "ko")
+
+        if _conv_cfg.understanding_enabled:
+            # ── multi-task 1 (2026-05-11): 통합 쿼리 이해 (gemma3:4b JSON) ──
+            # follow_up_detector + query_rewriter + analyzer 룰 3종을 단일 LLM 호출로 통합.
+            # 실패 시 메인 LLM 폴백 → 룰 폴백 (3단계 폴백).
+            from app.pipeline import query_understanding
+            logger.info(
+                "[understand-IN] sid=%s mode=integrated_llm question_chars=%d history_msgs=%d lang=%s",
+                _sid_short, len(question), _prior_n, lang,
+            )
+            _t_u = time.monotonic()
+            _understand = await query_understanding.understand(
+                question, prior_messages, lang=lang,
+            )
+            _ms_understand = int((time.monotonic() - _t_u) * 1000)
+            follow_up_signal = _understand.follow_up_signal
+            search_query = _understand.rewritten_query
+            analysis = _understand.analysis
+            if lang == "en":
+                analysis.lang = "en"
+            analysis, transcript_context, student_context = _enrich_analysis(
+                search_query, analysis, router_inst, session_data, user_id=user_id
+            )
+            # 통합 호출은 분리 timing 불가 — 전체를 rewrite_ms로 기록 (PIPELINE_TIMING 호환)
+            _ms_follow_up = 0
+            _ms_rewrite = _ms_understand
+            _ms_analyze = 0
+            logger.info(
+                "[understand-OUT] sid=%s source=%s elapsed_ms=%d intent=%s qt=%s confidence=%.2f rewrite_changed=%s",
+                _sid_short, _understand.source, _ms_understand,
+                analysis.intent.value if analysis.intent else "?",
+                analysis.question_type.value if analysis.question_type else "?",
+                _understand.intent_confidence, search_query != question,
+            )
             if search_query != question:
                 logger.info(
                     "follow-up[%s] rewrite: '%s' → '%s'",
                     follow_up_signal.reason, question[:60], search_query[:60],
                 )
+        else:
+            # ── TRACE: [follow_up-IN/OUT] ──
+            _t_fu = time.monotonic()
+            follow_up_signal = follow_up_detector.detect(question, prior_messages)
+            _ms_follow_up = int((time.monotonic() - _t_fu) * 1000)
+            logger.info(
+                "[follow_up] sid=%s is_follow_up=%s reason=%s skip_rule=%s elapsed_ms=%d",
+                _sid_short, follow_up_signal.is_follow_up, follow_up_signal.reason,
+                follow_up_signal.skip_rule_stage, _ms_follow_up,
+            )
+            _ms_rewrite = 0
+            if _conv_cfg.rewrite_enabled and follow_up_signal.is_follow_up:
+                logger.info(
+                    "[rewrite-IN] sid=%s mode=%s lang=%s history_msgs=%d",
+                    _sid_short,
+                    "llm" if not follow_up_signal.skip_rule_stage else "llm_only_no_rule",
+                    lang, _prior_n,
+                )
+                _t_rw = time.monotonic()
+                try:
+                    search_query = await query_rewriter.rewrite(
+                        question,
+                        prior_messages,
+                        skip_rule_stage=follow_up_signal.skip_rule_stage,
+                        lang=lang,
+                    )
+                except Exception as e:
+                    logger.debug("query_rewriter 실패, 원본 사용: %s", e)
+                    search_query = question
+                _ms_rewrite = int((time.monotonic() - _t_rw) * 1000)
+                logger.info(
+                    "[rewrite-OUT] sid=%s elapsed_ms=%d changed=%s new_q=%r",
+                    _sid_short, _ms_rewrite, search_query != question, search_query[:80],
+                )
+                if search_query != question:
+                    logger.info(
+                        "follow-up[%s] rewrite: '%s' → '%s'",
+                        follow_up_signal.reason, question[:60], search_query[:60],
+                    )
 
-        # Stage 1: 질문 분석 (rewritten이 있으면 rewritten 기반으로 분석 → intent/entity 정확도↑)
-        _t1 = time.monotonic()
-        analysis = analyzer.analyze(search_query)
-        lang = session_data.get("lang", "ko")
-        if lang == "en":
-            analysis.lang = "en"
-        analysis, transcript_context, student_context = _enrich_analysis(
-            search_query, analysis, router_inst, session_data, user_id=user_id
-        )
-        _ms_analyze = int((time.monotonic() - _t1) * 1000)
-
-        # [Clarification] 필수 필드 누락 시 short-circuit, 또는 soft 경고 플래그
-        _transcript_present = transcript_context is not None and bool(transcript_context.strip() if transcript_context else False)
-        _clarify_msg, _soft_warn_fields = _check_clarification_gate(
-            analysis, session_data, question, lang, _transcript_present,
-        )
-        if _clarify_msg:
-            _try_log_simple(question, _clarify_msg, sid, "CLARIFICATION", _t0, user_id=user_id)
-            yield {"event": "done", "data": json.dumps({
-                "answer": _clarify_msg,
-                "source_urls": [],
-                "results": [],
-                "intent": "CLARIFICATION",
-                "duration_ms": int((time.monotonic() - _t0) * 1000),
-            }, ensure_ascii=False)}
-            return
+            # ── TRACE: [analyze-IN/OUT] ──
+            logger.info(
+                "[analyze-IN] sid=%s search_q=%r lang=%s",
+                _sid_short, search_query[:80], lang,
+            )
+            _t1 = time.monotonic()
+            analysis = analyzer.analyze(search_query)
+            if lang == "en":
+                analysis.lang = "en"
+            analysis, transcript_context, student_context = _enrich_analysis(
+                search_query, analysis, router_inst, session_data, user_id=user_id
+            )
+            _ms_analyze = int((time.monotonic() - _t1) * 1000)
+            _ents = analysis.entities or {}
+            logger.info(
+                "[analyze-OUT] sid=%s intent=%s qt=%s entities={dept=%s,student_id=%s,semester=%s,focus=%s} matched_terms=%d normalized_q=%r elapsed_ms=%d",
+                _sid_short,
+                analysis.intent.value if analysis.intent else "?",
+                analysis.question_type.value if analysis.question_type else "?",
+                _ents.get("department"), _ents.get("student_id"),
+                _ents.get("semester"), _ents.get("question_focus"),
+                len(analysis.matched_terms or []),
+                (analysis.normalized_query or "")[:60], _ms_analyze,
+            )
 
         # Stage 2: 검색 (glossary 정규화된 쿼리 사용 — 학식→학생식당 등)
         # search_query는 이미 follow-up rewrite를 거친 상태 → 그 위에 glossary 레이어 적용
-        _t2 = time.monotonic()
         _search_query = analysis.normalized_query or search_query
+        # ── TRACE: [router-IN] ──
+        logger.info(
+            "[router-IN] sid=%s search_q=%r intent=%s dept_filter=%s",
+            _sid_short, _search_query[:80],
+            analysis.intent.value if analysis.intent else "?",
+            (analysis.entities or {}).get("department"),
+        )
+        _t2 = time.monotonic()
         search_results = router_inst.route_and_search(_search_query, analysis)
         _ms_search = int((time.monotonic() - _t2) * 1000)
+        # ── TRACE: [router-OUT] (vector/graph 검색 후보 + 상위 점수) ──
+        _vr = search_results.get("vector_results") or []
+        _gr = search_results.get("graph_results") or []
+        _vt = (_vr[0].score if _vr else 0.0)
+        _gt = (_gr[0].score if _gr else 0.0)
+        _g_has_direct = any(
+            (r.metadata or {}).get("direct_answer") for r in _gr
+        )
+        logger.info(
+            "[router-OUT] sid=%s vector_n=%d vector_top=%.2f graph_n=%d graph_top=%.2f "
+            "graph_has_direct_answer=%s elapsed_ms=%d",
+            _sid_short, len(_vr), _vt, len(_gr), _gt, _g_has_direct, _ms_search,
+        )
 
         # Stage 3: 컨텍스트 병합
+        # ── TRACE: [merger-IN] ──
+        logger.info(
+            "[merger-IN] sid=%s vector_n=%d graph_n=%d intent=%s qt=%s has_transcript=%s",
+            _sid_short, len(_vr), len(_gr),
+            analysis.intent.value if analysis.intent else "?",
+            analysis.question_type.value if analysis.question_type else "?",
+            bool(transcript_context),
+        )
         _t3 = time.monotonic()
         merged = merger.merge(
             vector_results=search_results["vector_results"],
@@ -604,6 +592,18 @@ async def chat_stream(
             question_type=analysis.question_type,
         )
         _ms_merge = int((time.monotonic() - _t3) * 1000)
+        # ── TRACE: [merger-OUT] ──
+        _selected_v = len(merged.vector_results or [])
+        _selected_g = len(merged.graph_results or [])
+        _src_urls = len(merged.source_urls or [])
+        _direct_ans_chars = len(merged.direct_answer or "")
+        logger.info(
+            "[merger-OUT] sid=%s selected_vector=%d selected_graph=%d source_urls=%d "
+            "direct_answer_chars=%d ctx_chars=%d ctx_tokens_est=%d confidence=%.2f elapsed_ms=%d",
+            _sid_short, _selected_v, _selected_g, _src_urls, _direct_ans_chars,
+            len(merged.formatted_context or ""), merged.total_tokens_estimate,
+            merged.context_confidence, _ms_merge,
+        )
 
         # P4: 저신뢰 재시도 (1회)
         _t4 = time.monotonic()
@@ -685,8 +685,14 @@ async def chat_stream(
             _try_log(question, msg, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
             return
 
-        # direct_answer 단락 응답 (KO only)
-        if merged.direct_answer and analysis.lang != "en":
+        # M7 (2026-04-27): direct_answer 단락 응답(LLM 우회)은 기본 OFF.
+        # direct_answer는 컨텍스트의 일부로만 사용되고, LLM이 항상 생성한다.
+        # .env DIRECT_ANSWER_BYPASS_LLM=true 시 (구) 우회 동작 복구.
+        if (
+            settings.pipeline.direct_answer_bypass_llm
+            and merged.direct_answer
+            and analysis.lang != "en"
+        ):
             # 멀티턴 컨텍스트 보존: direct_answer도 session history에 append.
             messages = session_data.get("messages", [])
             messages.append({"role": "user", "content": question})
@@ -712,6 +718,7 @@ async def chat_stream(
         llm_history = prior_messages if _conv_cfg.history_enabled else None
         cache_kwargs = _build_generation_cache_kwargs(
             search_query, merged, analysis, student_context, history=llm_history,
+            is_follow_up=follow_up_signal.is_follow_up,
         )
         cached_answer = generator.get_cached_response(**cache_kwargs)
         if cached_answer:
@@ -738,20 +745,34 @@ async def chat_stream(
             return
 
         # Stage 5: LLM 스트리밍 생성
+        # ── TRACE: [generator-IN] + [evidence] (cite_key 통합) ──
+        from app.pipeline import evidence_trace as _ev_tr
+        _sid_short = sid[:8] if sid else "-"
+        _history_turns = (len(llm_history) // 2) if llm_history else 0
+        _evidence_list = _ev_tr.build_evidence_list(all_results, max_items=16)
+        _notice_url_n = sum(1 for ev in _evidence_list if ev.cite_key.startswith("URL:"))
+        _pdf_pages = sorted({ev.page for ev in _evidence_list if ev.page})
+        logger.info(
+            "[generator-IN] sid=%s model=%s prompt_ctx_chars=%d intent=%s qt=%s lang=%s "
+            "history_turns=%d search_n=%d notice_urls=%d pdf_pages=%s",
+            _sid_short, settings.llm.model_name,
+            len(merged.formatted_context or ""),
+            analysis.intent.value if analysis.intent else "?",
+            analysis.question_type.value if analysis.question_type else "?",
+            analysis.lang or "ko", _history_turns, len(all_results),
+            _notice_url_n, _pdf_pages,
+        )
+        for _ev in _evidence_list:
+            _preview = (_ev.text or "").replace("\n", " ")[:60]
+            logger.info(
+                "[evidence] sid=%s #%d cite=%s doc=%r page=%s section=%r type=%s score=%.2f url=%s text=%r",
+                _sid_short, _ev.chunk_idx + 1, _ev.cite_key, _ev.doc,
+                _ev.page if _ev.page else "-", _ev.section, _ev.source_type,
+                _ev.score, _ev.url or "-", _preview,
+            )
+
         _t5 = time.monotonic()
         full_answer = ""
-        # [Clarification] soft 경고 문구 준비 — LLM 스트림 맨 앞에 주입
-        _soft_warn_text = ""
-        if _soft_warn_fields:
-            from app.pipeline import clarification as _clr
-            _soft_warn_text = _clr.build_soft_warning(_soft_warn_fields, analysis.lang or "ko")
-        _soft_warn_emitted = False
-        # KO 경로: CLEAR 없음 → 즉시 warning 토큰 yield
-        if _soft_warn_text and analysis.lang != "en":
-            _pref = _soft_warn_text + "\n\n"
-            full_answer += _pref
-            yield {"event": "token", "data": json.dumps({"token": _pref}, ensure_ascii=False)}
-            _soft_warn_emitted = True
         try:
             async for token in generator.generate(
                 question=search_query,
@@ -770,12 +791,6 @@ async def chat_stream(
                 if token == "\x00CLEAR\x00":
                     full_answer = ""
                     yield {"event": "clear", "data": "{}"}
-                    # EN 경로: CLEAR 직후 warning 주입 (한 번만)
-                    if _soft_warn_text and not _soft_warn_emitted:
-                        _pref = _soft_warn_text + "\n\n"
-                        full_answer += _pref
-                        yield {"event": "token", "data": json.dumps({"token": _pref}, ensure_ascii=False)}
-                        _soft_warn_emitted = True
                     continue
                 full_answer += token
                 yield {"event": "token", "data": json.dumps(
@@ -789,6 +804,43 @@ async def chat_stream(
             )}
             return
         _ms_gen = int((time.monotonic() - _t5) * 1000)
+
+        # ── TRACE: [generator-OUT] — 답변 텍스트 미리보기 ──
+        _ans_preview = (full_answer or "").replace("\n", " | ")[:200]
+        logger.info(
+            "[generator-OUT] sid=%s answer_chars=%d elapsed_ms=%d preview=%r",
+            _sid_short, len(full_answer or ""), _ms_gen, _ans_preview,
+        )
+        # ── TRACE: [answer-evidence-map] — 답변 내 각 단위값의 출처 cite_key 매핑 ──
+        try:
+            _ans_map = _ev_tr.map_answer_to_evidence(full_answer or "", _evidence_list)
+            for _item in _ans_map:
+                logger.info(
+                    "[answer-evidence-map] sid=%s item=%s in_ctx=%s cites=%s",
+                    _sid_short, _item["item"], _item["in_context"],
+                    _item["matched_cites"] or ["NONE"],
+                )
+            if not _ans_map:
+                logger.info(
+                    "[answer-evidence-map] sid=%s item=NO_UNITS in_ctx=- cites=- "
+                    "(non-numeric/qualitative answer)", _sid_short,
+                )
+        except Exception as _e:
+            logger.debug("answer-evidence-map 실패: %s", _e)
+        # ── TRACE: [answer-manifest] — intent별 required/optional/excluded 충족도 ──
+        try:
+            _mf = _ev_tr.check_answer_manifest(
+                full_answer or "",
+                analysis.intent.value if analysis.intent else "",
+                question=search_query,
+            )
+            logger.info(
+                "[answer-manifest] sid=%s %s required_missing=%s optional_missing=%s excluded_violations=%s",
+                _sid_short, _mf.summary(),
+                _mf.required_missing, _mf.optional_missing, _mf.excluded_violations,
+            )
+        except Exception as _e:
+            logger.debug("answer-manifest 실패: %s", _e)
 
         # 빈 응답 방어
         if not full_answer.strip():
@@ -835,23 +887,35 @@ async def chat_stream(
                 logger.debug("Phase4 후처리 실패, 원본 유지: %s", e)
 
         # Stage 6: 응답 검증
+        # ── TRACE: [validator-IN] — 검증 입력 명세 (8 후보 요약) ──
+        logger.info(
+            "[validator-IN] sid=%s answer_chars=%d ctx_chars=%d search_n=%d",
+            _sid_short, len(full_answer or ""),
+            len(merged.formatted_context or ""), len(all_results),
+        )
         _t6 = time.monotonic()
+        passed = None
+        warnings = []
         try:
             passed, warnings = validator.validate(
                 answer=full_answer,
                 context=merged.formatted_context,
                 search_results=all_results,
-                lang=lang,
             )
             if warnings:
                 warning_text = "\n".join(f"- {w}" for w in warnings)
-                full_answer += f"\n\n---\n{_user_msg('validation_warning_label', lang)}\n{warning_text}"
-        except Exception:
-            pass
+                full_answer += f"\n\n---\n*검증 경고:*\n{warning_text}"
+        except Exception as _e:
+            logger.debug("validator 실패: %s", _e)
         _ms_val = int((time.monotonic() - _t6) * 1000)
+        # ── TRACE: [validator-OUT] ──
+        logger.info(
+            "[validator-OUT] sid=%s passed=%s warnings=%d elapsed_ms=%d",
+            _sid_short, passed, len(warnings or []), _ms_val,
+        )
 
         # 연락처 꼬리말
-        footer = _get_contact_footer(analysis.intent, analysis.entities, question, lang=lang)
+        footer = _get_contact_footer(analysis.intent, analysis.entities, question)
         if footer:
             full_answer += footer
 
@@ -869,7 +933,13 @@ async def chat_stream(
         session_store.update(sid, "messages", messages)
 
         # 로그
+        # ── TRACE: [log-IN] ──
+        logger.info(
+            "[log-IN] sid=%s persist=jsonl+sqlite is_test=%s user=%s",
+            _sid_short, _is_test, user_id or "anon",
+        )
         _try_log(question, full_answer, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
+        logger.info("[log-OUT] sid=%s saved=%s", _sid_short, not _is_test)
 
         # stage별 타이밍 로그
         _ms_total = int((time.monotonic() - _t0) * 1000)
@@ -882,6 +952,15 @@ async def chat_stream(
             f"follow_up={follow_up_signal.reason}"
         )
         print(_timing_msg, flush=True)
+        # ── TRACE: [chat-OUT] — 최종 응답 요약 ──
+        logger.info(
+            "[chat-OUT] sid=%s path=stream intent=%s answer_chars=%d source_urls=%d "
+            "ctx_confidence=%.2f follow_up=%s total_ms=%d",
+            _sid_short,
+            analysis.intent.value if analysis.intent else "?",
+            len(full_answer), len(merged.source_urls or []),
+            merged.context_confidence, follow_up_signal.reason, _ms_total,
+        )
 
         # 완료 이벤트
         yield {"event": "done", "data": json.dumps({
@@ -910,6 +989,23 @@ async def chat_stream(
 
 # ── 논스트리밍 폴백 ──
 
+def _log_chat_sync_timing(*, t0, path, follow_up_ms=0, rewrite_ms=0,
+                          analyze_ms=0, search_ms=0, merge_ms=0,
+                          generate_ms=0, validate_ms=0, intent="?",
+                          question_type="?", follow_up_reason="?"):
+    """chat_stream의 PIPELINE_TIMING 형식 + endpoint=sync, path 라벨로 분기 표시."""
+    total_ms = int((time.monotonic() - t0) * 1000)
+    print(
+        f"PIPELINE_TIMING total={total_ms}ms follow_up={follow_up_ms}ms "
+        f"rewrite={rewrite_ms}ms analyze={analyze_ms}ms search={search_ms}ms "
+        f"merge={merge_ms}ms retry=0ms generate={generate_ms}ms validate={validate_ms}ms "
+        f"intent={intent} qt={question_type} follow_up={follow_up_reason} "
+        f"endpoint=sync path={path}",
+        flush=True,
+    )
+    return total_ms
+
+
 @router.post("", response_model=ChatResponse)
 async def chat_sync(
     request: Request,
@@ -926,22 +1022,17 @@ async def chat_sync(
     set_skip_log(_is_test)
 
     _t0 = time.monotonic()
+    _ms_follow_up = _ms_rewrite = _ms_analyze = 0
+    _ms_search = _ms_merge = _ms_gen = _ms_val = 0
     sid, session_data = session_store.get_or_create(session_id)
     user_id = _resolve_user_id(access_token)
 
-    # [Clarification] 이전 턴이 되묻기였으면 응답에서 필드 추출 → 원질문 재실행
-    _current_lang = session_data.get("lang", "ko")
-    effective_question, _profile_updated = _handle_clarification_reply(
-        session_data, question, _current_lang,
-    )
-    question = effective_question
-
     # 연락처 단락
-    contact = _format_contact_answer(question, lang=_current_lang)
+    contact = _format_contact_answer(question)
     if contact:
         _try_log_simple(question, contact, sid, "CONTACT", _t0, user_id=user_id)
-        return ChatResponse(answer=contact, intent="CONTACT",
-                            duration_ms=int((time.monotonic() - _t0) * 1000))
+        total_ms = _log_chat_sync_timing(t0=_t0, path="contact", intent="CONTACT")
+        return ChatResponse(answer=contact, intent="CONTACT", duration_ms=total_ms)
 
     analyzer = get_analyzer()
     router_inst = get_router()
@@ -955,43 +1046,66 @@ async def chat_sync(
     _conv_cfg = _settings.conversation
     prior_messages = session_data.get("messages") or []
     search_query = question
-    follow_up_signal = follow_up_detector.detect(question, prior_messages)
-    if _conv_cfg.rewrite_enabled and follow_up_signal.is_follow_up:
-        try:
-            search_query = await query_rewriter.rewrite(
-                question,
-                prior_messages,
-                skip_rule_stage=follow_up_signal.skip_rule_stage,
-                lang=session_data.get("lang", "ko"),
-            )
-        except Exception as e:
-            logger.debug("query_rewriter 실패 (sync), 원본 사용: %s", e)
-            search_query = question
-
-    analysis = analyzer.analyze(search_query)
     lang = session_data.get("lang", "ko")
-    if lang == "en":
-        analysis.lang = "en"
-    analysis, transcript_context, student_context = _enrich_analysis(
-        search_query, analysis, router_inst, session_data, user_id=user_id
-    )
+    _ms_rewrite = 0
 
-    # [Clarification] 필수 필드 누락 시 short-circuit
-    _transcript_present_sync = transcript_context is not None and bool(transcript_context.strip() if transcript_context else False)
-    _clarify_msg_sync, _soft_warn_fields_sync = _check_clarification_gate(
-        analysis, session_data, question, lang, _transcript_present_sync,
-    )
-    if _clarify_msg_sync:
-        _try_log_simple(question, _clarify_msg_sync, sid, "CLARIFICATION", _t0, user_id=user_id)
-        return ChatResponse(
-            answer=_clarify_msg_sync,
-            intent="CLARIFICATION",
-            duration_ms=int((time.monotonic() - _t0) * 1000),
+    if _conv_cfg.understanding_enabled:
+        # ── multi-task 1 (2026-05-11): 통합 쿼리 이해 (gemma3:4b JSON) ──
+        from app.pipeline import query_understanding
+        _t_u = time.monotonic()
+        _understand = await query_understanding.understand(
+            question, prior_messages, lang=lang,
         )
+        _ms_understand = int((time.monotonic() - _t_u) * 1000)
+        follow_up_signal = _understand.follow_up_signal
+        search_query = _understand.rewritten_query
+        analysis = _understand.analysis
+        if lang == "en":
+            analysis.lang = "en"
+        analysis, transcript_context, student_context = _enrich_analysis(
+            search_query, analysis, router_inst, session_data, user_id=user_id
+        )
+        _ms_follow_up = 0
+        _ms_rewrite = _ms_understand
+        _ms_analyze = 0
+        logger.info(
+            "understand[%s] %dms intent=%s confidence=%.2f",
+            _understand.source, _ms_understand,
+            analysis.intent.value, _understand.intent_confidence,
+        )
+    else:
+        _t1 = time.monotonic()
+        follow_up_signal = follow_up_detector.detect(question, prior_messages)
+        _ms_follow_up = int((time.monotonic() - _t1) * 1000)
+        if _conv_cfg.rewrite_enabled and follow_up_signal.is_follow_up:
+            _t2 = time.monotonic()
+            try:
+                search_query = await query_rewriter.rewrite(
+                    question,
+                    prior_messages,
+                    skip_rule_stage=follow_up_signal.skip_rule_stage,
+                    lang=lang,
+                )
+            except Exception as e:
+                logger.debug("query_rewriter 실패 (sync), 원본 사용: %s", e)
+                search_query = question
+            _ms_rewrite = int((time.monotonic() - _t2) * 1000)
+
+        _t3 = time.monotonic()
+        analysis = analyzer.analyze(search_query)
+        if lang == "en":
+            analysis.lang = "en"
+        analysis, transcript_context, student_context = _enrich_analysis(
+            search_query, analysis, router_inst, session_data, user_id=user_id
+        )
+        _ms_analyze = int((time.monotonic() - _t3) * 1000)
 
     # glossary 정규화된 쿼리 우선. follow-up rewrite된 search_query 위에 glossary 레이어.
     _search_query = analysis.normalized_query or search_query
+    _t4 = time.monotonic()
     search_results = router_inst.route_and_search(_search_query, analysis)
+    _ms_search = int((time.monotonic() - _t4) * 1000)
+    _t5 = time.monotonic()
     merged = merger.merge(
         vector_results=search_results["vector_results"],
         graph_results=search_results["graph_results"],
@@ -1001,6 +1115,10 @@ async def chat_sync(
         transcript_context=transcript_context,
         question_type=analysis.question_type,
     )
+    _ms_merge = int((time.monotonic() - _t5) * 1000)
+
+    _intent_str = analysis.intent.value if analysis.intent else "?"
+    _qt_str = analysis.question_type.value if analysis.question_type else "?"
 
     if not merged.formatted_context.strip():
         if analysis.lang == "en":
@@ -1017,13 +1135,26 @@ async def chat_sync(
                 "- 질문에 학번을 포함했는지 (예: 2023학번)"
             )
         _try_log(question, msg, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
+        total_ms = _log_chat_sync_timing(
+            t0=_t0, path="empty_context",
+            follow_up_ms=_ms_follow_up, rewrite_ms=_ms_rewrite,
+            analyze_ms=_ms_analyze, search_ms=_ms_search, merge_ms=_ms_merge,
+            intent=_intent_str, question_type=_qt_str,
+            follow_up_reason=follow_up_signal.reason,
+        )
         return ChatResponse(
             answer=msg,
             intent=analysis.intent.value if analysis.intent else "",
-            duration_ms=int((time.monotonic() - _t0) * 1000),
+            duration_ms=total_ms,
         )
 
-    if merged.direct_answer and analysis.lang != "en":
+    # M7 (2026-04-27): 논스트리밍 경로도 동일 — direct_answer LLM 우회 기본 OFF.
+    # .env DIRECT_ANSWER_BYPASS_LLM=true 시 (구) 우회 동작 복구.
+    if (
+        settings.pipeline.direct_answer_bypass_llm
+        and merged.direct_answer
+        and analysis.lang != "en"
+    ):
         # 멀티턴 컨텍스트 보존: direct_answer도 세션 history에 저장해야
         # 다음 턴 follow-up 감지·rewrite가 이전 주제를 참조할 수 있다.
         messages = session_data.get("messages", [])
@@ -1031,18 +1162,26 @@ async def chat_sync(
         messages.append({"role": "assistant", "content": merged.direct_answer, "rated": False, "rating": None})
         session_store.update(sid, "messages", messages)
         _try_log(question, merged.direct_answer, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
+        total_ms = _log_chat_sync_timing(
+            t0=_t0, path="direct_answer",
+            follow_up_ms=_ms_follow_up, rewrite_ms=_ms_rewrite,
+            analyze_ms=_ms_analyze, search_ms=_ms_search, merge_ms=_ms_merge,
+            intent=_intent_str, question_type=_qt_str,
+            follow_up_reason=follow_up_signal.reason,
+        )
         return ChatResponse(
             answer=merged.direct_answer,
             source_urls=[SourceURL(title=u.get("title", ""), url=u.get("url", ""))
                          for u in (merged.source_urls or [])],
             intent=analysis.intent.value if analysis.intent else "",
-            duration_ms=int((time.monotonic() - _t0) * 1000),
+            duration_ms=total_ms,
         )
 
     all_results = search_results["vector_results"] + search_results["graph_results"]
     llm_history = prior_messages if _conv_cfg.history_enabled else None
     cache_kwargs = _build_generation_cache_kwargs(
         search_query, merged, analysis, student_context, history=llm_history,
+        is_follow_up=follow_up_signal.is_follow_up,
     )
     cached_answer = generator.get_cached_response(**cache_kwargs)
     if cached_answer:
@@ -1051,16 +1190,50 @@ async def chat_sync(
         messages.append({"role": "assistant", "content": cached_answer, "rated": False, "rating": None})
         session_store.update(sid, "messages", messages)
         _try_log(question, cached_answer, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
+        total_ms = _log_chat_sync_timing(
+            t0=_t0, path="cached",
+            follow_up_ms=_ms_follow_up, rewrite_ms=_ms_rewrite,
+            analyze_ms=_ms_analyze, search_ms=_ms_search, merge_ms=_ms_merge,
+            intent=_intent_str, question_type=_qt_str,
+            follow_up_reason=follow_up_signal.reason,
+        )
         return ChatResponse(
             answer=cached_answer,
             source_urls=[SourceURL(title=u.get("title", ""), url=u.get("url", ""))
                          for u in (merged.source_urls or [])],
             results=[SearchResultItem(**r) for r in _serialize_results(all_results)],
             intent=analysis.intent.value if analysis.intent else "",
-            duration_ms=int((time.monotonic() - _t0) * 1000),
+            duration_ms=total_ms,
+        )
+
+    # ── TRACE: [generator-IN] + [evidence] (sync path) ──
+    from app.pipeline import evidence_trace as _ev_tr
+    _sid_short = sid[:8] if sid else "-"
+    _history_turns = (len(llm_history) // 2) if llm_history else 0
+    _evidence_list = _ev_tr.build_evidence_list(all_results, max_items=16)
+    _notice_url_n = sum(1 for ev in _evidence_list if ev.cite_key.startswith("URL:"))
+    _pdf_pages = sorted({ev.page for ev in _evidence_list if ev.page})
+    logger.info(
+        "[generator-IN] sid=%s model=%s prompt_ctx_chars=%d intent=%s qt=%s lang=%s "
+        "history_turns=%d search_n=%d notice_urls=%d pdf_pages=%s",
+        _sid_short, settings.llm.model_name,
+        len(merged.formatted_context or ""),
+        analysis.intent.value if analysis.intent else "?",
+        analysis.question_type.value if analysis.question_type else "?",
+        analysis.lang or "ko", _history_turns, len(all_results),
+        _notice_url_n, _pdf_pages,
+    )
+    for _ev in _evidence_list:
+        _preview = (_ev.text or "").replace("\n", " ")[:60]
+        logger.info(
+            "[evidence] sid=%s #%d cite=%s doc=%r page=%s section=%r type=%s score=%.2f url=%s text=%r",
+            _sid_short, _ev.chunk_idx + 1, _ev.cite_key, _ev.doc,
+            _ev.page if _ev.page else "-", _ev.section, _ev.source_type,
+            _ev.score, _ev.url or "-", _preview,
         )
 
     # LLM 생성 (전체 수집)
+    _t6 = time.monotonic()
     full_answer = ""
     async for token in generator.generate(
         question=search_query,
@@ -1080,6 +1253,43 @@ async def chat_sync(
             full_answer = ""
             continue
         full_answer += token
+    _ms_gen = int((time.monotonic() - _t6) * 1000)
+
+    # ── TRACE: [generator-OUT] (sync path) ──
+    _ans_preview = (full_answer or "").replace("\n", " | ")[:200]
+    logger.info(
+        "[generator-OUT] sid=%s answer_chars=%d elapsed_ms=%d preview=%r",
+        _sid_short, len(full_answer or ""), _ms_gen, _ans_preview,
+    )
+    # ── TRACE: [answer-evidence-map] + [answer-manifest] (sync path) ──
+    try:
+        _ans_map = _ev_tr.map_answer_to_evidence(full_answer or "", _evidence_list)
+        for _item in _ans_map:
+            logger.info(
+                "[answer-evidence-map] sid=%s item=%s in_ctx=%s cites=%s",
+                _sid_short, _item["item"], _item["in_context"],
+                _item["matched_cites"] or ["NONE"],
+            )
+        if not _ans_map:
+            logger.info(
+                "[answer-evidence-map] sid=%s item=NO_UNITS in_ctx=- cites=- "
+                "(non-numeric/qualitative answer)", _sid_short,
+            )
+    except Exception as _e:
+        logger.debug("answer-evidence-map 실패 (sync): %s", _e)
+    try:
+        _mf = _ev_tr.check_answer_manifest(
+            full_answer or "",
+            analysis.intent.value if analysis.intent else "",
+            question=search_query,
+        )
+        logger.info(
+            "[answer-manifest] sid=%s %s required_missing=%s optional_missing=%s excluded_violations=%s",
+            _sid_short, _mf.summary(),
+            _mf.required_missing, _mf.optional_missing, _mf.excluded_violations,
+        )
+    except Exception as _e:
+        logger.debug("answer-manifest 실패 (sync): %s", _e)
 
     # 빈 응답 방어
     if not full_answer.strip():
@@ -1089,16 +1299,10 @@ async def chat_sync(
             full_answer = "죄송합니다. 응답을 생성하지 못했습니다. 다시 시도해 주세요."
         logger.warning("LLM 빈 응답 (sync): question='%s'", question[:50])
 
-    # [Clarification] soft 경고 prepend (이미 물었던 필드 누락 유지 케이스)
-    if _soft_warn_fields_sync:
-        from app.pipeline import clarification as _clr
-        _warn = _clr.build_soft_warning(_soft_warn_fields_sync, analysis.lang or "ko")
-        if _warn:
-            full_answer = _warn + "\n\n" + full_answer
-
     # ~ 이스케이프 (마크다운 취소선 방지)
     full_answer = re.sub(r'(?<!~)~(?!~)', r'\~', full_answer)
 
+    _t7 = time.monotonic()
     # Phase 4 품질 게이트 (KO only)
     if analysis.lang != "en" and full_answer.strip():
         try:
@@ -1129,21 +1333,34 @@ async def chat_sync(
             logger.debug("Phase4 후처리 실패 (sync), 원본 유지: %s", e)
 
     # 응답 검증
+    # ── TRACE: [validator-IN] (sync path) ──
+    logger.info(
+        "[validator-IN] sid=%s answer_chars=%d ctx_chars=%d search_n=%d",
+        _sid_short, len(full_answer or ""),
+        len(merged.formatted_context or ""), len(all_results),
+    )
+    passed = None
+    warnings = []
     try:
         passed, warnings = validator.validate(
             answer=full_answer,
             context=merged.formatted_context,
             search_results=all_results,
-            lang=lang,
         )
         if warnings:
             warning_text = "\n".join(f"- {w}" for w in warnings)
-            full_answer += f"\n\n---\n{_user_msg('validation_warning_label', lang)}\n{warning_text}"
-    except Exception:
-        pass
+            full_answer += f"\n\n---\n*검증 경고:*\n{warning_text}"
+    except Exception as _e:
+        logger.debug("validator 실패 (sync): %s", _e)
+    _ms_val = int((time.monotonic() - _t7) * 1000)
+    # ── TRACE: [validator-OUT] (sync path) ──
+    logger.info(
+        "[validator-OUT] sid=%s passed=%s warnings=%d elapsed_ms=%d",
+        _sid_short, passed, len(warnings or []), _ms_val,
+    )
 
     # 연락처 꼬리말
-    footer = _get_contact_footer(analysis.intent, analysis.entities, question, lang=lang)
+    footer = _get_contact_footer(analysis.intent, analysis.entities, question)
     if footer:
         full_answer += footer
 
@@ -1158,13 +1375,21 @@ async def chat_sync(
     # 로그
     _try_log(question, full_answer, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
 
+    total_ms = _log_chat_sync_timing(
+        t0=_t0, path="generated",
+        follow_up_ms=_ms_follow_up, rewrite_ms=_ms_rewrite,
+        analyze_ms=_ms_analyze, search_ms=_ms_search, merge_ms=_ms_merge,
+        generate_ms=_ms_gen, validate_ms=_ms_val,
+        intent=_intent_str, question_type=_qt_str,
+        follow_up_reason=follow_up_signal.reason,
+    )
     return ChatResponse(
         answer=full_answer,
         source_urls=[SourceURL(title=u.get("title", ""), url=u.get("url", ""))
                      for u in (merged.source_urls or [])],
         results=[SearchResultItem(**r) for r in _serialize_results(all_results)],
         intent=analysis.intent.value if analysis.intent else "",
-        duration_ms=int((time.monotonic() - _t0) * 1000),
+        duration_ms=total_ms,
     )
 
 
@@ -1210,10 +1435,8 @@ async def get_faq_by_id(faq_id: str):
         except Exception:
             return []
 
-    items = (
-        _load(Path(settings.admin_faq.academic_faq_path))
-        + _load(Path(settings.admin_faq.library_faq_path))
-        + _load(Path(settings.admin_faq.admin_faq_path))
+    items = _load(Path(settings.admin_faq.academic_faq_path)) + _load(
+        Path(settings.admin_faq.admin_faq_path)
     )
     for it in items:
         if it.get("id") == faq_id:

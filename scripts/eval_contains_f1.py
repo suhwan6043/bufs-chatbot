@@ -18,6 +18,7 @@ BUFS 챗봇 rule-based Contains-F1 평가 (4/13 기준선과 apples-to-apples �
 import argparse
 import io
 import json
+import os
 import re
 import sys
 import time
@@ -256,7 +257,27 @@ def main() -> None:
     parser.add_argument("--output", default="reports/eval_contains_f1", help="결과 저장 디렉토리")
     parser.add_argument("--limit", type=int, default=None, help="각 데이터셋 최대 질문 수")
     parser.add_argument("--tag", default=None, help="결과 파일명에 붙는 태그 (예: slicing_on, slicing_off)")
+    # P1.1 픽스(2026-05-18): 평가 재현성 옵션
+    parser.add_argument(
+        "--per-question-session", action="store_true",
+        help="질문마다 새 session_id 생성. 세션 내 LLM 응답 캐시 누적·이력 오염을 차단해 재현성↑.",
+    )
+    parser.add_argument(
+        "--no-cache", action="store_true",
+        help="평가 시작·각 데이터셋 사이에 /api/admin/cache/clear 호출하여 응답 캐시 비활성화. "
+             "ADMIN_PASSWORD 환경변수 필요.",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=None,
+        help="LLM_SEED 환경변수에 값을 설정하여 backend LLM 호출을 결정적으로 만듦. "
+             "이 변수는 backend 프로세스 시작 시 읽히므로, 효과를 보려면 backend도 같은 LLM_SEED로 띄워야 함.",
+    )
     args = parser.parse_args()
+
+    # seed 환경변수 전달 (현재 프로세스에서 import되는 모듈에만 영향. backend는 별 프로세스라
+    # 시작 시점에 LLM_SEED를 env로 받아야 함. 이 옵션은 결과 파일 메타에 기록되어 추적용으로 사용).
+    if args.seed is not None:
+        os.environ["LLM_SEED"] = str(args.seed)
 
     out_dir = Path(args.output)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -267,6 +288,36 @@ def main() -> None:
         base_url=args.base_url, timeout=180,
         headers={"X-Test-Mode": "1"},  # 실사용자 로그(JSONL + chat_messages DB) 오염 방지
     )
+
+    # --no-cache: 평가 시작 시 응답 캐시 비우기 (ADMIN_PASSWORD 필요)
+    def _clear_response_cache(label: str = "") -> None:
+        if not args.no_cache:
+            return
+        admin_pw = os.environ.get("ADMIN_PASSWORD", "")
+        if not admin_pw:
+            print(f"  ⚠ --no-cache 지정됐으나 ADMIN_PASSWORD 환경변수 없음 — 캐시 클리어 스킵 ({label})")
+            return
+        try:
+            # admin 인증 토큰 발급
+            auth = chat_client.post(
+                "/api/admin/auth/login", json={"password": admin_pw}, timeout=10,
+            )
+            if auth.status_code != 200:
+                print(f"  ⚠ admin 로그인 실패 ({auth.status_code}) — 캐시 클리어 스킵 ({label})")
+                return
+            token = auth.json().get("access_token") or auth.json().get("token")
+            r = chat_client.post(
+                "/api/admin/cache/clear?scope=all",
+                headers={"Authorization": f"Bearer {token}"}, timeout=10,
+            )
+            if r.status_code < 300:
+                print(f"  캐시 클리어 OK ({label}, status={r.status_code})")
+            else:
+                print(f"  ⚠ 캐시 클리어 실패 ({r.status_code}) ({label})")
+        except Exception as e:
+            print(f"  ⚠ 캐시 클리어 예외: {e} ({label})")
+
+    _clear_response_cache("eval 시작")
 
     all_results = {}
 
@@ -303,15 +354,31 @@ def main() -> None:
         print(f"데이터셋: {dname}  ({len(items)}문항, type={dataset_type})")
         print(f"{'='*65}")
 
-        try:
-            sess_r = chat_client.post("/api/session", json={"lang": "ko"})
-            session_id = sess_r.json()["session_id"]
-        except Exception as e:
-            print(f"세션 생성 실패: {e}")
-            continue
+        _clear_response_cache(f"데이터셋 {dname}")
+
+        # 기본 세션 (per-question 모드가 아닐 때 재사용)
+        default_session_id = None
+        if not args.per_question_session:
+            try:
+                sess_r = chat_client.post("/api/session", json={"lang": "ko"})
+                default_session_id = sess_r.json()["session_id"]
+            except Exception as e:
+                print(f"세션 생성 실패: {e}")
+                continue
 
         records = []
         for idx, item in enumerate(items, 1):
+            # P1.1 픽스: 질문마다 새 세션 생성하여 캐시·이력 누적 차단
+            if args.per_question_session:
+                try:
+                    sess_r = chat_client.post("/api/session", json={"lang": "ko"})
+                    session_id = sess_r.json()["session_id"]
+                except Exception as e:
+                    print(f"  세션 생성 실패 (질문 {idx}): {e}")
+                    continue
+            else:
+                session_id = default_session_id
+
             print(f"  [{idx:02d}/{len(items)}] {item.get('id', '')}"
                   f" Q={item['question'][:40]}...", end=" ", flush=True)
             rec = evaluate_one(chat_client, session_id, item, dataset_type)
@@ -332,9 +399,20 @@ def main() -> None:
 
         all_results[dname] = summary
 
+    # P1.1 픽스(2026-05-18): 평가 옵션 메타 기록 — 재현성 추적용
+    eval_options = {
+        "per_question_session": args.per_question_session,
+        "no_cache": args.no_cache,
+        "seed": args.seed,
+        "limit": args.limit,
+        "base_url": args.base_url,
+    }
+
     combined_path = out_dir / f"combined{tag}_{timestamp}.json"
     with open(combined_path, "w", encoding="utf-8") as f:
-        json.dump({"timestamp": timestamp, "tag": args.tag, "datasets": all_results},
+        json.dump({"timestamp": timestamp, "tag": args.tag,
+                   "eval_options": eval_options,
+                   "datasets": all_results},
                   f, ensure_ascii=False, indent=2)
 
     print()
