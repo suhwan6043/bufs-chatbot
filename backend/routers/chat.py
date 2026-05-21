@@ -8,6 +8,7 @@ chat_app.py:generate_response_stream() (1701~1914줄) 로직을 1:1 이식.
 import asyncio
 import json
 import logging
+import os
 import re
 import time
 from typing import AsyncGenerator, Optional
@@ -695,6 +696,29 @@ async def chat_stream(
             _try_log(question, msg, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
             return
 
+        # ── Grounding 체크 (2026-05-21 안전망 1단계, KO direct only) ──
+        # 역할: direct_answer가 retrieved chunks에 실존하는지 substring 검증.
+        # 한계: cohort 오매칭 못 잡음 (AnswerUnit + PR #25 게이트가 책임).
+        # 모드: GROUNDING_MODE env (dry_run | enforce). dry_run = 로그만 측정.
+        if merged.direct_answer and analysis.lang != "en":
+            from app.pipeline.grounding import is_grounded as _is_grounded
+            _grd_all = (merged.vector_results or []) + (merged.graph_results or [])
+            _grd_ok, _grd_missing = _is_grounded(merged.direct_answer, _grd_all)
+            _grd_mode = os.getenv("GROUNDING_MODE", "dry_run").strip().lower()
+            logger.info("GROUNDING_CHECK %s", json.dumps({
+                "mode": _grd_mode,
+                "grounded": _grd_ok,
+                "missing": _grd_missing,
+                "intent": analysis.intent.value if analysis.intent else None,
+                "query": question[:80],
+                "direct_preview": merged.direct_answer[:100],
+                "chunks_count": len(_grd_all),
+                "endpoint": "stream",
+            }, ensure_ascii=False))
+            if _grd_mode == "enforce" and not _grd_ok:
+                logger.warning("GROUNDING_REJECT (stream): direct_answer 차단 → LLM 경로 (missing=%s)", _grd_missing)
+                merged.direct_answer = ""  # fall-through to LLM stream
+
         # direct_answer 단락 응답 (KO only)
         if merged.direct_answer and analysis.lang != "en":
             # 멀티턴 컨텍스트 보존: direct_answer도 session history에 append.
@@ -1036,6 +1060,26 @@ async def chat_sync(
             intent=analysis.intent.value if analysis.intent else "",
             duration_ms=int((time.monotonic() - _t0) * 1000),
         )
+
+    # ── Grounding 체크 (2026-05-21 안전망 1단계, KO direct only, sync 경로) ──
+    if merged.direct_answer and analysis.lang != "en":
+        from app.pipeline.grounding import is_grounded as _is_grounded
+        _grd_all = (merged.vector_results or []) + (merged.graph_results or [])
+        _grd_ok, _grd_missing = _is_grounded(merged.direct_answer, _grd_all)
+        _grd_mode = os.getenv("GROUNDING_MODE", "dry_run").strip().lower()
+        logger.info("GROUNDING_CHECK %s", json.dumps({
+            "mode": _grd_mode,
+            "grounded": _grd_ok,
+            "missing": _grd_missing,
+            "intent": analysis.intent.value if analysis.intent else None,
+            "query": question[:80],
+            "direct_preview": merged.direct_answer[:100],
+            "chunks_count": len(_grd_all),
+            "endpoint": "sync",
+        }, ensure_ascii=False))
+        if _grd_mode == "enforce" and not _grd_ok:
+            logger.warning("GROUNDING_REJECT (sync): direct_answer 차단 → LLM 경로 (missing=%s)", _grd_missing)
+            merged.direct_answer = ""  # fall-through to LLM generate
 
     if merged.direct_answer and analysis.lang != "en":
         # 멀티턴 컨텍스트 보존: direct_answer도 세션 history에 저장해야

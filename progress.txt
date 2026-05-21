@@ -33,13 +33,60 @@ F. 최종 머지 — 사용자 명시 시점에 main으로 squash 또는 multi-c
   - 4원칙 위반 2건 (하드코딩 5초 timeout)
   - L2 dead code 의심, L3 follow-up 측정 불가
   - "28초 rewrite" = PR #24 환경 한정 (main은 0.8s 제한)
+- 모듈 1: query_rewriter.py deep dive (reports/llm_audit/modules/01_query_rewriter.md)
+  - 25개 항목 (P1급 5건, P2급 11건, P3급 9건)
+- 안전망 — 골든 회귀 테스트 (commit 552f580)
+  - KO 3-path × 3회 캡처 안정성 확인 후 시그너처 굳힘
+  - chat.py done payload에 path 필드 6곳 추가 (관측성)
+  - CLAUDE.md 함정 지도 18건 + 실행 명령어 7종
+- 안전망 — grounding 관측 도구 (5/21 dry-run 측정 후 동결)
+  - app/pipeline/grounding.py: dry_run 디폴트, enforce 미사용
+  - chat.py 두 곳 GROUNDING_CHECK 로그 (stream + sync)
+  - tests/test_grounding.py 15건 + tests/test_golden_paths.py 3건 = 18 PASS
+  - scripts/measure_grounding.py: 실 24 direct 쿼리 + 합성 시나리오 + 95/70 기준
+
+## 5/21 측정으로 확정된 발견 — 매우 중요
+
+### 텍스트 grounding은 direct_answer 검증에 부적합 (범주 오류)
+- direct_answer는 graph FAQ 노드(사람이 미리 작성)에서 나오는 텍스트.
+  LLM이 생성하지 않으므로 "환각" 대상이 아님.
+- chunks 본문과 graph 노드의 direct_answer 메타데이터는 다른 출처.
+  포맷이 다르면 정상 응답도 false reject.
+- 실측: 19건 중 grounded 84.2%, reject 3건 모두 false positive로 확인 (정상 응답 차단).
+  진짜 환각 차단 0건. enforce 켜면 순손해 (generate 부하↑, UX↓, 안전성 이득 0).
+- → grounding 모듈은 dry-run/관측 전용으로 동결. enforce 미적용.
+
+### 진짜 위험은 "틀린 FAQ 노드 매칭" — 2주차 작업으로 이관
+- 예: 2023학번 질문에 2020학번 노드가 retrieve되는 경우.
+- 이는 grounding(텍스트 출처 검증)이 아니라 retrieval 정합성 문제.
+- 해결 위치: PR #25 rerank_bypass_threshold (0.20) 강화 +
+  graph 노드 매칭의 cohort·intent 정합성 검증 +
+  AnswerUnit 게이트 확장.
+- 작업 시점: 2주차 graph 작업과 통합 진행.
+
+### 메모 — 이 결정을 잊지 말 것
+앞으로 누군가 grounding의 substring 매칭을 정교화하려고 30분을 쓰려고 하면,
+"검증 대상 자체가 틀렸음"을 이 progress.txt에서 확인할 것. 본 모듈은
+**관측 도구로 의도적 동결** 상태이지 "미완성 차단기" 아님.
 
 ## 미완료
-- 모듈 1: query_rewriter.py deep dive (다음 작업)
-- 모듈 2~8 전부
+- 모듈 2: translator.py
+- 모듈 3: follow_up_detector.py
+- 모듈 4: query_analyzer.py
+- 모듈 5: context_merger.py
+- 모듈 6: answer_generator.py
+- 모듈 7: response_validator.py
+- 모듈 8: chat.py (backend 통합)
 - 리팩터 청사진 (Phase C)
 - 실행 (Phase D)
 - 검증 (Phase E)
+
+## 2주차 우선 작업 (1주차 안전망 종료 후)
+- direct_answer 안전성 강화 — retrieval 게이트 강화 트랙:
+  1. PR #25 rerank_bypass_threshold (0.20) 임계 재검토 + 운영 데이터 측정
+  2. graph 노드 매칭이 cohort(학번·단대) 구분 정확한지 검증
+  3. AnswerUnit cohort 일치 검증을 direct_answer 채택 루프에 추가
+- search latency 분해 (PR #26 12-stage trace 활용 가능 시점에)
 
 ## 주의 (다음 세션이 알아야 할 컨텍스트)
 1. 팀원 PR #24·#26은 OPEN 상태로 진화 중. 절대 cherry-pick·rebase 안 함.

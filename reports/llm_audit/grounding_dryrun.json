@@ -1,0 +1,288 @@
+{
+  "timestamp": "2026-05-21 18:21:07",
+  "queries_attempted": 20,
+  "grounding_check_records": 19,
+  "grounded_count": 16,
+  "grounded_pct": 84.21,
+  "intent_distribution": {
+    "GRADUATION_REQ": 6,
+    "SCHEDULE": 5,
+    "REGISTRATION": 6,
+    "GENERAL": 2
+  },
+  "missing_fact_distribution": {
+    "grade": 4,
+    "date_ko": 13
+  },
+  "reject_samples": [
+    {
+      "mode": "dry_run",
+      "grounded": false,
+      "missing": [
+        "grade:4학년",
+        "grade:4학년",
+        "date_ko:2026년 2월 9일",
+        "date_ko:2026년 2월 10일",
+        "date_ko:2026년 3월 6일",
+        "date_ko:2026년 3월 4일",
+        "date_ko:2026년 2월 11일",
+        "date_ko:2026년 5월 26일"
+      ],
+      "intent": "SCHEDULE",
+      "query": "수강신청 기간",
+      "direct_preview": "- 수강신청_1학년: 2026년 2월 9일 (1학년 10:00〜15:20 (월요일) - 교양, 글로벌소통역량)\n- 수강신청_2학년: 2026년 2월 10일 (2학년 10:00〜15",
+      "chunks_count": 5,
+      "endpoint": "stream"
+    },
+    {
+      "mode": "dry_run",
+      "grounded": false,
+      "missing": [
+        "date_ko:2026년 4월 20일"
+      ],
+      "intent": "SCHEDULE",
+      "query": "중간고사 기간 언제야?",
+      "direct_preview": "중간고사 기간은 2026년 4월 20일부터 4월 24일까지입니다.",
+      "chunks_count": 3,
+      "endpoint": "stream"
+    },
+    {
+      "mode": "dry_run",
+      "grounded": false,
+      "missing": [
+        "grade:4학년",
+        "grade:4학년",
+        "date_ko:2026년 2월 9일",
+        "date_ko:2026년 2월 10일",
+        "date_ko:2026년 3월 6일",
+        "date_ko:2026년 3월 4일",
+        "date_ko:2026년 2월 11일",
+        "date_ko:2026년 5월 26일"
+      ],
+      "intent": "SCHEDULE",
+      "query": "수강신청 날짜 알려줘",
+      "direct_preview": "- 수강신청_1학년: 2026년 2월 9일 (1학년 10:00〜15:20 (월요일) - 교양, 글로벌소통역량)\n- 수강신청_2학년: 2026년 2월 10일 (2학년 10:00〜15",
+      "chunks_count": 4,
+      "endpoint": "stream"
+    }
+  ],
+  "synthetic_pass": false,
+  "verdict": "✅ grounded 84.2% — 정상 범위 (70~95%). enforce 켤 만함.",
+  "interpretation_thresholds": {
+    "loose_gate": "grounded >= 95%",
+    "tight_gate": "grounded <= 70%",
+    "normal_range": "70% < grounded < 95%"
+  },
+  "records": [
+    {
+      "mode": "dry_run",
+      "grounded": true,
+      "missing": [],
+      "intent": "GRADUATION_REQ",
+      "query": "졸업학점 알려줘",
+      "direct_preview": "2023학번 내국인 학생의 졸업학점은 120학점입니다.",
+      "chunks_count": 3,
+      "endpoint": "stream"
+    },
+    {
+      "mode": "dry_run",
+      "grounded": true,
+      "missing": [],
+      "intent": "GRADUATION_REQ",
+      "query": "졸업 요건",
+      "direct_preview": "2023학번 내국인 학생의 졸업학점은 120학점입니다.",
+      "chunks_count": 3,
+      "endpoint": "stream"
+    },
+    {
+      "mode": "dry_run",
+      "grounded": false,
+      "missing": [
+        "grade:4학년",
+        "grade:4학년",
+        "date_ko:2026년 2월 9일",
+        "date_ko:2026년 2월 10일",
+        "date_ko:2026년 3월 6일",
+        "date_ko:2026년 3월 4일",
+        "date_ko:2026년 2월 11일",
+        "date_ko:2026년 5월 26일"
+      ],
+      "intent": "SCHEDULE",
+      "query": "수강신청 기간",
+      "direct_preview": "- 수강신청_1학년: 2026년 2월 9일 (1학년 10:00〜15:20 (월요일) - 교양, 글로벌소통역량)\n- 수강신청_2학년: 2026년 2월 10일 (2학년 10:00〜15",
+      "chunks_count": 5,
+      "endpoint": "stream"
+    },
+    {
+      "mode": "dry_run",
+      "grounded": true,
+      "missing": [],
+      "intent": "GRADUATION_REQ",
+      "query": "졸업요건 중 전공과 교양 기준 알려줘",
+      "direct_preview": "2023학번 내국인 학생의 졸업학점은 120학점입니다.",
+      "chunks_count": 3,
+      "endpoint": "stream"
+    },
+    {
+      "mode": "dry_run",
+      "grounded": true,
+      "missing": [],
+      "intent": "GRADUATION_REQ",
+      "query": "졸업학점 영역별로 알려줘",
+      "direct_preview": "2023학번 내국인 학생의 졸업학점은 120학점입니다.",
+      "chunks_count": 3,
+      "endpoint": "stream"
+    },
+    {
+      "mode": "dry_run",
+      "grounded": true,
+      "missing": [],
+      "intent": "REGISTRATION",
+      "query": "수강신청 일정 알려줘",
+      "direct_preview": "[주요 학사일정]\n- 장바구니 신청: 2026년 1월 28일부터 2월 1일까지 ※10:00〜16:00\n- 개강, 공휴일(삼일절 대체 휴일): 2026년 3월 2일\n- OCU개강일:",
+      "chunks_count": 4,
+      "endpoint": "stream"
+    },
+    {
+      "mode": "dry_run",
+      "grounded": false,
+      "missing": [
+        "date_ko:2026년 4월 20일"
+      ],
+      "intent": "SCHEDULE",
+      "query": "중간고사 기간 언제야?",
+      "direct_preview": "중간고사 기간은 2026년 4월 20일부터 4월 24일까지입니다.",
+      "chunks_count": 3,
+      "endpoint": "stream"
+    },
+    {
+      "mode": "dry_run",
+      "grounded": true,
+      "missing": [],
+      "intent": "GENERAL",
+      "query": "학사 관련 자주 묻는 질문을 알려줘",
+      "direct_preview": "1. [학적] 휴학 및 복학 신청 기간/방법\n질문: 일반휴학(또는 군휴학)을 신청하고 싶은데 기간과 절차가 어떻게 되나요?\n\n답변: * 신청 방법: [통합정보시스템] → [학적] ",
+      "chunks_count": 2,
+      "endpoint": "stream"
+    },
+    {
+      "mode": "dry_run",
+      "grounded": true,
+      "missing": [],
+      "intent": "SCHEDULE",
+      "query": "학사일정 알려줘",
+      "direct_preview": "[주요 학사일정]\n- 장바구니 신청: 2026년 1월 28일부터 2월 1일까지 ※10:00〜16:00\n- 개강, 공휴일(삼일절 대체 휴일): 2026년 3월 2일\n- OCU개강일:",
+      "chunks_count": 1,
+      "endpoint": "stream"
+    },
+    {
+      "mode": "dry_run",
+      "grounded": true,
+      "missing": [],
+      "intent": "SCHEDULE",
+      "query": "이번 학기 주요 학사일정을 알려줘",
+      "direct_preview": "[주요 학사일정]\n- 장바구니 신청: 2026년 1월 28일부터 2월 1일까지 ※10:00〜16:00\n- 개강, 공휴일(삼일절 대체 휴일): 2026년 3월 2일\n- OCU개강일:",
+      "chunks_count": 1,
+      "endpoint": "stream"
+    },
+    {
+      "mode": "dry_run",
+      "grounded": false,
+      "missing": [
+        "grade:4학년",
+        "grade:4학년",
+        "date_ko:2026년 2월 9일",
+        "date_ko:2026년 2월 10일",
+        "date_ko:2026년 3월 6일",
+        "date_ko:2026년 3월 4일",
+        "date_ko:2026년 2월 11일",
+        "date_ko:2026년 5월 26일"
+      ],
+      "intent": "SCHEDULE",
+      "query": "수강신청 날짜 알려줘",
+      "direct_preview": "- 수강신청_1학년: 2026년 2월 9일 (1학년 10:00〜15:20 (월요일) - 교양, 글로벌소통역량)\n- 수강신청_2학년: 2026년 2월 10일 (2학년 10:00〜15",
+      "chunks_count": 4,
+      "endpoint": "stream"
+    },
+    {
+      "mode": "dry_run",
+      "grounded": true,
+      "missing": [],
+      "intent": "REGISTRATION",
+      "query": "재수강 후보 2과목 (6학점) — B0 이하 성적 과목",
+      "direct_preview": "재수강은 C+이하 과목만 가능합니다. 재수강 후 받을 수 있는 최고 성적은 A입니다.",
+      "chunks_count": 3,
+      "endpoint": "stream"
+    },
+    {
+      "mode": "dry_run",
+      "grounded": true,
+      "missing": [],
+      "intent": "REGISTRATION",
+      "query": "재수강 후보 3과목 (9학점) — B0 이하 성적 과목",
+      "direct_preview": "재수강은 C+이하 과목만 가능합니다. 재수강 후 받을 수 있는 최고 성적은 A입니다.",
+      "chunks_count": 3,
+      "endpoint": "stream"
+    },
+    {
+      "mode": "dry_run",
+      "grounded": true,
+      "missing": [],
+      "intent": "GRADUATION_REQ",
+      "query": "졸업 학점 요건 충족 — 총 131/130학점 취득 완료",
+      "direct_preview": "2023학번 내국인 학생의 졸업학점은 120학점입니다.",
+      "chunks_count": 3,
+      "endpoint": "stream"
+    },
+    {
+      "mode": "dry_run",
+      "grounded": true,
+      "missing": [],
+      "intent": "GRADUATION_REQ",
+      "query": "4학년 2학기 이수중인데 졸업까지 3학점이 모자릅니다",
+      "direct_preview": "2023학번 내국인 학생의 졸업학점은 120학점입니다.",
+      "chunks_count": 3,
+      "endpoint": "stream"
+    },
+    {
+      "mode": "dry_run",
+      "grounded": true,
+      "missing": [],
+      "intent": "REGISTRATION",
+      "query": "수강신청이 아니라 휴학이라니까요",
+      "direct_preview": "휴학생은 수강신청이 불가합니다. 수강신청을 하려면 먼저 복학 신청이 필요합니다.",
+      "chunks_count": 4,
+      "endpoint": "stream"
+    },
+    {
+      "mode": "dry_run",
+      "grounded": true,
+      "missing": [],
+      "intent": "GENERAL",
+      "query": "학생증",
+      "direct_preview": "1. 재발급 신청 장소\n부서: 대학본부(F동) 1층 학사지원팀\n\n운영 시간: 평일 09:00 ~ 17:00 (점심시간 12:00 ~ 13:00 제외)\n\n2. 준비물 및 비용\n\n재발",
+      "chunks_count": 3,
+      "endpoint": "stream"
+    },
+    {
+      "mode": "dry_run",
+      "grounded": true,
+      "missing": [],
+      "intent": "REGISTRATION",
+      "query": "계절학기",
+      "direct_preview": "계절학기는 추가 수강신청 기간은 없으나 1차 수강신청 정정기간을 활용하여 여석이 있는 강좌에 대해서만 추가로 신청 가능합니다.",
+      "chunks_count": 5,
+      "endpoint": "stream"
+    },
+    {
+      "mode": "dry_run",
+      "grounded": true,
+      "missing": [],
+      "intent": "REGISTRATION",
+      "query": "계절학기가 뭐야",
+      "direct_preview": "계절학기는 추가 수강신청 기간은 없으나 1차 수강신청 정정기간을 활용하여 여석이 있는 강좌에 대해서만 추가로 신청 가능합니다.",
+      "chunks_count": 4,
+      "endpoint": "stream"
+    }
+  ]
+}
