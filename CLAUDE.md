@@ -33,6 +33,96 @@
 | 2 | 그래프 직접답변 / FAQ / 고정공지 | graph direct, `faq`, `notice`(📌) — RRF 동등 경쟁 |
 | 3 | 일반 공지 / 장학 | `notice`(일반), `scholarship` |
 
+## 함정 지도 — 의도된 동작 (수정 금지)
+
+리팩터·정리 작업 시 "버그처럼 보이지만 의도된 안전장치"인 항목들. 변경 전 반드시 이 섹션 확인 + 사용자 승인 받을 것.
+
+### 인프라·동시성
+- **`QUERY_ROUTER_SEQUENTIAL=1`** — 일부 ChromaDB 빌드에서 동시 query가 segfault를 일으키는 환경 우회용. 병렬 검색 로직(`query_router.py:67-72`) 수정 시 이 폴백 경로 보존 필수.
+- **`_LLM_SEMAPHORE = asyncio.Semaphore(settings.llm.max_concurrent)`** — `chat.py:36`. 동시 LLM 스트리밍 상한 (PR #22 베타 동접 보호). N+1번째 요청은 큐 대기 → Ollama VRAM 폭주 방어. **세마포어 제거하면 운영 OOM 위험**.
+- **`_LLM_RESPONSE_CACHE` (TTL 1h, max 256)** — `answer_generator._make_cache_key()` + `chat.py:723`의 `get_cached_response()`. 캐시 hit 시 LLM 우회 즉시 반환. 캐시 키 산정 변경 시 hit rate 0으로 떨어질 수 있음 — 측정 후 변경.
+
+### 다국어 분기
+- **EN은 direct_answer를 의도적으로 스킵** — `chat.py:696` / `chat.py:1034` 의 `if merged.direct_answer and analysis.lang != "en":` 조건. EN 사용자는 항상 LLM 경로(→ translator 단계). 이유: graph/FAQ의 KO 텍스트를 EN으로 직접 보낼 수 없음. 이 조건 제거 시 EN UX 회귀.
+- **`clear` SSE 이벤트는 LLM thinking 제거용** — `answer_generator.py:950` 의 `yield "\x00CLEAR\x00"`. Ollama 네이티브 경로에서 thinking 토큰 누적 후 실제 답변 시작 시 프론트 누적 텍스트 리셋. 프론트 [`useChat.ts:46-49`](frontend/src/hooks/useChat.ts) 가 이 이벤트 수신. 마커 변경 시 양쪽 동시 수정.
+
+### 검색·랭킹
+- **Phase 2.5 FAQ 최소 보장** — `query_router.py:268-289`. preferred_types에 `faq`가 있는데 FAQ 청크가 2개 미만이면 FAQ-only 추가 검색. 크롤된 일반 페이지가 상위 랭킹 차지해 FAQ가 reranker에 도달 못하는 회귀 방지용. **제거 시 a01·sc01 등 회귀 재현**.
+- **OCU intent_k 제한 제거 상태** — `query_router.py:172-177`. 이전 `intent_k = min(intent_k, 6)`로 OCU 청크가 6위 밖에서 잘리는 q033/q035/q040 회귀 발생 → 제거됨. 다시 도입하지 말 것.
+- **FAQ/PDF diversity guarantee** — `reranker.py:181-198`. top-k가 전부 FAQ면 최상위 PDF 1개 강제 삽입. LLM이 FAQ의 짧은 답변만 보고 환각 생성하는 a01 패턴 방어용.
+- **Reranker Tier 1 부스트 제거 상태 (2026-04-18)** — `reranker.py:121-124`. 이전 `domestic +22%, guide +18%` 고정 부스트가 가이드북이 정답인 케이스 회귀 → 제거. 다시 추가하지 말 것. (보존: `tier2_bonus`=FAQ/pinned 5%, `url_*_bonus`=asks_url 4~18%)
+
+### 답변 채택·검증
+- **direct_answer 채택 시 LLM·후처리·validator 모두 우회** — `chat.py:695-715` (stream), `chat.py:1034-1046` (sync). `return` 즉시 SSE done 전송. **16% 트래픽이 이 경로**라 게이트 정확도가 사용자 신뢰에 직결.
+- **PR #25 rerank_bypass_threshold = 0.20** — `context_merger.py:411`. CrossEncoder raw logit이 이 미만이면 direct_answer 거부 → LLM 경로 위임. `reranker.py:141`의 `r.metadata["raw_score"]` 보존이 게이트 입력. **reranker 점수 정규화·boost 변경 시 raw_score 보존 확인**.
+- **`_answer_unit_aligns()` 게이트** — `answer_units.py:247` + `context_merger.py:413, 445, 520`. 단위(credit/won/date) + 구별자(연도/학번/이분법) 정합 검증. final-gate(`context_merger.py:520`)는 어느 경로로 들어온 direct_answer든 마지막에 한 번 더 확인. **새 direct_answer 진입점 추가 시 이 final-gate 통과 확인**.
+- **L2 저신뢰 재시도 (`context_confidence < 0.3`)** — `chat.py:619-624`. 운영 트래픽에서 발동률 0% (audit Phase 2 확인). 제거 검토 가능하나 **transcript_context 첨부 트래픽에서 발동할 수 있어 측정 후 결정** (PR #15 이전 트래픽 패턴 확인).
+
+### 대화·재작성
+- **`follow_up_detector`의 `no_history` 첫 가드** — `follow_up_detector.py:97-98`. history 없으면 무조건 비-follow-up. 운영 로그에서 122/122 발동 — 단순 첫턴 트래픽 패턴이지 감지 실패 아님. session_id 발급 정책 (프론트 sessionStorage·새로고침 동작) 확인 전엔 감지 로직 수정 금지.
+- **`query_rewriter.rewrite()`의 standalone-question skip** — `query_rewriter.py:328-345`. 이미 자립적 의문문(의문어 + 의문 어미 + 8자 이상)은 LLM rewrite 스킵. 이전 회귀(`langauge → langauge가 prior 토픽 합성`)의 핵심 가드. 임계치 8자 변경 시 회귀 재발 가능.
+- **rewrite Stage 3의 4단계 응답 검증** — `query_rewriter.py:280-307` (길이·의문문·prior copy·동일). LLM이 답변 텍스트를 그대로 출력하는 회귀(`언제 수강신청? → 2026년 1월 28일`) 방어. 검증 완화 시 회귀 재발.
+
+### 인제스트·데이터
+- **`bufs_academic` 컬렉션은 production** — 절대 직접 수정·삭제 금지. 인제스트 실험은 별도 컬렉션(`bufs_v2`, `bufs_p0_fix_*`)에서 진행 후 `CHROMA_COLLECTION` env 전환으로 cutover.
+- **`data/crawl_meta/content_hashes.json` source_id 형식 변경 = 일회성 마이그레이션 비용** — 크롤러 source_id 키 변경 시 기존 변경감지 상태 전체 무효화. 머지 전 사용자 명시 승인 필수.
+
+## 실행 명령어
+
+### 백엔드 시작
+```bash
+bash scripts/run_backend.sh
+# → uvicorn backend.main:app --host 0.0.0.0 --port 8000 (자동 재시작 10회)
+# 헬스체크: curl http://localhost:8000/api/health
+```
+
+### Ollama 시작
+```bash
+bash scripts/run_ollama.sh
+# → OLLAMA_NUM_PARALLEL=2 OLLAMA_MAX_LOADED_MODELS=2 ollama serve
+```
+
+### 평가 (정답률 회귀)
+```bash
+python -X utf8 scripts/eval_contains_f1.py \
+  --datasets data/eval/balanced_test_set.jsonl \
+             data/eval/rag_eval_dataset_2026_1.jsonl \
+             data/eval/user_eval_dataset_50.jsonl \
+  --base-url http://localhost:8000 \
+  --output reports/eval_contains_f1 \
+  [--tag <태그>] [--seed 42] [--per-question-session] [--no-cache]
+```
+- baseline (5/18 환경): `combined_p0_1a_20260518_143121.json` = **68.90%**
+- NO-GO: 전체 -1pp / 단일셋 -3pp / 거부율 -10pp 폭락
+
+### 골든 회귀 테스트
+```bash
+# 골든 캡처 (현 동작을 골든 파일에 저장)
+python scripts/capture_golden.py --base-url http://localhost:8000 --output tests/golden/
+# 골든 재실행 검증
+pytest tests/test_golden_paths.py -v
+```
+
+### Reranker 임계치 측정 (PR #25 후속)
+```bash
+python scripts/measure_rerank_bypass_threshold.py
+# 운영 로그 23쌍 라벨 데이터에서 (cross logit, Q-Q cosine) 분포 측정
+```
+
+### 단위 테스트
+```bash
+pytest tests/ -v
+# 또는 특정 모듈
+pytest tests/test_follow_up_detector.py -v
+```
+
+### 인제스트 (별도 컬렉션)
+```bash
+export CHROMA_COLLECTION=bufs_v2     # production bufs_academic 건드리지 말 것
+python scripts/ingest_all_v2.py --collection bufs_v2 --report /tmp/ingest.json
+# 80-100분 GPU
+```
+
 ## 작업 규칙
 
 - 새 기능 전 `app/pipeline/`, `app/crawler/` 기존 함수 우선 재사용. 중복 구현 금지.

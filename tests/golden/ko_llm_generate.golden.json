@@ -1,0 +1,19 @@
+{
+  "label": "ko_llm_generate",
+  "query": "휴학신청은 어떻게 해요?",
+  "description": "KO LLM generate — procedural 질문, LLM 경유 검증",
+  "captured_at": "2026-05-21",
+  "captured_by": "scripts/capture_golden.py --runs 3",
+  "stability_note": "3회 캡처 — Run 1 stream(LLM 1회 호출), Run 2-3 cached(LLM_RESPONSE_CACHE hit). 둘 다 정상. intent·answer 동일.",
+  "expected_path_any": ["stream", "cached"],
+  "expected_intent_any": ["LEAVE_OF_ABSENCE", "GENERAL"],
+  "must_contain_any": ["휴학", "복학", "통합정보시스템", "학생포털"],
+  "min_answer_chars": 50,
+  "assertions": {
+    "path": "stream 또는 cached (LLM 호출 또는 캐시 hit)",
+    "intent": "LEAVE_OF_ABSENCE 또는 GENERAL",
+    "must_contain_any": "휴학·복학·통합정보시스템·학생포털 중 1개 이상",
+    "min_chars": ">= 50 (거절 회귀 방어)"
+  },
+  "reference_response_excerpt": "학생포털시스템(m.bufs.ac.kr) > 학적 > 온라인 휴·복학 신청에서 신청 가능합니다. 일반휴학은 최대 6학기까지 가능하며..."
+}

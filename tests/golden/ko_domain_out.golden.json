@@ -1,0 +1,20 @@
+{
+  "label": "ko_domain_out",
+  "query": "마라탕 맛집 알려줘",
+  "description": "도메인 밖 쿼리 → 환각 방지. 거절 텍스트 자체는 검증 안 함 (UX 개선 여지)",
+  "captured_at": "2026-05-21",
+  "captured_by": "scripts/capture_golden.py --runs 3",
+  "stability_note": "3회 캡처 — Run 1 stream, Run 2-3 cached. GENERAL intent 안정. fact_hits=0 매번.",
+  "expected_intent_any": ["GENERAL"],
+  "must_not_be_path": "direct",
+  "max_fact_token_hits": 0,
+  "max_answer_chars": 500,
+  "assertions": {
+    "path_negative": "direct 면 실패 (graph가 무관 쿼리에 잘못 매칭한 회귀)",
+    "intent": "GENERAL 또는 FACILITY 안정 분류",
+    "fact_hits": "== 0 (학점·전화번호·학번 정규식 매칭 0회 = 환각 안 함)",
+    "max_chars": "< 500 (장황한 환각 차단)"
+  },
+  "reference_response": "관련 정보를 찾을 수 없습니다.",
+  "design_note": "거절 문구는 UX 개선 대상이라 verbatim 검증 안 함. 본질은 (1) graph 오매칭 차단 (2) 환각 fact 생성 안 함 (3) 짧은 응답."
+}

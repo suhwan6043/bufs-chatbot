@@ -519,6 +519,7 @@ async def chat_stream(
                 "results": [],
                 "intent": "CONTACT",
                 "duration_ms": int((time.monotonic() - _t0) * 1000),
+                "path": "contact",
             }, ensure_ascii=False)}
             return
 
@@ -585,6 +586,7 @@ async def chat_stream(
             _try_log_simple(question, _clarify_msg, sid, "CLARIFICATION", _t0, user_id=user_id)
             yield {"event": "done", "data": json.dumps({
                 "answer": _clarify_msg,
+                "path": "clarification",
                 "source_urls": [],
                 "results": [],
                 "intent": "CLARIFICATION",
@@ -688,6 +690,7 @@ async def chat_stream(
                 "answer": msg, "source_urls": [], "results": [],
                 "intent": analysis.intent.value if analysis.intent else "",
                 "duration_ms": int((time.monotonic() - _t0) * 1000),
+                "path": "no_results",
             }, ensure_ascii=False)}
             _try_log(question, msg, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
             return
@@ -710,6 +713,7 @@ async def chat_stream(
                 "results": _serialize_results(merged.vector_results + merged.graph_results),
                 "intent": analysis.intent.value if analysis.intent else "",
                 "duration_ms": int((time.monotonic() - _t0) * 1000),
+                "path": "direct",
             }, ensure_ascii=False)}
             _try_log(question, merged.direct_answer, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
             return
@@ -741,6 +745,7 @@ async def chat_stream(
                 "results": _serialize_results(all_results),
                 "intent": analysis.intent.value if analysis.intent else "",
                 "duration_ms": int((time.monotonic() - _t0) * 1000),
+                "path": "cached",
             }, ensure_ascii=False)}
             return
 
@@ -901,6 +906,7 @@ async def chat_stream(
             "results": _serialize_results(all_results),
             "intent": analysis.intent.value if analysis.intent else "",
             "duration_ms": _ms_total,
+            "path": "stream",
             "timing": {
                 "follow_up_ms": _ms_follow_up,
                 "rewrite_ms": _ms_rewrite,

@@ -1,0 +1,17 @@
+날짜: 2026-04-27
+작업: v2 인덱싱 파이프라인 + section_path 검색 활용 + 5회 분리 평가
+
+[이전 작업은 PR #15·#16·#18로 main 머지 완료. 본 파일은 백업 보존 용도]
+
+완료:
+  [인덱싱 파이프라인]
+  - Surya 0.4.15 → 0.17.1 마이그레이션 (transformers 4.57.6 핀)
+  - page_router 디지털/스캔 분류 버그 수정 (drawings 감지)
+  - chunking_v2 strip_ocr_markup (<br>/<b> 태그 정리)
+  - scripts/ingest_all_v2.py 작성
+
+평가 5회 결과:
+  4/21 baseline:                                    83.54% (137/164)
+  평가5 (B-2 + A-2 + FAQ/notice 추가, 1461 청크):  82.93% (-0.61pp)
+
+미완료 항목들은 PR #15-18 머지 후 후속 작업으로 진행됨.

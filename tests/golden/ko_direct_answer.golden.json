@@ -1,0 +1,19 @@
+{
+  "label": "ko_direct_answer",
+  "query": "졸업학점 알려줘",
+  "description": "KO direct_answer 우회 — PR #25 rerank gate 통과 후 graph FAQ 직답변 송출",
+  "captured_at": "2026-05-21",
+  "captured_by": "scripts/capture_golden.py --runs 3",
+  "stability_note": "3/3 모두 path=direct, GRADUATION_REQ, 동일 응답 — 가장 안정적",
+  "expected_path_any": ["direct"],
+  "expected_intent_any": ["GRADUATION_REQ"],
+  "must_contain": ["120학점"],
+  "min_fact_token_hits": 1,
+  "assertions": {
+    "path": "정확 매칭 (direct)",
+    "intent": "GRADUATION_REQ 고정",
+    "must_contain": "응답에 '120학점' substring 포함",
+    "fact_hits": ">= 1 (학점·학번 정규식 매칭)"
+  },
+  "reference_response": "2023학번 내국인 학생의 졸업학점은 120학점입니다."
+}

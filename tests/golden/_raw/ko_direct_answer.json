@@ -1,0 +1,244 @@
+{
+  "label": "ko_direct_answer",
+  "query": "졸업학점 알려줘",
+  "description": "KO direct_answer 우회 — PR #25 rerank gate 통과 후 direct 송출",
+  "expected_path": "direct",
+  "expected_intent_any": [
+    "GRADUATION_REQ"
+  ],
+  "runs": [
+    {
+      "run": 1,
+      "signatures": {
+        "inferred_path": "direct",
+        "intent": "GRADUATION_REQ",
+        "answer_chars": 30,
+        "source_urls_count": 0,
+        "results_count": 3,
+        "duration_ms": 3125,
+        "has_timing": false,
+        "token_events": 0,
+        "clear_events": 0,
+        "fact_token_hits": 2,
+        "ko_chars": 18,
+        "en_chars": 0,
+        "en_ratio": 0.0
+      },
+      "done_payload": {
+        "answer": "2023학번 내국인 학생의 졸업학점은 120학점입니다.",
+        "source_urls": [],
+        "results": [
+          {
+            "text": "- 40 -\n6. 학생포털시스템 학업성적사정표 활용 방법\n \n 대상자 : 재적생(재학생, 휴학생) 전 학년\n- 학생포털시스템(https://m.bufs.ac.kr) → 졸업 → 학업성적사정표\n- 졸업기준학점, 현재까지 이수학점, 부족학점, 당해학기 수강신청 과목 확인 가능\n  수강신청 이후 ~ 성적반영 전까지 : 당해학기 수강신청 학점도 이수학점으로 합산하여 표기\n  당해학기 성적반영 후 : 이수학점만 이수학점에 합산하여 표기 \n- 학번의 앞 4자리(입학년도) 기준으로 졸업(기준) 조회\n 학업성적사정표 확인 가능 내용\n- 학업성적사정표를 확인하여 졸업기준학점 및 부족학점 확인이 가능함.\n- 학업성적사정표를 확인하여 이미 취득한 학점중 이수구분이 필요한 경우 이수구분 변경신청기간에 변경 신청함. \n[2026학년도 1학기 신청 기간: 2026.2.9.(월) - 2.13.(금)]\n- 복수‧융합·마이크로전공 등 제2전공(다전공)의 종류, 명칭, 졸업기준학점 및 이수·부족학점 확인이 가능",
+            "score": 0.024,
+            "source": "data/pdfs/2026학년도1학기학사안내.pdf",
+            "page_number": 44,
+            "doc_type": "domestic",
+            "in_context": true,
+            "section_path": "5. 졸업인증제(2017학번 ~ 2023학번) > 6. 학생포털시스템 학업성적사정표 활용 방법",
+            "source_url": "",
+            "title": "",
+            "post_date": "",
+            "faq_id": "",
+            "faq_question": "",
+            "faq_answer": ""
+          },
+          {
+            "text": ". 졸업학점 및 졸업요건 : 아래의 1), 2), 3) 요건을 모두 충족하여야 함\n          1) 졸업학점 : 교양(A), 글로벌소통역량(B), 전공(C)의 이수학점을 포함하여 120학점 이상 이수\n          2) 전공졸업시험 : 주전공 졸업시험을 통과하여야 하며, 복수전공을 이수하는 경우 복수전공의 졸업시험도 통과하여야 함 \n(※ 부전공과 마이크로전공은 전공졸업시험 없음)\n          3) 기업가정신 교과목 이수",
+            "score": 0.0223,
+            "source": "data/pdfs/2026학년도1학기학사안내.pdf",
+            "page_number": 27,
+            "doc_type": "domestic",
+            "in_context": true,
+            "section_path": "Ⅲ. 교육과정 및 졸업",
+            "source_url": "",
+            "title": "",
+            "post_date": "",
+            "faq_id": "",
+            "faq_question": "",
+            "faq_answer": ""
+          },
+          {
+            "text": "2023학번 내국인 졸업요건\n- 졸업학점: 120\n- 교양이수학점: 30\n- 취업커뮤니티요건: 2학점\n- 졸업시험여부: 있음\n- 졸업인증: 제 합격여부 확인 가능(사회봉사, 기업가정신 등)\n- 교양 세부영역:\n  · 인성체험교양: 8학점",
+            "score": 0.2182,
+            "source": "/app/data/pdfs/2026학년도1학기학사안내.pdf",
+            "page_number": 18,
+            "doc_type": "",
+            "in_context": true,
+            "section_path": "",
+            "source_url": "",
+            "title": "",
+            "post_date": "",
+            "faq_id": "",
+            "faq_question": "",
+            "faq_answer": ""
+          }
+        ],
+        "intent": "GRADUATION_REQ",
+        "duration_ms": 3125,
+        "path": "direct"
+      },
+      "error": null
+    },
+    {
+      "run": 2,
+      "signatures": {
+        "inferred_path": "direct",
+        "intent": "GRADUATION_REQ",
+        "answer_chars": 30,
+        "source_urls_count": 0,
+        "results_count": 3,
+        "duration_ms": 2863,
+        "has_timing": false,
+        "token_events": 0,
+        "clear_events": 0,
+        "fact_token_hits": 2,
+        "ko_chars": 18,
+        "en_chars": 0,
+        "en_ratio": 0.0
+      },
+      "done_payload": {
+        "answer": "2023학번 내국인 학생의 졸업학점은 120학점입니다.",
+        "source_urls": [],
+        "results": [
+          {
+            "text": "- 40 -\n6. 학생포털시스템 학업성적사정표 활용 방법\n \n 대상자 : 재적생(재학생, 휴학생) 전 학년\n- 학생포털시스템(https://m.bufs.ac.kr) → 졸업 → 학업성적사정표\n- 졸업기준학점, 현재까지 이수학점, 부족학점, 당해학기 수강신청 과목 확인 가능\n  수강신청 이후 ~ 성적반영 전까지 : 당해학기 수강신청 학점도 이수학점으로 합산하여 표기\n  당해학기 성적반영 후 : 이수학점만 이수학점에 합산하여 표기 \n- 학번의 앞 4자리(입학년도) 기준으로 졸업(기준) 조회\n 학업성적사정표 확인 가능 내용\n- 학업성적사정표를 확인하여 졸업기준학점 및 부족학점 확인이 가능함.\n- 학업성적사정표를 확인하여 이미 취득한 학점중 이수구분이 필요한 경우 이수구분 변경신청기간에 변경 신청함. \n[2026학년도 1학기 신청 기간: 2026.2.9.(월) - 2.13.(금)]\n- 복수‧융합·마이크로전공 등 제2전공(다전공)의 종류, 명칭, 졸업기준학점 및 이수·부족학점 확인이 가능",
+            "score": 0.024,
+            "source": "data/pdfs/2026학년도1학기학사안내.pdf",
+            "page_number": 44,
+            "doc_type": "domestic",
+            "in_context": true,
+            "section_path": "5. 졸업인증제(2017학번 ~ 2023학번) > 6. 학생포털시스템 학업성적사정표 활용 방법",
+            "source_url": "",
+            "title": "",
+            "post_date": "",
+            "faq_id": "",
+            "faq_question": "",
+            "faq_answer": ""
+          },
+          {
+            "text": ". 졸업학점 및 졸업요건 : 아래의 1), 2), 3) 요건을 모두 충족하여야 함\n          1) 졸업학점 : 교양(A), 글로벌소통역량(B), 전공(C)의 이수학점을 포함하여 120학점 이상 이수\n          2) 전공졸업시험 : 주전공 졸업시험을 통과하여야 하며, 복수전공을 이수하는 경우 복수전공의 졸업시험도 통과하여야 함 \n(※ 부전공과 마이크로전공은 전공졸업시험 없음)\n          3) 기업가정신 교과목 이수",
+            "score": 0.0223,
+            "source": "data/pdfs/2026학년도1학기학사안내.pdf",
+            "page_number": 27,
+            "doc_type": "domestic",
+            "in_context": true,
+            "section_path": "Ⅲ. 교육과정 및 졸업",
+            "source_url": "",
+            "title": "",
+            "post_date": "",
+            "faq_id": "",
+            "faq_question": "",
+            "faq_answer": ""
+          },
+          {
+            "text": "2023학번 내국인 졸업요건\n- 졸업학점: 120\n- 교양이수학점: 30\n- 취업커뮤니티요건: 2학점\n- 졸업시험여부: 있음\n- 졸업인증: 제 합격여부 확인 가능(사회봉사, 기업가정신 등)\n- 교양 세부영역:\n  · 인성체험교양: 8학점",
+            "score": 0.2182,
+            "source": "/app/data/pdfs/2026학년도1학기학사안내.pdf",
+            "page_number": 18,
+            "doc_type": "",
+            "in_context": true,
+            "section_path": "",
+            "source_url": "",
+            "title": "",
+            "post_date": "",
+            "faq_id": "",
+            "faq_question": "",
+            "faq_answer": ""
+          }
+        ],
+        "intent": "GRADUATION_REQ",
+        "duration_ms": 2863,
+        "path": "direct"
+      },
+      "error": null
+    },
+    {
+      "run": 3,
+      "signatures": {
+        "inferred_path": "direct",
+        "intent": "GRADUATION_REQ",
+        "answer_chars": 30,
+        "source_urls_count": 0,
+        "results_count": 3,
+        "duration_ms": 2741,
+        "has_timing": false,
+        "token_events": 0,
+        "clear_events": 0,
+        "fact_token_hits": 2,
+        "ko_chars": 18,
+        "en_chars": 0,
+        "en_ratio": 0.0
+      },
+      "done_payload": {
+        "answer": "2023학번 내국인 학생의 졸업학점은 120학점입니다.",
+        "source_urls": [],
+        "results": [
+          {
+            "text": "- 40 -\n6. 학생포털시스템 학업성적사정표 활용 방법\n \n 대상자 : 재적생(재학생, 휴학생) 전 학년\n- 학생포털시스템(https://m.bufs.ac.kr) → 졸업 → 학업성적사정표\n- 졸업기준학점, 현재까지 이수학점, 부족학점, 당해학기 수강신청 과목 확인 가능\n  수강신청 이후 ~ 성적반영 전까지 : 당해학기 수강신청 학점도 이수학점으로 합산하여 표기\n  당해학기 성적반영 후 : 이수학점만 이수학점에 합산하여 표기 \n- 학번의 앞 4자리(입학년도) 기준으로 졸업(기준) 조회\n 학업성적사정표 확인 가능 내용\n- 학업성적사정표를 확인하여 졸업기준학점 및 부족학점 확인이 가능함.\n- 학업성적사정표를 확인하여 이미 취득한 학점중 이수구분이 필요한 경우 이수구분 변경신청기간에 변경 신청함. \n[2026학년도 1학기 신청 기간: 2026.2.9.(월) - 2.13.(금)]\n- 복수‧융합·마이크로전공 등 제2전공(다전공)의 종류, 명칭, 졸업기준학점 및 이수·부족학점 확인이 가능",
+            "score": 0.024,
+            "source": "data/pdfs/2026학년도1학기학사안내.pdf",
+            "page_number": 44,
+            "doc_type": "domestic",
+            "in_context": true,
+            "section_path": "5. 졸업인증제(2017학번 ~ 2023학번) > 6. 학생포털시스템 학업성적사정표 활용 방법",
+            "source_url": "",
+            "title": "",
+            "post_date": "",
+            "faq_id": "",
+            "faq_question": "",
+            "faq_answer": ""
+          },
+          {
+            "text": ". 졸업학점 및 졸업요건 : 아래의 1), 2), 3) 요건을 모두 충족하여야 함\n          1) 졸업학점 : 교양(A), 글로벌소통역량(B), 전공(C)의 이수학점을 포함하여 120학점 이상 이수\n          2) 전공졸업시험 : 주전공 졸업시험을 통과하여야 하며, 복수전공을 이수하는 경우 복수전공의 졸업시험도 통과하여야 함 \n(※ 부전공과 마이크로전공은 전공졸업시험 없음)\n          3) 기업가정신 교과목 이수",
+            "score": 0.0223,
+            "source": "data/pdfs/2026학년도1학기학사안내.pdf",
+            "page_number": 27,
+            "doc_type": "domestic",
+            "in_context": true,
+            "section_path": "Ⅲ. 교육과정 및 졸업",
+            "source_url": "",
+            "title": "",
+            "post_date": "",
+            "faq_id": "",
+            "faq_question": "",
+            "faq_answer": ""
+          },
+          {
+            "text": "2023학번 내국인 졸업요건\n- 졸업학점: 120\n- 교양이수학점: 30\n- 취업커뮤니티요건: 2학점\n- 졸업시험여부: 있음\n- 졸업인증: 제 합격여부 확인 가능(사회봉사, 기업가정신 등)\n- 교양 세부영역:\n  · 인성체험교양: 8학점",
+            "score": 0.2182,
+            "source": "/app/data/pdfs/2026학년도1학기학사안내.pdf",
+            "page_number": 18,
+            "doc_type": "",
+            "in_context": true,
+            "section_path": "",
+            "source_url": "",
+            "title": "",
+            "post_date": "",
+            "faq_id": "",
+            "faq_question": "",
+            "faq_answer": ""
+          }
+        ],
+        "intent": "GRADUATION_REQ",
+        "duration_ms": 2741,
+        "path": "direct"
+      },
+      "error": null
+    }
+  ],
+  "stability": {
+    "path_stable": true,
+    "path_values": [
+      "direct",
+      "direct",
+      "direct"
+    ],
+    "intent_stable": true,
+    "intent_values": [
+      "GRADUATION_REQ",
+      "GRADUATION_REQ",
+      "GRADUATION_REQ"
+    ]
+  }
+}

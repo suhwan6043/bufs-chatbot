@@ -1,66 +1,57 @@
-날짜: 2026-04-27
-작업: v2 인덱싱 파이프라인 + section_path 검색 활용 + 5회 분리 평가
+날짜: 2026-05-21
+작업: LLM 파이프라인 전면 재설계 (refactor/llm-pipeline-overhaul)
 
-완료:
-  [인덱싱 파이프라인]
-  - Surya 0.4.15 → 0.17.1 마이그레이션 (transformers 4.57.6 핀)
-  - page_router 디지털/스캔 분류 버그 수정 (drawings 감지)
-  - chunking_v2 strip_ocr_markup (<br>/<b> 태그 정리)
-  - scripts/ingest_all_v2.py 작성 (NFC 정규화 + dedupe + lifecycle/term/semester 자동 매핑)
-    * build_embedding_text() — 임베딩 입력에만 [section] prefix (raw text 보존)
-  - bufs_v2 컬렉션 인제스트 (1346 청크, 84분, 51 PDF)
-  - bufs_academic의 FAQ + notice 청크 115개 복제 → bufs_v2 1461청크
-  - lifecycle 메타 일관성 (FAQ=static, notice=dynamic)
+## 목적
+LLM 관련 모든 구조를 모듈별로 파악하고, 문제점을 도출해 전체 파이프라인을
+수정한다. 팀원의 PR #24·#26·#13·#12와 분리된 트랙. 완성 후 main 단일 머지.
 
-  [검색 코드 변경]
-  - app/vectordb/bm25_index.py: BM25 build 시 section_path를 코퍼스에 prefix해 토큰화 (A-2)
-    * v2 메타 없는 청크에는 영향 없음 (production bufs_academic 무영향)
-  - app/pipeline/reranker.py: 변경 없음 (A-1은 평가에서 무영향 또는 회귀로 롤백)
+## 브랜치
+- 작업: refactor/llm-pipeline-overhaul (origin/main 10de3dc 기준, PR #25 머지 후)
+- 참조: review/llm-pipeline-audit (진단 보고서 — reports/llm_audit/REPORT.md)
 
-  [도구 + 문서]
-  - scripts/demo_chat.py: 인터랙티브 시연 도구 (프로필 + 질문 + 실시간 진행 표시)
-  - docs/asis_20260427.md: 시스템 As-Is 자료 (8섹션 1페이지)
+## 작업 단계
+A. 모듈별 deep dive — 각 모듈 1줄씩 읽고 문제점·우려·의심점 기록
+B. 모듈별 문제 카드 — issue list 정리 (A와 동시 진행)
+C. 리팩터 청사진 — 모듈별 fix 방향 + 의존성 그래프 + 작업 순서
+D. 실행 — 작은 step별 수정 + 매 단계 검증 (eval_contains_f1.py)
+E. 통합 검증 — 164문 회귀 평가 + 새 케이스 추가
+F. 최종 머지 — 사용자 명시 시점에 main으로 squash 또는 multi-commit
 
-  [평가 5회]
-  4/21 baseline (academic, 3377):                   83.54% (137/164)
-  평가1: B-2만 (1346):                              82.32% (135/164)
-  평가2: B-2 + A-1만:                               82.32% (A-1 무영향)
-  평가3: B-2 + A-2만:                               82.32% 전체, balanced +2.6pp
-  평가4: B-2 + A-1 + A-2 (둘 다):                   81.10% (회귀, A-1+A-2 비독립 상호작용)
-  평가5: B-2 + A-2 + FAQ/notice 추가 (1461):       82.93% (-0.61pp)  ← 현재 최선
+## 모듈 작업 순서 (의존성 낮은 → 높은)
+1. query_rewriter.py     (363 LoC, 독립)        ← 진행 중
+2. translator.py         (254 LoC, 독립)
+3. follow_up_detector.py (152 LoC, 독립)
+4. query_analyzer.py     (1,189 LoC, glossary·ko_tokenizer 의존)
+5. context_merger.py     (1,000 LoC, answer_units 의존)
+6. answer_generator.py   (1,160 LoC, LLM 핵심)
+7. response_validator.py (확인 필요)
+8. chat.py (backend)     (확인 필요, 통합 지점)
 
-  데이터셋별 (평가5):
-    balanced_test_set:  74.36% (vs baseline 66.67%, +7.69pp)  ← v2 PDF 인덱싱 효과
-    rag_eval_2026_1:    90.00% (vs 92.00%, -2.00pp)
-    user_eval_50:       82.67% (vs 86.67%, -4.00pp)            ← notice_attachment 누락 영향
+## 완료
+- 모듈 0: 인벤토리 (reports/llm_audit/REPORT.md Phase 1-4)
+  - 9개 LLM·모델 호출 지점 식별 (L1~L5, M1·M2, V1)
+  - 4원칙 위반 2건 (하드코딩 5초 timeout)
+  - L2 dead code 의심, L3 follow-up 측정 불가
+  - "28초 rewrite" = PR #24 환경 한정 (main은 0.8s 제한)
 
-미완료:
-  1. production 전환 — 단일셋 user -4.0pp 회귀 (NO-GO 기준 -3pp 초과)
-     원인: notice_attachment 2091청크 누락 (사용자 실 질문이 공지 첨부 의존)
-     해결: notice_attachment를 v2 컬렉션에 추가 인제스트 또는 academic에서 복제
+## 미완료
+- 모듈 1: query_rewriter.py deep dive (다음 작업)
+- 모듈 2~8 전부
+- 리팩터 청사진 (Phase C)
+- 실행 (Phase D)
+- 검증 (Phase E)
 
-  2. v2 인제스트의 진정한 효과 측정
-     bufs_v2(1461) + notice_attachment(2091) ≈ 3552 청크로 production 코퍼스와 동등 후 재평가
+## 주의 (다음 세션이 알아야 할 컨텍스트)
+1. 팀원 PR #24·#26은 OPEN 상태로 진화 중. 절대 cherry-pick·rebase 안 함.
+   다만 main이 갱신되면 origin/main rebase는 권장 (2~3일 간격).
+2. CLAUDE.md baseline 5/18 갱신됨: 현 환경 68.90% (4/21의 83.54% stale).
+   회귀 평가는 68.90% 기준 -1pp 이내 유지.
+3. 작업 트리에 사용자 미커밋 파일 4개(answer_generator·query_rewriter·chat·user)
+   stash@{0} "user-wip-llm-files-pre-audit"에 보관됨. 본 audit과 무관.
+4. 보고서: reports/llm_audit/REPORT.md (개요), reports/llm_audit/modules/*.md (모듈별)
+5. 본 작업은 사용자가 직접 모듈 이해와 문제점 식별을 하면서 진행하기를 원함 —
+   AI가 단독으로 결정하지 말고 발견 사항 보고 후 사용자 판단 받을 것.
 
-  3. v2 인덱싱 → production cutover (회귀 회복 후)
-     - 환경변수 CHROMA_COLLECTION=bufs_v2 (또는 bufs_v3) 변경
-     - 기존 bufs_academic은 백업 컬렉션으로 보존 (롤백 안전)
-
-  4. 시연 후속 — 사용자 데모 환경 (bufs_demo, 8002 포트)은 그대로 유지
-
-주의:
-  - production bufs_academic (3377청크) 절대 안 건드림. 모든 변경은 별도 컬렉션(bufs_v2)에만.
-  - A-2 코드 변경(bm25_index.py)은 section_path 메타가 있는 청크에만 효과 → bufs_academic에 코드 합쳐도 무영향.
-  - bufs_demo (785청크): demo 전용 (PDF + 학생포털 + FAQ/notice). 시연 종료 후 정리 가능.
-  - LM Studio 등 GPU 점유 프로세스는 인제스트·평가 중 끄는 게 안전.
-  - 평가 시 .env CHROMA_PERSIST_DIR=data/chromadb_new 이미 설정됨.
-
-  팀원 재인덱싱 명령:
-    .venv/bin/python scripts/ingest_all_v2.py --collection bufs_v2 --report /tmp/v2_full.json
-
-  필요 환경:
-    - .venv (Python 3.13, requirements.txt 적용)
-    - Ollama (http://localhost:11434) + qwen2.5vl:7b (VLM 표 추출용)
-    - GPU (Surya OCR + bge-m3 + reranker)
-    - data/pdfs/* PDF 파일들
-    예상 소요: 60-90분 (가이드북 OCR 14분 + VLM 표 추출 다수)
+## 이전 progress.txt 내용 (v2 인덱싱, 4/27)
+백업된 이전 작업 컨텍스트는 reports/llm_audit/_archive/progress_20260427.txt
+참조 (해당 작업은 PR #15·#16·#18로 머지 완료).
