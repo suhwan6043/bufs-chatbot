@@ -234,3 +234,72 @@ SCHEDULE_GATE 로그:
 ## 이전 progress.txt 내용 (v2 인덱싱, 4/27)
 백업된 이전 작업 컨텍스트는 reports/llm_audit/_archive/progress_20260427.txt
 참조 (해당 작업은 PR #15·#16·#18로 머지 완료).
+
+## 5/27 REGISTRATION schedule fan-out — 게이트 + fan-out 커밋, 운영 측정 대기
+
+### 커밋 (둘 다 디폴트 off, push 없음)
+- bb77eca feat(reg-schedule-gate): _query_registration의 schedule direct 진입
+  게이트를 question_focus=="period" 단일에서 화이트리스트 {None, "", "period"}로
+  완화. None 통과는 REG_SCHEDULE_GATE=on + "수강신청" 토큰 AND.
+  명시 focus(method/location/limit/table_lookup/rule_list/eligibility)는 차단.
+- 5229c4a feat(reg-schedule-fanout): 학년 미명시 시 정기 학부 학년 일정만
+  ("수강신청_" prefix 필터) 통합 본문 출력. 정렬 1→2→3,4→전학년, 비고 미포함.
+  L1 라벨 정책: 메타 종료일을 fan-out 의도로 인코딩(전부 past → 가장 늦은 past,
+  active 섞임 → active 1건) → context_merger의 단건 schedule_gate가 자동 부착·미부착.
+  schedule_gate.append_past_schedule_label 무수정, 중복 부착 0.
+
+### 측정 환경 — 확정값 (5/27 session_id 분석)
+**개발/측정 환경 — 운영 실트래픽 0건.** chat_*.jsonl 141건 session_id 100%가
+인공 식별자(golden/grounding/cohort/d-/hs-/ds*/test-/label-/schedgate- 등).
+UUID 또는 프론트 정상 생성 세션 패턴 0건 — 학생이 프론트에서 접속한 트래픽
+없음. M1 빈도는 이 환경에서 무의미. 운영 측정은 **실트래픽 받는 별도 서버**에서
+세 플래그(REG_SCHEDULE_GATE / REG_SCHEDULE_FANOUT / SCHEDULE_GATE_MODE=label)
+on으로 며칠 띄워야 함. 그 서버 위치·배포 절차 미확인.
+
+### 결정 근거 — 운영·평가 데이터
+"수강신청" 토큰 포함 질문 분류:
+- 운영 로그 13건: 정기 학부 92%, 휴학중 8%, 계절학기 0%, 정정 0%
+- 평가셋 65건: 정기 학부 40%, 사이트/로그인 14%, 정정 12%(명시), 장바구니 12%(명시),
+  취소 8%(명시), OCU 8%(명시), 휴학중 6%, 계절학기 0%
+→ Z 방식 (학년 일정만 통합, 계절학기·확인기간 제외) 정당화.
+   안 물은 정보 끼우면 ④(정의 질문 일정표 받음) 약점 증폭 우려.
+
+### 검증 (a)~(f) + 골든 둘 다 off에서 통과
+- (a) gate+fanout on "수강신청 알려줘" → 4학년 통합 + past 라벨, 21.2s (-12s)
+- (b) gate+fanout on "1학년 수강신청일은?" → 1학년 단일 + 비고, 12.2s
+- (c) gate on + fanout off → matches[0] 단일(1단계 동작 유지), 21.2s
+- (d) 본문→라벨 줄바꿈 1개 ('...3월 6일\n※ 가장 최근...' repr 확인, 빈 줄 0)
+- (e) 정렬 1→2→3,4→전학년 ✓
+- (f) SCHEDULE_GATE_TODAY=2026-02-10 모킹 → 1학년만 past, 나머지 active →
+  메타 종료일=2026-02-10 (2학년 active) → 라벨 미부착 = L1 보류 자동 동작.
+  죽은 코드가 미래 데이터 인입 시점에 살아있게 동작함이 검증됨.
+- 골든 3개 (KO direct/llm/domain_out) 둘 다 off에서 PASS (67s).
+
+### 분석 인프라
+- scripts/inspect_reg_schedule_traffic.py — M1 발동 빈도, M2 발동 질문 전수
+  덤프(★패턴 필터링 없음, 사람 검수), M3 본문 raw+repr 검수.
+  로그 스키마 확인됨: question/intent/answer/timestamp 등 9키.
+  기존 로그(5/21·5/26·5/27, 141건) 1회 실행 — REGISTRATION 20건, fan-out 0건
+  (운영 미가동), 단일 학년 폴백 4건(이전 1학년 수강신청일은? 측정 잔재).
+
+### 미완료
+- 운영에서 세 플래그(REG_SCHEDULE_GATE=on / REG_SCHEDULE_FANOUT=on /
+  SCHEDULE_GATE_MODE=label) on으로 며칠 측정 → M1/M2/M3 분석
+- 분석 결과 셋 다 깨끗하면 디폴트 전환 커밋:
+  세 플래그 on 묶음 + 골든 재캡처(수강신청 답이 새 기준점이라 필수) +
+  eval 164문 (Z 방식 때문에 평가셋 정정 기대 문항 점수 영향 가르기 —
+  떨어지면 "Z의 의도된 결과 vs 진짜 회귀" 분리)
+
+### 주의 (다음 세션)
+- ④ 약한고리(정의 질문이 일정표 받음): M2 전수 덤프 사람 검수로 빈도 판정.
+  거의 0이면 그냥 켬, 의미 있게 오면 별도 판단. **블랙리스트("뭐예요" 제외)는 회피** —
+  1주차 range/bound 0.5% 폐기 정신과 같음. 부채만 남고 ROI 낮음.
+- 디폴트 전환 시 골든 재캡처 필수. "수강신청 알려줘" 답이 LLM 생성 247자에서
+  학년 4건 통합 + 라벨로 바뀜 → 골든 파일 그대로면 회귀로 오인됨.
+- SCHEDULE_GATE_MODE=label 없이 GATE/FANOUT만 켜면 fan-out 답에 ※ 라벨 미부착 =
+  반쪽 답. 세 플래그 한 묶음으로 운영 전환.
+- 측정 환경이 실트래픽 받는 곳인지 미확정 시 M1(빈도) 무의미 — 환경 먼저 확정.
+- 1단계 화이트리스트가 깨끗했던 이유: question_focus는 닫힌 집합 7개+None,
+  동적 생성 없음. 새 값 생기면 화이트리스트가 조용히 깨질 수 있음 —
+  query_analyzer.py에 question_focus 신규 값 추가 시 academic_graph.py:2382
+  화이트리스트 갱신 검토 필수.
