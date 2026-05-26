@@ -1285,6 +1285,28 @@ class AcademicGraph:
         if _lang == "en":
             results = self._localize_results_en(results)
 
+        # ── graph cohort 정합성 관측 로그 (2026-05-26, 동작 변경 없음) ──
+        # 질문에서 추출된 cohort vs 매칭된 노드들의 cohort를 한 줄에 노출.
+        # 향후 운영 로그 grep으로 cohort mismatch 비율 측정 가능.
+        try:
+            _ent = entities or {}
+            _query_groups = _ent.get("student_groups") or []
+            _query_cohort = (
+                ",".join(_query_groups) if _query_groups else (student_id or "")
+            )
+            _matched_nodes = [r.metadata.get("node_id", "") for r in results[:5]]
+            _matched_cohorts = [
+                r.metadata.get("적용학번그룹") or r.metadata.get("적용학번범위") or "-"
+                for r in results[:5]
+            ]
+            logger.info(
+                "GRAPH_MATCH query_cohort=%s intent=%s n=%d nodes=%s matched_cohorts=%s",
+                _query_cohort or "-", intent, len(results),
+                _matched_nodes, _matched_cohorts,
+            )
+        except Exception as _e:
+            logger.debug("GRAPH_MATCH 로그 생성 실패 (무시): %s", _e)
+
         return results
 
     def _localize_results_en(self, results: List[SearchResult]) -> List[SearchResult]:

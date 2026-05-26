@@ -397,7 +397,15 @@ def _rehydrate_transcript_from_json(parsed_json: str):
 
 
 def _serialize_results(results: list) -> list[dict]:
-    """SearchResult 리스트를 JSON 직렬화 가능 dict로 변환."""
+    """SearchResult 리스트를 JSON 직렬화 가능 dict로 변환.
+
+    2026-05-26 graph cohort 정합성 관측 노출 (동작 변경 없음, 필드 추가만):
+      node_id, node_type — 그래프 매칭 노드 식별
+      cohort_group, cohort_range — "적용학번그룹"·"적용학번범위" 별도 보존
+        (or 폴백으로 합치면 매칭 기준 정보 손실 — 진단 단계엔 둘 다 풍부히 노출)
+      has_direct_answer — 이 노드가 direct_answer를 *보유*하는지 (채택 여부 아님;
+        채택은 done payload의 path=direct/cached/stream 으로 확인)
+    """
     items = []
     for r in results[:10]:  # 최대 10개
         meta = r.metadata or {}
@@ -415,6 +423,12 @@ def _serialize_results(results: list) -> list[dict]:
             "faq_id": meta.get("faq_id", ""),
             "faq_question": meta.get("faq_question", ""),
             "faq_answer": meta.get("faq_answer", ""),
+            # graph cohort 진단용 (관측 전용)
+            "node_id": meta.get("node_id", ""),
+            "node_type": meta.get("node_type", ""),
+            "cohort_group": meta.get("적용학번그룹", ""),
+            "cohort_range": meta.get("적용학번범위", ""),
+            "has_direct_answer": bool(meta.get("direct_answer")),
         })
     return items
 
