@@ -2399,10 +2399,10 @@ class AcademicGraph:
         ):
             matches = self._find_schedule_matches(question)
             if matches:
-                # 학년 키워드가 있으면 해당 학년 일정만 필터링
                 import re as _re
                 grade_m = _re.search(r"(\d)학년", question)
                 if grade_m:
+                    # 학년 명시 → 그 학년만 (단일 동작, 비고 포함)
                     grade = grade_m.group(1)
                     grade_matches = [
                         m for m in matches
@@ -2410,7 +2410,94 @@ class AcademicGraph:
                     ]
                     if grade_matches:
                         matches = grade_matches
+                    first = matches[0]
+                    event_name = first.get("이벤트명", "")
+                    period_text = self._format_period(
+                        first.get("시작일", ""), first.get("종료일", "")
+                    )
+                    answer = f"{event_name} 기간은 {period_text}입니다."
+                    bigo = first.get("비고", "")
+                    if bigo:
+                        answer += f" ({bigo})"
+                    return [self._schedule_to_result(first, answer, score=1.3)]
 
+                # 학년 미명시 → REG_SCHEDULE_FANOUT (디폴트 off) 보호 하에
+                # 정기 학부 학년 일정만 ("수강신청_"로 시작) 통합 본문 출력.
+                # 운영·평가 데이터: "수강신청" 질문 92%가 정기 학부 시점·학점
+                # 단순 질의, 계절학기·정정 0% (안 물은 정보는 끼우지 않음).
+                _fanout_on = os.getenv("REG_SCHEDULE_FANOUT", "off").strip().lower() in {
+                    "on", "true", "1", "yes"
+                }
+                if _fanout_on:
+                    _grade_pat = _re.compile(r"^수강신청_(.+)$")
+                    grade_items: list = []  # (sort_key, label, schedule)
+                    for s in matches:
+                        m2 = _grade_pat.match(s.get("이벤트명", ""))
+                        if not m2:
+                            continue
+                        label = m2.group(1)
+                        # 정렬: 숫자 학년 오름차순(키 0,N), "전학년"은 맨 뒤(키 1,0)
+                        if label == "전학년":
+                            sort_key = (1, 0)
+                        else:
+                            num_m = _re.match(r"^(\d)", label)
+                            sort_key = (0, int(num_m.group(1)) if num_m else 99)
+                        grade_items.append((sort_key, label, s))
+
+                    if grade_items:
+                        grade_items.sort(key=lambda x: x[0])
+
+                        # 학기 혼재 검출 (현재 데이터: 단일 학기, 미래 인입 대비 로그)
+                        semesters = {s.get("학기", "") for _, _, s in grade_items}
+                        if len(semesters) > 1:
+                            logger.warning(
+                                "REG_SCHEDULE_FANOUT 학년 일정 학기 혼재 %s — "
+                                "단일 헤더 가정 위반, 대표 매칭 학기로 표기",
+                                semesters,
+                            )
+
+                        # 통합 본문 (날짜만, 비고 미포함) — rstrip로 끝 줄바꿈 차단
+                        lines = ["수강신청 기간:"]
+                        for _, label, s in grade_items:
+                            start = s.get("시작일", "")
+                            end = s.get("종료일", "")
+                            period = self._format_period(start, end)
+                            lines.append(f"· {label}: {period}")
+                        answer = "\n".join(lines).rstrip()
+
+                        # L1 라벨 정책: 전부 past일 때만 부착 (active/future 섞이면 보류).
+                        # 구현 — schedule_gate.append_past_schedule_label은 수정하지 않고
+                        # 메타 종료일을 fan-out 의도로 인코딩하여 context_merger의 단건
+                        # schedule_gate가 자동으로 부착·미부착 판정하게 한다 (중복 부착 0).
+                        #   전부 past   → 가장 늦은 종료일을 대표로 → past 판정 → 라벨 부착
+                        #   active 섞임 → active 종료일을 대표로 → future_or_active → 미부착
+                        # 현재 데이터(2026-05-27)는 학년 4건 전부 past라 항상 라벨 붙음.
+                        # active 분기는 2026-2 데이터 인입 시 자동 발동(현재 미발동).
+                        from app.pipeline.schedule_gate import (
+                            is_temporally_valid as _is_temporally_valid,
+                        )
+                        past_items: list = []
+                        non_past_items: list = []
+                        for _, _, s in grade_items:
+                            dec = _is_temporally_valid({
+                                "node_type": "학사일정",
+                                "종료일": s.get("종료일", ""),
+                                "node_id": s.get("id", ""),
+                            })
+                            if dec.reason == "schedule_past":
+                                past_items.append(s)
+                            else:
+                                non_past_items.append(s)
+
+                        if non_past_items:
+                            rep = non_past_items[0]
+                        else:
+                            rep = max(past_items, key=lambda x: x.get("종료일", ""))
+
+                        return [self._schedule_to_result(rep, answer, score=1.3)]
+                    # fan-out on이지만 학년 일정 못 잡음 → 폴백(matches[0])
+
+                # fanout off OR 학년 일정 못 잡음: 기존 단일 동작
                 first = matches[0]
                 event_name = first.get("이벤트명", "")
                 period_text = self._format_period(
