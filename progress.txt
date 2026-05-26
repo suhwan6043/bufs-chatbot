@@ -88,6 +88,39 @@ F. 최종 머지 — 사용자 명시 시점에 main으로 squash 또는 multi-c
   3. AnswerUnit cohort 일치 검증을 direct_answer 채택 루프에 추가
 - search latency 분해 (PR #26 12-stage trace 활용 가능 시점에)
 
+## 5/26 D 측정으로 확정된 발견 — 위험 위치 재추적 (graph cohort 검토 종료)
+
+### graph cohort 정합성 — 졸업학점 계열에서 0% 오매칭 확정
+10건 측정 결과:
+- 정합 8건 (80%), 부분 정합 2건 (20%), **오매칭 0건, 커버리지 구멍 0건**
+- 틈새 가설(2021·2025·2016이 노드 구간 밖) 완전 뒤집힘 — graph 노드 실존
+- query_analyzer 학번→그룹 매핑이 graph 노드 구조와 1:1 일치 (정상)
+- 이전에 "#2/#3 cohort 경계 느슨함" 의심한 건 정상 그룹화 동작 (한 뿌리 아님)
+
+### 미해결 (정직하게 명시)
+1. **method_* 타입 (전공변경·복수전공) cohort 정합성** — 본 측정 0건. 미측정.
+2. **range/bound 표현** ("2020 이후", "2020~2024") — 양쪽 그룹 추출됐는데
+   graph_search가 한쪽만 매칭. 진짜 약점인지 드문 표현인지 미확정.
+   운영 비중 측정 필요 (B 작업).
+3. **graph 다른 차원** (점수·랭킹·다이버시티) — 본 측정 범위 외.
+
+### 위험 위치 재추적
+- 1주차: direct_answer 위험 → grounding 부적합 → "retrieval 정합성"으로 이관
+- 2주차 D: retrieval 정합성의 핵심이었던 cohort 매칭 = 졸업학점 계열에서 해소
+- → 남은 direct_answer 안전성 위험 = cohort 매칭 아니라 **PR #25 게이트 자체**
+  ("어떤 노드를 direct로 채택할지" rerank logit ≥ 0.20 임계가 진짜 결정 지점)
+
+### 다음 작업 — D+B 묶음 (measurement-first)
+이전 "2주차 우선 작업" 1번이 그대로 진짜 본체로 좁혀짐:
+- PR #25 `rerank_bypass_threshold` (0.20) 임계 재측정 (dry-run 측정 우선)
+- 같은 운영 로그 분석에서 range/bound 표현 비중도 grep (B 부산물로)
+- 1주차 grounding dry-run 정신: enforce 켜기 전 logit 분포 먼저 측정
+
+### 보고서
+- reports/llm_audit/log_review/d_measurement_cohort.md (10 쿼리 분류 표 + 위험 위치 재추적)
+- 2주차 graph 작업의 cohort 차원은 본 시점에 **종료 선언**.
+- 후속 작업(method_, range/bound, 게이트 강화)은 별도 트랙.
+
 ## 주의 (다음 세션이 알아야 할 컨텍스트)
 1. 팀원 PR #24·#26은 OPEN 상태로 진화 중. 절대 cherry-pick·rebase 안 함.
    다만 main이 갱신되면 origin/main rebase는 권장 (2~3일 간격).
