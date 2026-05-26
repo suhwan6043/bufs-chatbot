@@ -374,7 +374,7 @@ class AcademicGraph:
     def _nodes_by_type(self, node_type: str) -> list[tuple[str, dict]]:
         """타입별 노드 리스트 반환 (인덱스 사용)."""
         return [
-            (nid, dict(self.G.nodes[nid]))
+            (nid, self._node_dict(nid))
             for nid in self._type_index.get(node_type, [])
             if nid in self.G.nodes
         ]
@@ -998,11 +998,11 @@ class AcademicGraph:
         if major:
             major_node_id = f"grad_{group}_{student_type}_{major}"
             if major_node_id in self.G.nodes:
-                return dict(self.G.nodes[major_node_id])
+                return self._node_dict(major_node_id)
         # 공통 노드 조회
         node_id = f"grad_{group}_{student_type}"
         if node_id in self.G.nodes:
-            return dict(self.G.nodes[node_id])
+            return self._node_dict(node_id)
         return None
 
     def get_major_methods(self, student_id: str) -> List[dict]:
@@ -1021,7 +1021,7 @@ class AcademicGraph:
         reg_group = get_reg_group(student_id)
         node_id = f"reg_{reg_group}"
         if node_id in self.G.nodes:
-            return dict(self.G.nodes[node_id])
+            return self._node_dict(node_id)
         # 폴백: 인덱스 사용
         nodes = self._nodes_by_type("수강신청규칙")
         return dict(nodes[0][1]) if nodes else None
@@ -1035,7 +1035,7 @@ class AcademicGraph:
         reg_group = get_reg_group(student_id)
         for nid in (f"retake_{reg_group}", f"reg_{reg_group}"):
             if nid in self.G.nodes:
-                data = dict(self.G.nodes[nid])
+                data = self._node_dict(nid)
                 # 재수강 관련 속성만 추출 (수강신청규칙 노드일 때 혼합 방지)
                 retake_attrs = {
                     k: v for k, v in data.items()
@@ -1060,7 +1060,7 @@ class AcademicGraph:
         ]
         for nid in candidates:
             if nid in self.G.nodes:
-                out[nid] = dict(self.G.nodes[nid])
+                out[nid] = self._node_dict(nid)
         return out
 
     def get_schedules(self, semester: str = None) -> List[dict]:
@@ -1079,14 +1079,14 @@ class AcademicGraph:
         alts = []
         for _, target, data in self.G.edges(node, data=True):
             if data.get("relation") in ("대체과목", "동일과목"):
-                alts.append(dict(self.G.nodes[target]))
+                alts.append(self._node_dict(target))
         return alts
 
     def get_department_info(self, dept_name: str) -> Optional[dict]:
         """학과 정보. 완전 매칭 후 부분 매칭 시도."""
         node_id = f"dept_{dept_name}"
         if node_id in self.G.nodes:
-            return dict(self.G.nodes[node_id])
+            return self._node_dict(node_id)
         for nid, data in self._nodes_by_type("학과전공"):
             if dept_name in data.get("전공명", ""):
                 return data
@@ -1487,6 +1487,20 @@ class AcademicGraph:
             return f"{self._format_date(start, 'en')} to {end}"
         return f"{self._format_date(start)}부터 {end}까지"
 
+    def _node_dict(self, node_id) -> dict:
+        """그래프 노드 사본 + _node_id 자동 주입.
+
+        2026-05-26 graph 매칭 추적용 (cohort 정합성 진단).
+        호출자가 그래프 원본을 변형하지 않도록 dict(...) 복사본을 만들고,
+        그 사본 메타에 _node_id를 추가하여 반환. _make_graph_result에서
+        meta["node_id"]로 자동 복사.
+        """
+        if not node_id or node_id not in self.G.nodes:
+            return {}
+        data = dict(self.G.nodes[node_id])
+        data["_node_id"] = node_id
+        return data
+
     def _make_graph_result(
         self,
         text: str,
@@ -1505,6 +1519,9 @@ class AcademicGraph:
         meta = dict(extra_meta or {})
         meta["source_type"] = "graph"
         meta["node_type"] = node_data.get("type", "학사 데이터")
+        # 2026-05-26 graph 매칭 추적: 헬퍼들이 _node_dict()를 통과했으면 _node_id 보유.
+        # "MISSING" sentinel — 디버깅 동안 헬퍼 누락된 경로를 즉시 식별. D 측정 안정 후 ""로 복원 권고.
+        meta["node_id"] = node_data.get("_node_id", "MISSING")
         if len(sp) > 1:
             meta["source_pages"] = sp
             meta["_source_pages"] = sp  # P0 출처 매칭 부스트용
@@ -2093,7 +2110,7 @@ class AcademicGraph:
                 node_id = f"reg_{reg_grp}"
                 if node_id not in self.G.nodes:
                     continue
-                node = dict(self.G.nodes[node_id])
+                node = self._node_dict(node_id)
                 carryover = node.get("학점이월여부", "")
                 carryover_max = node.get("학점이월최대학점")
                 carryover_cond = node.get("학점이월조건", "")
@@ -2575,8 +2592,8 @@ class AcademicGraph:
             nid = self._find_course_by_name(course_name)
             if nid:
                 results.append(self._make_graph_result(
-                    text=self._fmt_course(dict(self.G.nodes[nid])),
-                    node_data=dict(self.G.nodes[nid]), score=1.0,
+                    text=self._fmt_course(self._node_dict(nid)),
+                    node_data=self._node_dict(nid), score=1.0,
                 ))
         if dept:
             dept_data = self.get_department_info(dept)
@@ -2589,7 +2606,7 @@ class AcademicGraph:
             dept_node = self._find_dept_node(dept)
             if dept_node:
                 courses = [
-                    dict(self.G.nodes[target])
+                    self._node_dict(target)
                     for _, target, edata in self.G.edges(dept_node, data=True)
                     if edata.get("relation") == "개설한다"
                 ]
@@ -2758,7 +2775,7 @@ class AcademicGraph:
 
         # ② 신청자격
         if "early_grad_신청자격" in self.G.nodes:
-            elig = dict(self.G.nodes["early_grad_신청자격"])
+            elig = self._node_dict("early_grad_신청자격")
             results.append(self._make_graph_result(
                 text=self._fmt_early_graduation_eligibility(elig),
                 node_data=elig, score=1.15,
@@ -2774,9 +2791,9 @@ class AcademicGraph:
             if node_id in self.G.nodes:
                 results.append(self._make_graph_result(
                     text=self._fmt_early_graduation_criteria(
-                        dict(self.G.nodes[node_id])
+                        self._node_dict(node_id)
                     ),
-                    node_data=dict(self.G.nodes[node_id]), score=1.2,
+                    node_data=self._node_dict(node_id), score=1.2,
                 ))
         else:
             # 학번 미입력 → 전 그룹 기준 모두 반환
@@ -2785,18 +2802,18 @@ class AcademicGraph:
                 if node_id in self.G.nodes:
                     results.append(self._make_graph_result(
                         text=self._fmt_early_graduation_criteria(
-                            dict(self.G.nodes[node_id])
+                            self._node_dict(node_id)
                         ),
-                        node_data=dict(self.G.nodes[node_id]), score=1.1,
+                        node_data=self._node_dict(node_id), score=1.1,
                     ))
 
         # ④ 기타사항
         if "early_grad_기타사항" in self.G.nodes:
             results.append(self._make_graph_result(
                 text=self._fmt_early_graduation_notes(
-                    dict(self.G.nodes["early_grad_기타사항"])
+                    self._node_dict("early_grad_기타사항")
                 ),
-                node_data=dict(self.G.nodes["early_grad_기타사항"]), score=0.95,
+                node_data=self._node_dict("early_grad_기타사항"), score=0.95,
             ))
 
         return results
@@ -2831,8 +2848,8 @@ class AcademicGraph:
                 if node_id in self.G.nodes:
                     matched_names.append(name)
                     results.append(self._make_graph_result(
-                        text=self._fmt_scholarship(dict(self.G.nodes[node_id])),
-                        node_data=dict(self.G.nodes[node_id]), score=1.2,
+                        text=self._fmt_scholarship(self._node_dict(node_id)),
+                        node_data=self._node_dict(node_id), score=1.2,
                     ))
 
         # 특정 장학금 미매칭 시 전체 목록 반환
@@ -2908,7 +2925,7 @@ class AcademicGraph:
 
         if matched_nids:
             for nid in matched_nids:
-                data = dict(self.G.nodes[nid])
+                data = self._node_dict(nid)
                 results.append(self._make_graph_result(
                     text=self._fmt_leave_of_absence(data),
                     node_data=data, score=1.2,
