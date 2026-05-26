@@ -34,6 +34,8 @@ from app.pipeline.schedule_gate import (
     is_temporally_valid as _schedule_gate_check,
     get_mode as _schedule_gate_mode,
     get_today as _schedule_gate_today,
+    should_attach_past_label as _schedule_gate_should_label,
+    append_past_schedule_label as _schedule_gate_append_label,
 )
 
 if TYPE_CHECKING:
@@ -454,7 +456,8 @@ class ContextMerger:
                 )
                 continue
             # [Schedule Gate] 2026-05-26 시점성 검증 (schedule_* 노드 한정).
-            # dry_run (default): 통과 + JSON 로그. enforce: 차단 → 다음 후보.
+            # dry_run (default): 통과 + JSON 로그. label: 통과 + 라벨 덧붙임
+            # (past + no_future_data 한정). enforce: 차단 → 다음 후보.
             # off: 비활성.
             if _sg_mode != "off":
                 _sg_dec = _schedule_gate_check(result.metadata, _sg_today)
@@ -477,6 +480,16 @@ class ContextMerger:
                         "query": (question or "")[:80],
                         "loop": "first_loop",
                     }, ensure_ascii=False))
+                    # label 모드 — past + has_future='no'에만 본문 뒤에 라벨 덧붙임.
+                    # 학기 증분은 graph.next_semester 재사용 (DRY).
+                    if _schedule_gate_should_label(_sg_mode, _sg_dec.reason, _sg_has_future):
+                        _cur_sem = result.metadata.get("학기", "")
+                        _next_sem = (
+                            self.academic_graph.next_semester(_cur_sem)
+                            if self.academic_graph and _cur_sem else None
+                        )
+                        if _next_sem:
+                            candidate = _schedule_gate_append_label(candidate, _cur_sem, _next_sem)
                     if _sg_mode == "enforce":
                         continue
             direct_answer = candidate
@@ -532,6 +545,15 @@ class ContextMerger:
                                     "query": (question or "")[:80],
                                     "loop": "fallback_loop",
                                 }, ensure_ascii=False))
+                                # label 모드 — fallback_loop에서도 동일 부착 조건.
+                                if _schedule_gate_should_label(_sg_mode, _sg_dec2.reason, _sg_has_future2):
+                                    _cur_sem2 = result.metadata.get("학기", "")
+                                    _next_sem2 = (
+                                        self.academic_graph.next_semester(_cur_sem2)
+                                        if self.academic_graph and _cur_sem2 else None
+                                    )
+                                    if _next_sem2:
+                                        candidate = _schedule_gate_append_label(candidate, _cur_sem2, _next_sem2)
                                 if _sg_mode == "enforce":
                                     _sg_block = True
                         if not _sg_block:

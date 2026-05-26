@@ -76,9 +76,14 @@ logger = logging.getLogger(__name__)
 
 
 def _get_mode() -> str:
-    """SCHEDULE_GATE_MODE env → 'dry_run' | 'enforce' | 'off'."""
+    """SCHEDULE_GATE_MODE env → 'dry_run' (default) | 'label' | 'enforce' | 'off'.
+
+    label 모드 (2026-05-26 추가):
+      past + next_semester_has_data="no" 케이스에 한해 응답 뒤에 맥락 라벨을
+      덧붙임. 본문은 한 글자도 바꾸지 않음. 차단 안 함. 디폴트는 여전히 dry_run.
+    """
     v = os.getenv("SCHEDULE_GATE_MODE", "dry_run").strip().lower()
-    if v not in {"dry_run", "enforce", "off"}:
+    if v not in {"dry_run", "label", "enforce", "off"}:
         logger.warning("SCHEDULE_GATE_MODE invalid value=%r, falling back to dry_run", v)
         return "dry_run"
     return v
@@ -194,3 +199,65 @@ def get_mode() -> str:
 def get_today() -> date:
     """현재 기준일 노출 (호출자 로깅용)."""
     return _get_today()
+
+
+# ── label 모드 (2026-05-26) — 본문 변경 없이 맥락 라벨 부착 ──────────────
+# 조건: (모드=label) AND (reason='schedule_past') AND (next_semester_has_data='no')
+# 즉 "지난 일정인데 다음 학기 노드도 graph에 없는 케이스"에만 부착.
+# active/future/parse_fail/not_schedule/no_end_date는 절대 부착하지 않음.
+# has_future='yes'/'unknown' 분기는 이번 범위 밖 (placeholder — 데이터 인입 후).
+
+PAST_SCHEDULE_LABEL_TEMPLATE = (
+    "\n※ 가장 최근 {current}학기 기준이며, "
+    "{next}학기 일정은 아직 공지되지 않았습니다."
+)
+
+
+def should_attach_past_label(mode: str, reason: str, has_future: str) -> bool:
+    """label 모드에서 라벨 부착 조건을 만족하는지 판정.
+
+    Args:
+        mode: SCHEDULE_GATE_MODE 값 (dry_run/label/enforce/off)
+        reason: GateDecision.reason (schedule_past/future_or_active/...)
+        has_future: graph.has_future_semester_data 결과 (yes/no/unknown)
+
+    Returns:
+        True면 호출자가 append_past_schedule_label(direct_answer, ...) 호출.
+
+    의도된 좁은 조건:
+        - mode=label 일 때만 (dry_run/enforce/off에서는 False — 디폴트 동작 보존)
+        - schedule_past 일 때만 (active/future 일정엔 절대 안 붙임)
+        - has_future='no' 일 때만 (yes/unknown 분기는 placeholder)
+    """
+    return (
+        mode == "label"
+        and reason == "schedule_past"
+        and has_future == "no"
+    )
+
+
+def append_past_schedule_label(
+    direct_answer: str,
+    current_semester: str,
+    next_semester: str,
+) -> str:
+    """direct_answer 본문 뒤에 맥락 라벨을 덧붙임 (본문은 한 글자도 안 바꿈).
+
+    Args:
+        direct_answer: 원본 응답 텍스트
+        current_semester: 매칭 노드의 학기 메타 (예: "2026-1")
+        next_semester: graph.next_semester() 결과 (예: "2026-2")
+
+    Returns:
+        본문 + "\\n※ ..." 형태. 인자 누락(빈 문자열·None) 시 원본 그대로
+        반환 (composite·MISSING fail-open).
+
+    학기 증분 규칙은 호출자(context_merger)가 graph.next_semester로 계산해
+    전달해야 함. 본 함수는 학기 문자열을 다시 파싱하지 않음 — DRY.
+    """
+    if not direct_answer or not current_semester or not next_semester:
+        return direct_answer
+    suffix = PAST_SCHEDULE_LABEL_TEMPLATE.format(
+        current=current_semester, next=next_semester,
+    )
+    return direct_answer + suffix

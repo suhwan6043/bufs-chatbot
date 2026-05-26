@@ -18,10 +18,13 @@ import pytest
 
 from app.pipeline.schedule_gate import (
     GateDecision,
+    PAST_SCHEDULE_LABEL_TEMPLATE,
+    append_past_schedule_label,
     get_mode,
     get_today,
     is_temporally_valid,
     make_block_fallback_message,
+    should_attach_past_label,
 )
 
 
@@ -196,3 +199,136 @@ def test_real_schedule_node_metadata_blocks_past():
     dec = is_temporally_valid(meta, TODAY)
     assert dec.valid is False
     assert dec.reason == "schedule_past"
+
+
+# ── label 모드 (2026-05-26) ─────────────────────────────────────────
+
+
+def test_should_attach_past_and_no_future_in_label_mode():
+    """(a) past + has_future='no' + mode='label' → 라벨 붙임."""
+    assert should_attach_past_label("label", "schedule_past", "no") is True
+
+
+def test_should_not_attach_when_has_future_yes():
+    """(b) past + has_future='yes' → 라벨 안 붙임 (yes 갈래는 본 범위 밖)."""
+    assert should_attach_past_label("label", "schedule_past", "yes") is False
+
+
+def test_should_not_attach_when_has_future_unknown():
+    """(b') past + has_future='unknown' → 라벨 안 붙임 (학기 파싱 실패)."""
+    assert should_attach_past_label("label", "schedule_past", "unknown") is False
+
+
+def test_should_not_attach_when_active():
+    """(c) active 일정(future_or_active 안의 active) → 라벨 안 붙임.
+
+    is_temporally_valid는 valid=True인 경우 reason="future_or_active"인데,
+    호출자는 valid=False(BLOCKED)일 때만 should_attach_past_label 호출하므로
+    실제로는 도달 안 함. 그래도 방어적으로 reason!='schedule_past'면 False.
+    """
+    assert should_attach_past_label("label", "future_or_active", "no") is False
+
+
+def test_should_not_attach_when_future():
+    """(d) future 일정 → 라벨 안 붙임 (active와 같은 reason)."""
+    assert should_attach_past_label("label", "future_or_active", "no") is False
+
+
+def test_should_not_attach_in_dry_run_mode():
+    """(e) dry_run 모드에서는 어떤 경우도 라벨 안 붙음 — 디폴트 동작 보존."""
+    assert should_attach_past_label("dry_run", "schedule_past", "no") is False
+    assert should_attach_past_label("dry_run", "schedule_past", "yes") is False
+    assert should_attach_past_label("dry_run", "future_or_active", "no") is False
+
+
+def test_should_not_attach_in_enforce_mode():
+    """enforce 모드도 라벨 부착 대상 아님 — enforce는 차단 동작."""
+    assert should_attach_past_label("enforce", "schedule_past", "no") is False
+
+
+def test_should_not_attach_in_off_mode():
+    """off 모드도 라벨 부착 안 함."""
+    assert should_attach_past_label("off", "schedule_past", "no") is False
+
+
+def test_should_not_attach_when_no_end_date():
+    """composite(no_end_date) reason은 부착 안 함 — schedule_past가 아니므로."""
+    assert should_attach_past_label("label", "no_end_date", "no") is False
+
+
+def test_should_not_attach_when_parse_fail():
+    """parse_fail (fail-open) reason도 부착 안 함."""
+    assert should_attach_past_label("label", "parse_fail", "no") is False
+
+
+def test_should_not_attach_when_not_schedule():
+    """notice·FAQ (not_schedule) reason도 부착 안 함."""
+    assert should_attach_past_label("label", "not_schedule", "no") is False
+
+
+def test_append_label_template_format():
+    """(f) 학기 템플릿이 정확히: 2026-1 → '2026-1학기 기준 + 2026-2학기 미공지'."""
+    body = "수강신청_1학년 기간은 2026년 2월 9일입니다."
+    result = append_past_schedule_label(body, "2026-1", "2026-2")
+    assert result.startswith(body)  # 본문 보존
+    assert "\n※" in result
+    assert "2026-1학기" in result
+    assert "2026-2학기" in result
+    assert "아직 공지되지 않았습니다" in result
+
+
+def test_append_label_body_unchanged():
+    """본문 한 글자도 바뀌지 않음 — 뒤에 덧붙이기만."""
+    body = "수강신청 기간은 2026-02-01부터 2026-02-15까지입니다."
+    result = append_past_schedule_label(body, "2026-1", "2026-2")
+    # 본문 부분 추출 후 정확 일치 확인
+    assert result.startswith(body)
+    # 추가된 suffix 길이만큼 더 길어야
+    assert len(result) > len(body)
+
+
+def test_append_label_next_semester_increment_2026_1_to_2026_2():
+    """2026-1 → 2026-2 (graph.next_semester와 같은 규칙)."""
+    result = append_past_schedule_label("본문", "2026-1", "2026-2")
+    assert "2026-1학기" in result
+    assert "2026-2학기" in result
+
+
+def test_append_label_next_semester_increment_2026_2_to_2027_1():
+    """2026-2 → 2027-1 (학년 넘어가는 케이스)."""
+    result = append_past_schedule_label("본문", "2026-2", "2027-1")
+    assert "2026-2학기" in result
+    assert "2027-1학기" in result
+
+
+def test_append_label_empty_body_returns_empty():
+    """본문 비었으면 그대로 반환 (composite fail-open)."""
+    assert append_past_schedule_label("", "2026-1", "2026-2") == ""
+
+
+def test_append_label_missing_current_semester_passes_unchanged():
+    """current_semester 비었으면 라벨 안 붙임 — composite 노드 보호."""
+    body = "본문 그대로"
+    assert append_past_schedule_label(body, "", "2026-2") == body
+
+
+def test_append_label_missing_next_semester_passes_unchanged():
+    """next_semester=None/빈 문자열이면 라벨 안 붙임 — 학기 파싱 실패 보호."""
+    body = "본문 그대로"
+    assert append_past_schedule_label(body, "2026-1", "") == body
+
+
+def test_append_label_template_constant_format():
+    """템플릿 상수가 두 플레이스홀더를 가짐."""
+    assert "{current}" in PAST_SCHEDULE_LABEL_TEMPLATE
+    assert "{next}" in PAST_SCHEDULE_LABEL_TEMPLATE
+    assert PAST_SCHEDULE_LABEL_TEMPLATE.startswith("\n")  # 본문과 줄바꿈 분리
+
+
+# ── label 모드 env 검증 ─────────────────────────────────────────────
+
+
+def test_get_mode_label():
+    """SCHEDULE_GATE_MODE=label 정상 인식."""
+    with patch.dict(os.environ, {"SCHEDULE_GATE_MODE": "label"}):
+        assert get_mode() == "label"
