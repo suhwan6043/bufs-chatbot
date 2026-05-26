@@ -121,6 +121,57 @@ F. 최종 머지 — 사용자 명시 시점에 main으로 squash 또는 multi-c
 - 2주차 graph 작업의 cohort 차원은 본 시점에 **종료 선언**.
 - 후속 작업(method_, range/bound, 게이트 강화)은 별도 트랙.
 
+## 5/26 시점성(Stage-6) 측정 — 진짜 1순위 위험 발굴
+
+### 6단계 위험 추적 (1주차→2주차)
+1주차 grounding → cohort 정합성 → PR #25 gate → AnswerUnit gate →
+results 패턴 → 시점성. 5단계 "위험 없음" 후 6단계에서 진짜 1순위 발굴.
+
+### 시점성 측정 결과 (47 schedule 노드, 기준일 2026-05-26)
+- past 25건 (53.2%) — 종료일 < today, 차단 대상
+- active 7건 (14.9%) — 진행 중
+- future 14건 (29.8%) — 미래 일정
+- invalid 1건 (2.1%) — 데이터 오염 (아래 참고)
+- 2026-2 학기 노드 = 0건 (data layer gap)
+
+### (a) 게이트 vs (b) 데이터 관리 분리
+- (a) 영구 안전망: 종료일 < today면 schedule_* direct 채택 차단 (출혈 막기)
+- (b) 효용 복구: 2026-2 노드 추가 + 학기 전환 정책 (수혈)
+- 순서: (a) 먼저 — (b)는 외부 데이터(학생포털·교무처) 의존이라 코드로 못 풀음.
+  교무처가 2026-2 일정을 언제 공개하느냐에 의존.
+
+### 데이터 이슈 — 별도 트랙 (본 작업 범위 밖)
+- schedule 노드 중 event_name='1' 오염 1건 (시작일/종료일/학기 모두 "1").
+  게이트 fail-open으로 무해. 데이터 출처 정제 필요.
+- schedule 노드 47개 중 2026-2 학기 = 0건 (5/26 기준).
+  교무처 데이터 공개 시점 의존 — 인제스트 파이프라인 문제 아닐 가능성.
+
+### schedule_to_result 메타 보강 (게이트 전제, 동작 변경 있음)
+- _make_graph_result는 cohort 키만 자동 복사 → schedule_to_result에서
+  종료일·시작일·학기·이벤트명·_node_id를 명시적으로 박음.
+- 자동 복사로 일반화 안 함 — 게이트를 schedule_*에만 좁게 적용하기로 했고
+  notice·FAQ에 종료일 메타 흘리면 게이트 범위가 새는 회귀 가능 (grounding 재판).
+- _serialize_results는 화이트리스트 방식이라 새 키 payload에 안 실림 (프론트 영향 0).
+- 후속(프론트 "이 일정 지났어요" UX): 화이트리스트에 종료일 추가 필요.
+
+### (a) 게이트 설계 결정
+- 모듈: app/pipeline/schedule_gate.py (dry-run 기본, grounding.py 모델 미러)
+- SCHEDULE_GATE_MODE=dry_run|enforce|off
+- SCHEDULE_GATE_TODAY=YYYY-MM-DD 주입 가능 (테스트·재현 결정론)
+- 적용 범위: node_type="학사일정" + 종료일 메타 보유 노드만.
+  notice_·FAQ·composite (다중 일정 bundling)은 fail-open으로 자연 PASS.
+- 종료일 파싱 실패 = fail-open (PASS + 경고 로그). 차단 안 함.
+- dry-run 로그 3필드: node_id, 종료일, has_future (대체 future 노드 유무)
+- has_future 매칭 실패 = "unknown"으로 따로 표기 ("없음"과 구분).
+- 폴백 답 설계: dry-run 단계엔 자리만, enforce 전 필수.
+  has_future 분포 보고 (a) enforce vs (b) 데이터 갱신 우선순위 결정.
+
+### 다음 작업
+1. 보강 커밋 (eval 164문 1회) ← 진행 중
+2. schedule_gate dry-run 커밋 (골든 18/18, eval 생략)
+3. dry-run 측정 며칠 — 차단율 + has_future 분포
+4. 분포 보고 enforce/폴백/B 데이터 결정
+
 ## 주의 (다음 세션이 알아야 할 컨텍스트)
 1. 팀원 PR #24·#26은 OPEN 상태로 진화 중. 절대 cherry-pick·rebase 안 함.
    다만 main이 갱신되면 origin/main rebase는 권장 (2~3일 간격).

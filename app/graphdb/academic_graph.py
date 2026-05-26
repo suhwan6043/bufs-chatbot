@@ -1623,7 +1623,28 @@ class AcademicGraph:
         line = f"{header}\n- {event_name}: {period}"
         if schedule.get("비고"):
             line += f" ({self._safe_tilde(schedule['비고'])})"
+
+        # 2026-05-26 시점성 게이트(schedule_gate) 전제 — schedule_* 노드 한정 보강.
+        # _make_graph_result는 cohort 키만 자동 복사하므로, 종료일·시작일·학기를
+        # 여기서 명시적으로 박는다. 자동 복사로 일반화하지 않는 이유:
+        # 게이트를 schedule_*에만 좁게 적용하기로 했고(notice·FAQ 제외),
+        # _make_graph_result에서 모든 노드의 종료일을 일반 복사하면 게이트의
+        # 좁은 적용 범위가 새는 회귀가 발생. 보강 위치를 schedule_to_result에
+        # 가두는 것이 게이트 범위 가두기와 직결.
+        # _node_id 주입은 _make_graph_result의 meta["node_id"]="MISSING" 사례 해소도 겸함.
+        node_id = f"schedule_{event_name}_{semester}" if event_name and semester else ""
+        schedule = dict(schedule)  # 원본 dict 변형 방지
+        if node_id:
+            schedule["_node_id"] = node_id
         metadata = {"direct_answer": answer_text} if answer_text else {}
+        if start:
+            metadata["시작일"] = start
+        if end:
+            metadata["종료일"] = end
+        if semester:
+            metadata["학기"] = semester
+        if event_name:
+            metadata["이벤트명"] = event_name
         return self._make_graph_result(
             text=line, node_data=schedule, score=score,
             extra_meta=metadata,
