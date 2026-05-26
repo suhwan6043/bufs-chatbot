@@ -1,62 +1,196 @@
-날짜: 2026-04-27
-작업: v2 인덱싱 파이프라인 + section_path 검색 활용 + 5회 분리 평가
+날짜: 2026-05-19
+작업: P0 3종 패치 + follow_up_detector 오검출 수정 + 5/7 내부테스트 분석
 
 완료:
-  [인덱싱 파이프라인]
-  - Surya 0.4.15 → 0.17.1 마이그레이션 (transformers 4.57.6 핀)
-  - page_router 디지털/스캔 분류 버그 수정 (drawings 감지)
-  - chunking_v2 strip_ocr_markup (<br>/<b> 태그 정리)
-  - scripts/ingest_all_v2.py 작성 (NFC 정규화 + dedupe + lifecycle/term/semester 자동 매핑)
-    * build_embedding_text() — 임베딩 입력에만 [section] prefix (raw text 보존)
-  - bufs_v2 컬렉션 인제스트 (1346 청크, 84분, 51 PDF)
-  - bufs_academic의 FAQ + notice 청크 115개 복제 → bufs_v2 1461청크
-  - lifecycle 메타 일관성 (FAQ=static, notice=dynamic)
+  [Phase A — 평가 재현성 (P1.1, P1.2, P1.4)]
+  - scripts/eval_multilingual.py:469 `not skip_translate` → `skip_translate` (의미 반전 픽스)
+  - scripts/eval_multilingual.py:533 `_contains_key_fact()` 헬퍼 신규 — 숫자 경계 보호
+    ("4"가 "40주년"에 잘못 매치되던 P1.4 버그 해결, 10/10 단위 테스트 통과)
+  - app/config.py LLMConfig.seed: Optional[int] 필드 + `_parse_optional_int()` 헬퍼
+    LLM_SEED 환경변수로 평가 재현성 제어 (미설정·"none"·빈 문자열 → None)
+  - app/pipeline/answer_generator.py:
+    * Ollama 네이티브 /api/chat options에 seed 조건부 전달
+    * OpenAI 호환 /v1/chat/completions payload에 seed 조건부 전달
+    * 쿼리 재작성 호출(라인 752)에도 seed 전달
+  - scripts/eval_contains_f1.py:
+    * --per-question-session: 질문마다 새 session_id 생성 (세션 내 캐시·이력 누적 차단)
+    * --no-cache: 평가 시작·각 데이터셋 사이 /api/admin/cache/clear 호출 (ADMIN_PASSWORD 필요)
+    * --seed N: LLM_SEED 환경변수 설정 + 결과 파일 메타에 기록
+    * combined_*.json에 eval_options 메타 추가 (재현성 추적용)
 
-  [검색 코드 변경]
-  - app/vectordb/bm25_index.py: BM25 build 시 section_path를 코퍼스에 prefix해 토큰화 (A-2)
-    * v2 메타 없는 청크에는 영향 없음 (production bufs_academic 무영향)
-  - app/pipeline/reranker.py: 변경 없음 (A-1은 평가에서 무영향 또는 회귀로 롤백)
+  [Phase B — 그래프 메타 복원 (P0.1, P0.2)]
+  - app/graphdb/academic_graph.py:
+    * _merge(): "type" ↔ "node_type" 양방향 미러링 (어느 키로 조회해도 같은 값)
+    * add_relation(): "relation" ↔ "edge_type" 양방향 미러링
+  - scripts/migrate_graph_type_keys.py 신규 — 1회성 .pkl 마이그레이션 (--dry-run 지원)
+  - data/graphs/academic_graph.pkl 마이그레이션 실행 완료
+    * 백업: academic_graph.pkl.bak-20260518_104554
+    * 396 노드 100% / 2020 엣지 100% 정상화
+    * FAQ 146개 정상 (진단 보고서의 "FAQ 0개"는 잘못된 진단 — node_type 키로 조회해서 0개로 보였을 뿐 type=="FAQ"로는 146개 존재했음)
+  - 11/11 단위 검증 통과
 
-  [도구 + 문서]
-  - scripts/demo_chat.py: 인터랙티브 시연 도구 (프로필 + 질문 + 실시간 진행 표시)
-  - docs/asis_20260427.md: 시스템 As-Is 자료 (8섹션 1페이지)
+  [Phase C — 청크 ID 충돌 회피 (P0.3) · 코드만]
+  - app/ingestion/chunking.py:83-86 make_chunk_id():
+    text[:50] → SHA256(text 전체) 를 ID 결정에 반영
+    형식·시그니처·결정성 유지, 충돌 회피 검증 완료
+    (호출자 scripts/ingest_pdf.py:191, incremental_update.py:404 자동 수혜)
 
-  [평가 5회]
-  4/21 baseline (academic, 3377):                   83.54% (137/164)
-  평가1: B-2만 (1346):                              82.32% (135/164)
-  평가2: B-2 + A-1만:                               82.32% (A-1 무영향)
-  평가3: B-2 + A-2만:                               82.32% 전체, balanced +2.6pp
-  평가4: B-2 + A-1 + A-2 (둘 다):                   81.10% (회귀, A-1+A-2 비독립 상호작용)
-  평가5: B-2 + A-2 + FAQ/notice 추가 (1461):       82.93% (-0.61pp)  ← 현재 최선
+  검증 요약:
+  - 4개 코드 파일 syntax OK (3.10 환경 ast.parse 불가능한 곳은 분리 단위 검증)
+  - 패치 로직 단위 테스트 32/32 통과 (Contains 매칭 10 + 그래프 메타 11 + 청크 ID 11)
 
-  데이터셋별 (평가5):
-    balanced_test_set:  74.36% (vs baseline 66.67%, +7.69pp)  ← v2 PDF 인덱싱 효과
-    rag_eval_2026_1:    90.00% (vs 92.00%, -2.00pp)
-    user_eval_50:       82.67% (vs 86.67%, -4.00pp)            ← notice_attachment 누락 영향
+  [5/19 추가 — 5/7 내부테스트 워크플로우 분석 + 신규 로그 라인 추가]
+  - scripts/gen_internal_test_report.py 신규 — backend_logs.txt May 7 구간 파싱
+  - reports/internal_test_20260507.xlsx 4시트 리포트:
+    * 시트1: 30개 질문 × 17컬럼 — 각 질문별 주요 실패 stage / 파일:함수 / 로그 키 / 트리거 원인 / 권장 조치
+    * 시트2: 실패 stage별 집계
+      FOLLOWUP_FALSE_POSITIVE  11건  app/pipeline/follow_up_detector.py:_has_subject_ko()
+      ANSWER_CONTEXT_MISMATCH   4건  app/pipeline/answer_units.py:verify_answer_against_context()
+      TIMEOUT_RISK              2건  app/pipeline/answer_generator.py:generate()
+      OUT_OF_SCOPE              2건  app/pipeline/query_router.py:route_and_search() + merger
+      OK                       11건
+    * 시트3: 9개 pipeline stage 매핑 다이어그램 (Stage 0~6)
+    * 시트4: 신규 로그 사양 + 도커 조회 명령
+  - backend/routers/chat.py — 신규 trace 로그 추가 (streaming + sync 양쪽)
+  - app/pipeline/evidence_trace.py 신규 — cite_key 통합 + 답변-증거 매핑 + manifest
 
-미완료:
-  1. production 전환 — 단일셋 user -4.0pp 회귀 (NO-GO 기준 -3pp 초과)
-     원인: notice_attachment 2091청크 누락 (사용자 실 질문이 공지 첨부 의존)
-     해결: notice_attachment를 v2 컬렉션에 추가 인제스트 또는 academic에서 복제
+  신규 로그 키:
+    * [generator-IN]         sid/model/prompt_ctx_chars/intent/qt/lang/history_turns/search_n/notice_urls/pdf_pages=[…]
+    * [evidence]             sid/#i/cite=<TYPE:doc#p<page>#c<idx>>/doc/page/section/type/score/url/text=60자
+                              cite 형식: PDF:학사안내.pdf#p38#c2 / FAQ:취업커뮤니티#1 / URL:www.bufs.ac.kr#4
+    * [generator-OUT]        sid/answer_chars/elapsed_ms/preview=200자
+    * [answer-evidence-map]  sid/item=<unit:val 또는 kv:key=val>/in_ctx/cites=[cite_key…]
+                              답변 내 각 사실값(credit:130, kv:졸업학점=130 등)이 어떤 cite_key에 근거하는지 매핑
+    * [answer-manifest]      sid/intent/required=N/N/optional=N/N/excluded_violations=N/completeness/coverage
+                              required/optional/excluded_unless_asked 키워드 충족 여부 검사
+                              GRADUATION_REQ 등 9개 intent manifest 정의
+    * [validator-IN/OUT]     sid/answer_chars/ctx_chars/search_n + passed/warnings
 
-  2. v2 인제스트의 진정한 효과 측정
-     bufs_v2(1461) + notice_attachment(2091) ≈ 3552 청크로 production 코퍼스와 동등 후 재평가
+  해결한 문제:
+    3) 출처 페이지 수준 부족 → cite_key로 doc+page+section+chunk_idx 결정적 식별
+    4) source_urls=0 vs corroborated pages 모순 → URL과 PDF 페이지를 단일 cite_key 체계로 통합
+    5) 답변 항목 기준 부재 → ANSWER_MANIFEST(required/optional/excluded_unless_asked) 정의 + 충족도 로깅
 
-  3. v2 인덱싱 → production cutover (회귀 회복 후)
-     - 환경변수 CHROMA_COLLECTION=bufs_v2 (또는 bufs_v3) 변경
-     - 기존 bufs_academic은 백업 컬렉션으로 보존 (롤백 안전)
+  도커 사용:
+      docker compose -f docker/docker-compose.yml logs backend | grep '\[evidence\]'
+      docker compose -f docker/docker-compose.yml logs backend | grep '\[answer-evidence-map\]'
+      docker compose -f docker/docker-compose.yml logs backend | grep '\[answer-manifest\]'
+      # 단일 세션 전체 흐름:
+      docker compose -f docker/docker-compose.yml logs backend | grep 'sid=9f2db6c9'
 
-  4. 시연 후속 — 사용자 데모 환경 (bufs_demo, 8002 포트)은 그대로 유지
+  [5/19 추가 — 12-stage 파이프라인 전체에 IN/OUT 로그 일괄 부착]
+  backend/routers/chat.py · app/pipeline/query_router.py · app/pipeline/reranker.py 갱신.
+
+  추가된 stage별 로그 (chat.py 흐름 순):
+    [chat-IN]            sid/path/q_chars/q/user/prior_msgs/lang   ← 요청 진입
+    [lang-detect]        sid/detected/session_lang
+    [understand-IN/OUT]  통합 경로: source/elapsed_ms/intent/qt/confidence/rewrite_changed
+       또는
+    [follow_up]          sid/is_follow_up/reason/skip_rule/elapsed_ms
+    [rewrite-IN/OUT]     sid/mode/lang/history_msgs ↔ elapsed_ms/changed/new_q
+    [analyze-IN/OUT]     sid/search_q/lang ↔ intent/qt/entities/matched_terms/normalized_q
+    [router-IN/OUT]      sid/search_q/intent/dept_filter ↔ vector_n/vector_top/graph_n/graph_top/has_direct_answer
+       (내부) [vector-OUT]   candidates/preferred_types/intent_k/reranker on/off
+       (내부) [graph-OUT]    count/has_direct_answer/faq_n/intent
+       (내부) [rerank-IN/OUT] candidates/top_k/asks_url ↔ selected/top_score/rel_th/eff_th/model_ms/top3
+    [merger-IN/OUT]      vector_n/graph_n ↔ selected_v/selected_g/source_urls/direct_answer_chars/ctx_chars/confidence
+    [generator-IN]       sid/model/prompt_ctx_chars/intent/qt/lang/history_turns/search_n/notice_urls/pdf_pages
+    [evidence]           1줄/후보: cite_key/doc/page/section/type/score/url/text
+    [generator-OUT]      sid/answer_chars/elapsed_ms/preview
+    [answer-evidence-map] item=<unit:val 또는 kv:key=val>/in_ctx/cites
+    [answer-manifest]    intent/required/optional/excluded_violations/completeness/coverage
+    [validator-IN/OUT]   sid/answer_chars/ctx_chars/search_n ↔ passed/warnings/elapsed_ms
+    [log-IN/OUT]         sid/persist=jsonl+sqlite/saved
+    [chat-OUT]           sid/path/intent/answer_chars/source_urls/ctx_confidence/total_ms
+
+  도커 명령:
+      # 단일 세션 전체 12-stage 흐름:
+      docker compose -f docker/docker-compose.yml logs backend | grep 'sid=9f2db6c9'
+      # 특정 stage만:
+      docker compose -f docker/docker-compose.yml logs backend | grep -E '\[(router|merger|rerank)-(IN|OUT)\]'
+      # 답변 traceability (출처 + 매니페스트 + 검증):
+      docker compose -f docker/docker-compose.yml logs backend | grep -E '\[(evidence|answer-evidence-map|answer-manifest|validator-OUT)\]'
+
+  [5/19 추가 — follow_up_detector 오검출 수정 (커밋 8ac6a65)]
+  - app/pipeline/follow_up_detector.py _has_subject_ko() 정규식 수정
+    \s → (?=\s|[?!.,]|$): "전공은?" 등 조사+구두점 종료 쿼리의 no_subject_short_ko
+    false positive 제거 → 38초 LLM rewrite → "관련 정보를 찾을 수 없습니다." 오답 패턴 차단
+  - tests/test_follow_up_detector.py: 회귀 방지 테스트 3개 추가 (15/15 통과)
+
+  [5/19 추가 — 재인제스트 후 30개 질문 재실행 비교]
+  - scripts/rerun_internal_test_20260507.py 신규 — 30개 질문 자동 재실행 + Excel 비교
+  - reports/internal_test_20260507_rerun.{xlsx,jsonl}
+  - 결과:
+      정상률      11/30 (36.7%) → 23/30 (76.7%)   +40.0pp ★
+      평균응답시간 5912ms → 4643ms   (-21.5%)
+      변화 분포   개선 14건 / 변동 없음(정상) 9건 / 동일·판단보류 6건 / 악화 1건
+  - 악화 1건: #1 "2학년 수강신청 시간 알려줘" 19.5s (콜드스타트 영향 추정 — timing 응답 없음)
+  - 정상화된 거절 (refusal 정답): #19/#22/#28 — DB에 없는 정보는 일관되게 "관련 정보 찾을 수 없습니다" 응답
+  - 캐시 hit: #26 "영어전공 학과사무실 전화번호" 16ms (CONTACT 단락응답 캐시)
+  - 새 컬렉션·그래프 효과 확인: REGISTRATION_GENERAL/CERTIFICATE/FACILITY/CONTACT/GRADE_OPTION
+    등 multi-task 1 분할 intent들이 정상 라우팅됨
+
+미완료 (사용자 환경에서 실행 필요):
+  1. ★ 재색인 + 회귀 평가 — 본 sandbox에서는 GPU·LLM·시간 제약으로 불가
+     아래 실행 절차 참조. 사용자가 GPU 있는 환경에서 직접 실행 후 결과 보고 부탁.
+
+  2. 커밋 — CLAUDE.md 규칙상 정답률 회귀 평가 통과 전까지 보류
+     검색·생성에 영향 있는 변경(특히 청크 ID + 그래프 메타) 이므로 평가 필수
+     NO-GO 기준 (현 환경 baseline 68.90% 또는 4/21 baseline 83.54%):
+       전체 -1pp 이상 회귀 OR 단일 데이터셋 -3pp 이상 회귀 OR 거부율 -10pp 폭락
+
+  3. notice_attachment 2091청크 — v2 cutover 블로커. 본 작업과 별개 트랙.
+
+  4. 가능하면 docs/problem_consolidation_20260425.md에 [P0.1/0.2/0.3 해결됨] 마크
+     (사용자 환경 평가 통과 후)
+
+★ 사용자 환경 실행 절차:
+
+  # 1) backend 중지
+  docker compose -f docker/docker-compose.yml stop backend
+
+  # 2) 새 컬렉션 환경변수 설정 (production bufs_academic 보호)
+  export CHROMA_COLLECTION=bufs_p0_fix_20260518
+  export LLM_SEED=42  # 평가 재현성용 (선택)
+
+  # 3) 전체 인제스트 (PDF + FAQ + 공지). 80~100분 GPU 점유
+  python scripts/ingest_all.py
+  # 별도로 일반 공지 첨부도 (notice_attachment 누락 회피):
+  python scripts/ingest_all_notices.py  # 트러블슈팅 표 참조
+
+  # 4) backend 재시작 (CHROMA_COLLECTION + LLM_SEED 반영)
+  docker compose -f docker/docker-compose.yml up -d backend
+
+  # 5) 회귀 평가 (--per-question-session + --no-cache 권장)
+  python -X utf8 scripts/eval_contains_f1.py \
+      --datasets data/eval/balanced_test_set.jsonl \
+                 data/eval/rag_eval_dataset_2026_1.jsonl \
+                 data/eval/user_eval_dataset_50.jsonl \
+      --base-url http://localhost:8000 \
+      --output reports/eval_contains_f1 \
+      --tag p0_fix_20260518 \
+      --per-question-session \
+      --no-cache \
+      --seed 42
+
+  # 6) 결과 비교
+  ls -t reports/eval_contains_f1/combined_p0_fix_*.json | head -1
+  # 4/21 baseline = 83.54% 대비 NO-GO 기준 미달이면:
+  #   export CHROMA_COLLECTION=bufs_p0_fix_20260518  → .env 반영
+  #   기존 bufs_academic은 보존 (롤백 안전)
+  # NO-GO 기준 넘으면 원인 분석 (회귀 진단: reports/regression_analysis 참고)
 
 주의:
-  - production bufs_academic (3377청크) 절대 안 건드림. 모든 변경은 별도 컬렉션(bufs_v2)에만.
-  - A-2 코드 변경(bm25_index.py)은 section_path 메타가 있는 청크에만 효과 → bufs_academic에 코드 합쳐도 무영향.
-  - bufs_demo (785청크): demo 전용 (PDF + 학생포털 + FAQ/notice). 시연 종료 후 정리 가능.
-  - LM Studio 등 GPU 점유 프로세스는 인제스트·평가 중 끄는 게 안전.
-  - 평가 시 .env CHROMA_PERSIST_DIR=data/chromadb_new 이미 설정됨.
+  - production bufs_academic (3377청크) 절대 안 건드림. 새 컬렉션에만 인제스트.
+  - LLM_SEED 변경은 backend 시작 시 settings.llm.seed 로 읽힘 → backend 재시작 필수.
+  - eval_contains_f1.py --no-cache 는 ADMIN_PASSWORD 환경변수가 필요.
+  - 그래프 .pkl은 이미 마이그레이션됨 → backend 재시작만으로 신규 node_type/edge_type 적용.
+  - academic_graph.pkl.bak-20260518_104554 가 롤백 안전망.
 
-  팀원 재인덱싱 명령:
-    .venv/bin/python scripts/ingest_all_v2.py --collection bufs_v2 --report /tmp/v2_full.json
+  팀원 재인덱싱 명령 (참고):
+    .venv/bin/python scripts/ingest_all.py
+    # 또는 v2 경로 (notice_attachment 누락 위험 있음):
+    .venv/bin/python scripts/ingest_all_v2.py --collection bufs_v3 --report /tmp/v3_full.json
 
   필요 환경:
     - .venv (Python 3.13, requirements.txt 적용)
@@ -64,3 +198,98 @@
     - GPU (Surya OCR + bge-m3 + reranker)
     - data/pdfs/* PDF 파일들
     예상 소요: 60-90분 (가이드북 OCR 14분 + VLM 표 추출 다수)
+
+  변경 파일 목록 (커밋 후보):
+    app/config.py
+    app/pipeline/answer_generator.py
+    app/graphdb/academic_graph.py
+    app/ingestion/chunking.py
+    app/vectordb/chroma_store.py            (5/19 추가 — 중복 청크 인제스트 방지)
+    app/pdf/vlm_extractor.py                (5/19 추가 — VLM_API_TYPE 어댑터)
+    app/ingestion/chunking_v2.py            (5/19 추가 — VLM 동시 호출)
+    scripts/eval_multilingual.py
+    scripts/eval_contains_f1.py
+    scripts/migrate_graph_type_keys.py (신규)
+    data/graphs/academic_graph.pkl (마이그레이션됨, .bak-20260518_104554 별도)
+
+
+[5/19 추가 — H100 vLLM 백엔드 도입 + 표 추출 동시 호출 + 중복 인제스트 방지]
+
+  변경:
+  - app/pdf/vlm_extractor.py
+    * 신규 _call_vlm() 어댑터 — VLM_API_TYPE=ollama|openai 로 백엔드 선택
+      Ollama: POST /api/generate (네이티브, images:[b64])
+      vLLM  : POST /v1/chat/completions (OpenAI vision, data URL)
+    * _build_ollama_payload / _build_openai_payload / _parse_*_response 어댑터
+    * encode_image: VLM_IMAGE_FORMAT 환경변수 (PNG/JPEG). vLLM은 JPEG 권장(페이로드↓)
+    * _call_ollama 하위호환 alias 유지
+  - app/ingestion/chunking_v2.py extract_tables_with_fallback()
+    * 페이지 내 표 단위 ThreadPoolExecutor 동시 호출. 결과 순서 보장
+    * VLM_CONCURRENCY 환경변수 (Ollama=1, vLLM≥4 권장)
+  - app/vectordb/chroma_store.py add_chunks()
+    * 입력 리스트 내 chunk_id 중복 last-wins dedupe
+    * 컬렉션에 동일 ID+text 존재 → 임베딩·upsert 모두 스킵 (CHUNK_SKIP_EXISTING=true 기본)
+    * 옵션: 다른 ID라도 텍스트 동일 → 스킵 (CHUNK_DEDUPE_BY_CONTENT=true, 기본 false)
+
+  단위 검증 8/8 통과:
+    Ollama/OpenAI 페이로드 변환 + 응답 파싱 (string/list/edge cases) — 5건
+    in-list dedupe / existing-ID skip / content-dedupe — 3건
+
+  ★ H100 vLLM 띄우는 명령 (예시):
+    # H100 호스트에서
+    pip install vllm
+    vllm serve Qwen/Qwen2.5-VL-7B-Instruct \
+        --host 0.0.0.0 --port 8001 \
+        --max-model-len 8192 \
+        --gpu-memory-utilization 0.85 \
+        --tensor-parallel-size 1 \
+        --dtype bfloat16
+
+    # 또는 컨테이너로:
+    docker run --gpus all --rm -p 8001:8001 \
+        -v ~/.cache/huggingface:/root/.cache/huggingface \
+        vllm/vllm-openai:latest \
+        --model Qwen/Qwen2.5-VL-7B-Instruct --port 8001
+
+  ★ 인제스트 측 .env 예시 (H100 vLLM 사용):
+    VLM_API_TYPE=openai
+    VLM_BASE_URL=http://<H100_IP>:8001
+    VLM_MODEL=Qwen/Qwen2.5-VL-7B-Instruct
+    VLM_TIMEOUT_SEC=120
+    VLM_CONCURRENCY=4              # H100 + vLLM이면 4~8 사이 실험
+    VLM_IMAGE_FORMAT=JPEG          # 페이로드 크기 감소
+    CHUNK_SKIP_EXISTING=true       # (기본) 동일 ID+text 임베딩 스킵
+    CHUNK_DEDUPE_BY_CONTENT=false  # (기본) 출처 다양성 보존 — true 시 강한 중복 제거
+
+  ★ Ollama 그대로 쓰는 경우 (.env 변경 없이 호환):
+    VLM_API_TYPE=ollama            # 또는 미설정 (기본값)
+    VLM_BASE_URL=http://localhost:11434
+    VLM_MODEL=qwen2.5vl:7b
+    VLM_CONCURRENCY=1              # Ollama는 단일 추론이라 1~2 권장
+
+  적용 + 검증:
+    # 1) 작은 PDF 1개로 spot-check (캐시 비운 상태)
+    rm -rf data/vlm_cache
+    python -c "from app.pdf.vlm_extractor import _call_vlm; \
+               from PIL import Image; import io; \
+               img=Image.new('RGB',(800,600),'white'); \
+               buf=io.BytesIO(); img.save(buf,format='PNG'); \
+               print(_call_vlm(buf.getvalue(), '이미지 설명: 한국어로'))"
+
+    # 2) 작은 PDF 1개로 표 추출 비교 (Ollama vs vLLM 동일 입력)
+    VLM_API_TYPE=ollama python scripts/ingest_pdf.py --pdf data/pdfs/sample.pdf
+    VLM_API_TYPE=openai python scripts/ingest_pdf.py --pdf data/pdfs/sample.pdf
+    # → 두 결과 청크의 표 마크다운 diff 확인
+
+    # 3) 전체 인제스트 (vLLM)
+    VLM_API_TYPE=openai VLM_BASE_URL=http://<H100_IP>:8001 \
+    VLM_CONCURRENCY=4 \
+    CHROMA_COLLECTION=bufs_p0_fix_20260519 \
+    LLM_SEED=42 \
+    python scripts/ingest_all.py
+
+  주의:
+  - vLLM에서 Qwen2.5-VL은 max_model_len, gpu-memory-utilization, dtype 튜닝 필요
+  - 같은 모델이면 출력 품질은 거의 동일하지만, vLLM 신형 응답이 list content를 줄 수 있어
+    _parse_openai_response 에 list 핸들링 포함됨 (단위 테스트 통과)
+  - 표 추출 결과는 캐시되므로 재인제스트 시 동일 결과 재사용. 백엔드 전환 검증 시 캐시 비우기.

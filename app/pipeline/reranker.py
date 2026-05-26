@@ -98,12 +98,22 @@ class Reranker:
 
         top_k = top_k or settings.reranker.top_k
 
+        # ── TRACE: [rerank-IN] ──
+        logger.info(
+            "[rerank-IN] candidates=%d top_k=%d query_chars=%d asks_url=%s",
+            len(results), top_k, len(query or ""),
+            bool(analysis and (analysis.entities or {}).get("asks_url")),
+        )
+
         # None/비문자열 텍스트 방어 (ChromaDB에서 None document 반환 시)
         valid = [(i, r) for i, r in enumerate(results) if r.text and isinstance(r.text, str)]
         if not valid:
             return results[:top_k]
         pairs = [[query, r.text] for _, r in valid]
+        import time as _t
+        _rr_t0 = _t.monotonic()
         raw_scores = self.model.predict(pairs)
+        _rr_ms_model = int((_t.monotonic() - _rr_t0) * 1000)
 
         # Tier 기반 doc_type 가중치:
         # Tier 1 (domestic, guide) = 공식 학사 PDF + 홈페이지 가이드 → 최우선
@@ -209,5 +219,15 @@ class Reranker:
             top_score,
             relative_threshold,
             effective_threshold,
+        )
+        # ── TRACE: [rerank-OUT] — Top-K 점수 명세 ──
+        _top3 = [
+            f"{r.score:.2f}@p{r.page_number or 0}"
+            for r in reranked[:3]
+        ]
+        logger.info(
+            "[rerank-OUT] selected=%d/%d top_score=%.3f rel_th=%.3f eff_th=%.3f model_ms=%d top3=%s",
+            len(reranked), len(results), top_score, relative_threshold,
+            effective_threshold, _rr_ms_model, _top3,
         )
         return reranked

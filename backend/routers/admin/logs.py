@@ -141,3 +141,88 @@ async def export_jsonl(
         media_type="application/json",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+@router.get("/logs/export/xlsx")
+async def export_xlsx(
+    log_date: str = Query(None),
+    _=Depends(require_admin),
+):
+    """엑셀(.xlsx) 내보내기 — 헤더 스타일·자동 필터·첫 행 고정.
+
+    학사지원팀이 수합·분석하기 좋도록 한글 헤더와 칼럼 너비를 사전 설정.
+    권한: JWT 로그인만 통과하면 OK (`require_admin`).
+    """
+    from app.logging import ChatLogger
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    logger = ChatLogger()
+    if log_date:
+        try:
+            parts = log_date.split("-")
+            entries = logger.read(date(int(parts[0]), int(parts[1]), int(parts[2])))
+        except Exception:
+            entries = logger.read_all()
+    else:
+        entries = logger.read_all()
+
+    # 최신순 정렬 (대시보드/로그 페이지와 동일 순서)
+    entries = sorted(entries, key=lambda x: x.get("timestamp", ""), reverse=True)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "대화 로그"
+
+    # 헤더
+    headers = ["시간", "세션ID", "학번", "Intent", "질문", "답변", "응답(ms)", "만족도"]
+    ws.append(headers)
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    header_align = Alignment(horizontal="center", vertical="center")
+    for cell in ws[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_align
+
+    # 데이터 행 — Intent 한글 라벨 적용
+    body_align = Alignment(vertical="top", wrap_text=True)
+    for e in entries:
+        intent = _INTENT_LABELS.get(e.get("intent", ""), e.get("intent", ""))
+        ws.append([
+            e.get("timestamp", ""),
+            e.get("session_id", ""),
+            e.get("student_id", "") or "",
+            intent,
+            e.get("question", ""),
+            e.get("answer", ""),
+            e.get("duration_ms", 0),
+            e.get("rating", "") if e.get("rating") is not None else "",
+        ])
+
+    # 본문 줄바꿈 (질문·답변 칼럼이 길어도 줄바꿈으로 표시)
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            cell.alignment = body_align
+
+    # 칼럼 너비
+    widths = [20, 25, 12, 14, 50, 70, 10, 10]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    # 자동 필터 + 첫 행 고정
+    ws.auto_filter.ref = ws.dimensions
+    ws.freeze_panes = "A2"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    suffix = log_date if log_date else date.today().isoformat()
+    filename = f"camchat_logs_{suffix}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

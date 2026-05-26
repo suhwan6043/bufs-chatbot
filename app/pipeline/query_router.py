@@ -127,6 +127,16 @@ class QueryRouter:
         Intent.COURSE_INFO:    20,   # 유지: 시간표 청크 다수 필요
         Intent.MAJOR_CHANGE:   15,   # 10 → 15: 학번별 표 분산 대응
         Intent.GENERAL:        15,   # 유지
+        # ── multi-task 1 (2026-05-11): 분할 자식은 부모 값 상속 ──
+        Intent.REGISTRATION_GENERAL:      15,
+        Intent.GRADE_OPTION:              15,
+        Intent.REREGISTRATION:            15,
+        Intent.SCHOLARSHIP_APPLY:         15,
+        Intent.SCHOLARSHIP_QUALIFICATION: 15,
+        Intent.TUITION_BENEFIT:           15,
+        Intent.CERTIFICATE:               15,
+        Intent.CONTACT:                   10,  # 연락처는 적은 청크로 충분
+        Intent.FACILITY:                  15,
     }
 
     # ── 원칙 2: 인텐트별 우선 doc_type (Tier 1: domestic+guide 최우선) ──
@@ -145,6 +155,16 @@ class QueryRouter:
         Intent.SCHOLARSHIP:       ["domestic", "guide", "scholarship", "notice_attachment", "faq"],
         Intent.ALTERNATIVE:       ["domestic", "guide", "faq"],
         Intent.GENERAL:           ["domestic", "guide", "faq", "notice"],
+        # ── multi-task 1: 분할 자식 ──
+        Intent.REGISTRATION_GENERAL:      ["domestic", "guide", "faq"],
+        Intent.GRADE_OPTION:              ["domestic", "guide", "faq"],
+        Intent.REREGISTRATION:            ["domestic", "guide", "faq"],
+        Intent.SCHOLARSHIP_APPLY:         ["domestic", "guide", "scholarship", "notice_attachment", "faq"],
+        Intent.SCHOLARSHIP_QUALIFICATION: ["domestic", "guide", "scholarship", "notice_attachment", "faq"],
+        Intent.TUITION_BENEFIT:           ["domestic", "guide", "scholarship", "notice_attachment", "faq"],
+        Intent.CERTIFICATE:               ["guide", "faq", "domestic"],
+        Intent.CONTACT:                   ["guide", "faq", "domestic"],
+        Intent.FACILITY:                  ["guide", "domestic", "notice", "faq"],
     }
 
     _MIN_PHASE1_RESULTS = 3  # Phase 1 최소 결과 수 (미달 시 Phase 2 확장)
@@ -309,6 +329,10 @@ class QueryRouter:
         # 원칙 2: 리랭커 스킵 — 후보 ≤3이면 Cross-Encoder 건너뜀 (재순위화 의미 없음)
         reranker = self.reranker
         if reranker and len(candidates) > 3:
+            logger.info(
+                "[vector-OUT] candidates=%d preferred_types=%s intent_k=%d reranker=on",
+                len(candidates), preferred_types, n_candidates,
+            )
             return reranker.rerank(
                 query=query,
                 results=candidates,
@@ -316,6 +340,10 @@ class QueryRouter:
                 analysis=analysis,  # Phase 2 Step B: asks_url URL-aware boost
             )
 
+        logger.info(
+            "[vector-OUT] candidates=%d preferred_types=%s intent_k=%d reranker=off",
+            len(candidates), preferred_types, n_candidates,
+        )
         return candidates
 
     def _search_graph(
@@ -327,17 +355,14 @@ class QueryRouter:
         """
         # EARLY_GRADUATION: 학번 없어도 일반 자격·일정 안내 가능
         # SCHOLARSHIP: 장학금 정보는 학번 무관하게 조회 가능
-        # 2026-04-28: COURSE_INFO 추가 — "신청하고 싶은 과목이 보이지 않아요"
-        # 같은 트러블슈팅 FAQ가 익명 세션에서 그래프 통째로 스킵돼 vector PDF만
-        # LLM에 넘어가 환각 답변을 생성한 회귀(ADMIN-20260428-0004 미매칭) 방어.
-        # 학번 미상이면 핸들러가 기본값(2023)으로 동작 — 다른 intent와 동일 정책.
+        # COURSE_INFO: 익명 첫턴 ("과목이 안 보여요" 등) FAQ fallback 보존
         no_id_intents = (
             Intent.SCHEDULE, Intent.ALTERNATIVE,
             Intent.REGISTRATION, Intent.EARLY_GRADUATION,
             Intent.SCHOLARSHIP, Intent.LEAVE_OF_ABSENCE,
             Intent.GRADUATION_REQ, Intent.MAJOR_CHANGE,
-            Intent.GENERAL,      # FAQ 검색용 — 학번 없어도 FAQ 탐색 필요
-            Intent.COURSE_INFO,  # FAQ + 시간표 검색용 (학번은 핸들러 기본값으로 폴백)
+            Intent.COURSE_INFO,  # 익명 사용자 강의·과목 FAQ 탐색 (codex P1)
+            Intent.GENERAL,  # FAQ 검색용 — 학번 없어도 FAQ 탐색 필요
         )
 
         if analysis.intent not in no_id_intents and not analysis.student_id:
@@ -347,7 +372,10 @@ class QueryRouter:
                 or analysis.entities.get("major_method")
             )
             if not has_focused_entity:
-                logger.debug("student_id 없음 - 그래프 탐색 스킵")
+                logger.info(
+                    "[graph-OUT] count=0 reason=no_student_id intent=%s",
+                    analysis.intent.value,
+                )
                 return []
 
         # EN 쿼리: 그래프 내부 키워드 매칭이 한국어 기반이므로 ko_query 사용.
@@ -357,7 +385,7 @@ class QueryRouter:
             graph_question = f"{analysis.ko_query} {query}"
         else:
             graph_question = query
-        return self.academic_graph.query_to_search_results(
+        _graph_results = self.academic_graph.query_to_search_results(
             student_id=analysis.student_id or "2023",
             intent=analysis.intent.value,
             entities=analysis.entities,
@@ -366,3 +394,17 @@ class QueryRouter:
             question_type=analysis.question_type.value if analysis.question_type else "",
             lang=analysis.lang or "ko",
         )
+        _g_has_direct = any(
+            (r.metadata or {}).get("direct_answer") for r in _graph_results
+        )
+        _g_faq_n = sum(
+            1 for r in _graph_results
+            if (r.metadata or {}).get("doc_type") == "faq"
+            or (r.metadata or {}).get("node_type") == "FAQ"
+        )
+        logger.info(
+            "[graph-OUT] count=%d has_direct_answer=%s faq_n=%d intent=%s student_id=%s",
+            len(_graph_results), _g_has_direct, _g_faq_n,
+            analysis.intent.value, analysis.student_id or "default",
+        )
+        return _graph_results

@@ -58,30 +58,6 @@ _CONCRETE_DATA_RE = re.compile(
 # 답변의 '초반부'로 간주할 문자 수 — 주 답변 문장이 이 범위 안에 들어온다는 가정
 _ANSWER_HEAD_CHARS = 120
 
-# 2026-04-28: 트러블슈팅 의도 시그널 — "사이트/주소/로그인 시간" 같은 단순 정보 핸들러가
-# "로그인 안 됨", "오류 났어요" 류 트러블슈팅에 부적절하게 발화하는 것을 막기 위함.
-# 원칙 4(하드코딩 금지): 신호어를 단일 상수로 모아 핸들러들이 공통으로 사용.
-# 핸들러 발화 전에 `_has_troubleshoot_signal(question)` 호출로 게이트.
-_TROUBLESHOOT_SIGNALS = (
-    "안 됩니다", "안 돼요", "안 돼", "안 되네", "안되요", "안돼요",
-    "되지 않", "되질 않", "안 되", "되지않",
-    "오류", "에러", "error", "문제",
-    "막혀", "막혔", "차단", "거부",
-    "왜 안", "왜안",
-)
-
-
-def _has_troubleshoot_signal(question: str) -> bool:
-    """질문에 트러블슈팅(고장/오류/접속불가) 의도가 보이면 True.
-
-    단순 정보 안내 핸들러(URL 안내, 로그인 시간 안내)가 이 시그널이 있는 질문에
-    발화하지 않도록 사용. None/빈 문자열도 안전.
-    """
-    if not question:
-        return False
-    q = question.lower()
-    return any(sig in q for sig in _TROUBLESHOOT_SIGNALS)
-
 
 def _is_redirect_answer(answer: str, metadata: dict | None) -> bool:
     """FAQ 답이 '어디서 확인/문의'만 안내하는 리다이렉트형인지 판정.
@@ -395,9 +371,13 @@ class AcademicGraph:
         result.setdefault("_created_at", now)
         result["_updated_at"] = now
 
-        # 원칙 1: 스키마 자동 진화 — 미등록 필드 감지 시 자동 확장
-        node_type = result.get("type", "")
+        # P0.1 픽스(2026-05-18): "type" 키만 저장되어 외부 코드가 "node_type"으로
+        # 조회 시 None 반환되던 문제 해결. 두 키를 미러링하여 둘 다 같은 값을 가짐.
+        # 어느 키로 읽어도 동일 결과를 받도록 보장 (조회측 코드 변경 없이 호환).
+        node_type = result.get("type", "") or result.get("node_type", "")
         if node_type:
+            result["type"] = node_type
+            result["node_type"] = node_type
             try:
                 from app.graphdb.schema_registry import validate_node
                 validate_node(node_type, result)
@@ -932,23 +912,12 @@ class AcademicGraph:
                     metadata["direct_answer"] = answer_text
             # FAQ도 원본 PDF 출처를 전달 (근거 문서 표시용)
             faq_source = self.G.graph.get("source_pdf", "")
-            faq_pages = self._source_pages_for_static_node(dict(data))
-            if len(faq_pages) > 1:
-                metadata["source_pages"] = faq_pages
-                metadata["_source_pages"] = faq_pages
             # 정규화된 score 사용: FAQ는 0~1.0 범위 (그래프 handler와 동등)
             norm_score = _normalize_faq_score(raw_score)
-            # 2026-04-28: 매우 약한 매칭(norm_score < 0.1 = q_core 토큰 매칭률 10% 미만)은
-            # 무관 FAQ로 보고 컷. 예: "조기취업계 쓸 수 있는 조건" 쿼리가 "장바구니 제도",
-            # "성적 이의신청" 같은 FAQ에 stem 1개 우연 매칭되어 raw_score≈1.0 / max_raw≈24
-            # → norm_score≈0.04로 결과에 들어가 in_context 차지하고 정답 PDF 밀어내는 회귀 차단.
-            if norm_score < 0.1:
-                continue
             results.append(SearchResult(
                 text=text,
                 source=faq_source or f"FAQ:{data.get('faq_id', nid)}",
                 score=norm_score,
-                page_number=faq_pages[0] if faq_pages else 0,
                 metadata=metadata,
             ))
         return results
@@ -971,10 +940,20 @@ class AcademicGraph:
     def add_relation(
         self, source: str, target: str, relation: str, data: dict = None
     ) -> None:
-        """두 노드 간 관계(엣지) 추가."""
-        edge_data = {"relation": relation}
+        """두 노드 간 관계(엣지) 추가.
+
+        P0.1 픽스(2026-05-18): 엣지에 "edge_type"도 함께 저장. 이전엔 "relation"만
+        저장되어 외부 코드가 "edge_type"으로 조회 시 100%가 "unknown"으로 나오던
+        문제 해결. 두 키를 미러링하여 호환성 유지.
+        """
+        edge_data = {"relation": relation, "edge_type": relation}
         if data:
             edge_data.update(data)
+            # data가 명시적으로 edge_type만 주거나 relation만 줘도 둘이 같도록 보정
+            if "edge_type" not in edge_data and "relation" in edge_data:
+                edge_data["edge_type"] = edge_data["relation"]
+            elif "relation" not in edge_data and "edge_type" in edge_data:
+                edge_data["relation"] = edge_data["edge_type"]
         self.G.add_edge(source, target, **edge_data)
 
     # ── 조회 메서드 ───────────────────────────────────────────
@@ -1174,27 +1153,19 @@ class AcademicGraph:
                                     e.get("course_name", "")),
             "SCHOLARSHIP":      lambda s,sid,st,e,q: s._query_scholarship(e, q),
             "LEAVE_OF_ABSENCE": lambda s,sid,st,e,q: s._query_leave_of_absence(e, q),
+            # ── multi-task 1 (2026-05-11): 분할 자식은 부모 핸들러 공유 ──
+            "REGISTRATION_GENERAL":      lambda s,sid,st,e,q: s._query_registration(sid, e, q),
+            "GRADE_OPTION":              lambda s,sid,st,e,q: s._query_registration(sid, e, q),
+            "REREGISTRATION":            lambda s,sid,st,e,q: s._query_registration(sid, e, q),
+            "SCHOLARSHIP_APPLY":         lambda s,sid,st,e,q: s._query_scholarship(e, q),
+            "SCHOLARSHIP_QUALIFICATION": lambda s,sid,st,e,q: s._query_scholarship(e, q),
+            "TUITION_BENEFIT":           lambda s,sid,st,e,q: s._query_scholarship(e, q),
+            # CERTIFICATE / CONTACT / FACILITY: 전용 그래프 노드 없음 → FAQ 그래프만 사용 (handler None)
         }
         handler = _INTENT_HANDLERS.get(intent)
         if handler:
             _h_results = handler(self, student_id, student_type, entities, question) or []
             results.extend(_h_results)
-
-        # EN/KO 공통: 주제형 intent라도 "기간/일정"을 묻는 경우 학사일정 그래프를 보강.
-        # 예: "secondary major application period"는 MAJOR_CHANGE 용어를 포함하지만
-        # 실제 근거는 학사일정 p.5에 있다.
-        if entities.get("question_focus") == "period" and intent in {
-            "REGISTRATION", "MAJOR_CHANGE", "LEAVE_OF_ABSENCE",
-            "SCHOLARSHIP", "COURSE_INFO",
-        }:
-            schedule_results = self._query_schedule(question, entities)
-            if schedule_results:
-                seen_keys = {(r.source, r.page_number, r.text[:80]) for r in results}
-                for result in schedule_results:
-                    key = (result.source, result.page_number, result.text[:80])
-                    if key not in seen_keys:
-                        results.insert(0, result)
-                        seen_keys.add(key)
 
         # ── FAQ 그래프 검색 (모든 intent 공통) ──
         # 원칙 1: FAQ는 그래프 1급 시민 → direct_answer 플래그로 RRF 부스트
@@ -1476,10 +1447,7 @@ class AcademicGraph:
         node_data = node_data or {}
         sf = (node_data.get("_source_file", "")
               or self.G.graph.get("source_pdf", ""))
-        sp = self._source_pages_for_static_node(
-            node_data,
-            existing_pages=node_data.get("_source_pages", []),
-        )
+        sp = node_data.get("_source_pages", [])
         meta = dict(extra_meta or {})
         meta["source_type"] = "graph"
         meta["node_type"] = node_data.get("type", "학사 데이터")
@@ -1498,62 +1466,6 @@ class AcademicGraph:
             page_number=sp[0] if sp else 0,
             metadata=meta,
         )
-
-    @staticmethod
-    def _merge_source_pages(preferred: list[int], existing: list[int]) -> list[int]:
-        merged: list[int] = []
-        for page in preferred + existing:
-            if isinstance(page, int) and page not in merged:
-                merged.append(page)
-        return merged
-
-    def _source_pages_for_static_node(
-        self,
-        node_data: dict,
-        existing_pages: list[int] = None,
-    ) -> list[int]:
-        """정적 그래프 노드에 누락된 PDF 근거 페이지를 보수적으로 보강합니다."""
-        existing_pages = existing_pages or []
-        node_type = node_data.get("type")
-        if node_type == "전공이수방법":
-            group = node_data.get("적용학번범위", "")
-            if group == "2022":
-                return self._merge_source_pages([39, 40], existing_pages)
-            if group == "2023":
-                return self._merge_source_pages([65], existing_pages)
-
-        if node_type == "조기졸업":
-            section = node_data.get("구분", "")
-            if section == "신청자격":
-                return self._merge_source_pages([28], existing_pages)
-            if section.startswith("기준"):
-                return self._merge_source_pages([28], existing_pages)
-            if section == "기타사항":
-                return self._merge_source_pages([48], existing_pages)
-
-        if node_type == "장학금":
-            name = node_data.get("장학금명") or node_data.get("구분", "")
-            source_pages = {
-                "국가장학금": [7, 8],
-                "교내장학금": [33],
-                "근로장학금": [8],
-            }
-            for keyword, pages in source_pages.items():
-                if keyword in name:
-                    return self._merge_source_pages(pages, existing_pages)
-
-        if node_type == "FAQ":
-            faq_id = node_data.get("faq_id", "")
-            question = node_data.get("구분", "")
-            answer = node_data.get("설명", "")
-            if faq_id in {"FAQ-0020", "FAQ-0030"} or "과목명이" in question:
-                return self._merge_source_pages([9, 10], existing_pages)
-            if faq_id in {"FAQ-0001", "FAQ-0026"} and "동일과목" in answer:
-                return self._merge_source_pages([9, 10], existing_pages)
-            if faq_id == "FAQ-0027":
-                return self._merge_source_pages([46], existing_pages)
-
-        return existing_pages
 
     def _make_direct_result(
         self,
@@ -1993,11 +1905,7 @@ class AcademicGraph:
         if "휴학" in question and "수강" in question:
             answer = "휴학생은 수강신청이 불가합니다. 수강신청을 하려면 먼저 복학 신청이 필요합니다."
             context = "[수강신청 유의사항]\n- 휴학 중인 학생은 수강신청 불가\n- 수강신청 전 복학 신청 필요"
-            source_data = dict(rule)
-            source_data["_source_pages"] = [9]
-            return [self._make_direct_result(
-                context, answer, score=1.3, node_data=source_data,
-            )]
+            return [self._make_direct_result(context, answer, score=1.3)]
 
         # 계절학기 전용 핸들러
         if "계절학기" in question or "계절수업" in question:
@@ -2089,27 +1997,28 @@ class AcademicGraph:
             answer = " ".join(answer_parts) if answer_parts else ""
             return [self._make_direct_result("\n".join(lines), answer, score=1.3)]
 
-        # 수강신청 사이트/URL 질문 — 트러블슈팅 시그널이 없을 때만 발화.
-        # 2026-04-28: "수강신청 사이트 로그인이 안 돼요" 같은 질문이 "사이트" 키워드만 보고
-        # URL 안내로 마감되던 회귀 차단. 트러블슈팅이면 이 핸들러를 우회해 FAQ가 채택되도록.
+        # 수강신청 사이트/URL 질문 — 단, 트러블슈팅 의도면 URL 단락 회피.
+        # codex P2: "로그인이 안 돼" + "사이트" 류 케이스에서 URL만 반환되어
+        # 문제 해결 안내가 누락되던 회귀 차단.
         q_norm = self._normalize_text(question)
-        if (
-            any(kw in q_norm for kw in ("사이트", "주소", "홈페이지", "url"))
-            and not _has_troubleshoot_signal(question)
-        ):
+        _TROUBLESHOOTING_KW = (
+            "안돼", "안 돼", "안되", "안 되", "안됨", "안 됨",
+            "오류", "에러", "error", "실패", "실패해", "안열",
+            "안열려", "안 열려", "막혀", "막힘", "접속불가",
+            "접속 안", "장애", "되지 않", "되지않", "처리되지",
+            "처리 되지", "왜", "어떻게 해", "방법을", "해결",
+            "문제", "안나와", "안 나와",
+        )
+        _is_troubleshoot = any(kw in q_norm for kw in _TROUBLESHOOTING_KW)
+        if not _is_troubleshoot and any(kw in q_norm for kw in ("사이트", "주소", "홈페이지", "url")):
             url = rule.get("수강신청사이트", "")
             if url:
                 answer = f"수강신청 사이트 주소는 {url} 입니다."
                 context = f"[수강신청]\n- 수강신청사이트: {url}"
                 return [self._make_direct_result(context, answer, score=1.3, node_data=rule)]
 
-        # 로그인 시간 질문 — 트러블슈팅 시그널이 없을 때만 발화.
-        # ("로그인이 안 돼요"는 시간 안내가 아니라 학년 제한 안내가 정답.)
-        if (
-            "로그인" in q_norm
-            and any(kw in q_norm for kw in ("시간", "언제", "몇시"))
-            and not _has_troubleshoot_signal(question)
-        ):
+        # 로그인 시간 질문
+        if "로그인" in q_norm and any(kw in q_norm for kw in ("시간", "언제", "가능", "몇시")):
             login_time = rule.get("로그인오픈시간", "")
             if login_time:
                 answer = f"수강신청 시작 전 {login_time}부터 로그인이 가능합니다."
@@ -2947,6 +2856,14 @@ class AcademicGraph:
         "LEAVE_OF_ABSENCE": ["휴복학"],
         "SCHEDULE": ["일정"],
         "EARLY_GRADUATION": ["졸업"],
+        # ── multi-task 1 (2026-05-11): 분할 자식은 부모 태그 상속 ──
+        "REGISTRATION_GENERAL":      ["수강신청"],
+        "GRADE_OPTION":              ["수강신청"],
+        "REREGISTRATION":            ["수강신청"],
+        "SCHOLARSHIP_APPLY":         ["장학금"],
+        "SCHOLARSHIP_QUALIFICATION": ["장학금"],
+        "TUITION_BENEFIT":           ["장학금", "등록금"],
+        # CERTIFICATE / CONTACT / FACILITY: 별도 태그 없음, 공지 검색은 키워드 fallback에 의존
     }
 
     def _query_notices(

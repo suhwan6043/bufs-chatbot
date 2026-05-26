@@ -258,6 +258,30 @@ def _pred_is_not_answerable(pred: str) -> bool:
     return any(p in pred_l for p in _NOT_ANSWERABLE_PRED_PATTERNS)
 
 
+def _contains_key_fact(pred_norm: str, kf_norm: str) -> bool:
+    """Contains-F1 매칭 (P1.4 픽스, 2026-05-18).
+
+    이전 버전은 단순 ``kf in pred`` substring 검사라 ``"4"`` 가 ``"40"`` 에 잘못
+    매치되는 문제가 있었음. 이 헬퍼는 key_fact 의 시작/끝이 숫자인 경우에만
+    word boundary 를 적용해 인접 숫자에 의한 오탐을 차단한다. 한국어 조사·
+    접미사 매칭은 의도된 거동이므로 그대로 유지한다 (예: ``"4월"`` 이 ``"4월에"`` 에는 매치).
+
+    예시:
+        _contains_key_fact("40주년 기념행사", "4")       → False  (이전엔 True)
+        _contains_key_fact("4월 15일 등록", "4월")        → True
+        _contains_key_fact("학번 2024 등록", "2024학번") → False (학번 인접 숫자 없음)
+        _contains_key_fact("2024학번 졸업요건", "2024")  → True
+    """
+    if not kf_norm:
+        return False
+    left = r"(?<!\d)" if kf_norm[0].isdigit() else ""
+    right = r"(?!\d)" if kf_norm[-1].isdigit() else ""
+    if not left and not right:
+        return kf_norm in pred_norm
+    pattern = left + re.escape(kf_norm) + right
+    return re.search(pattern, pred_norm) is not None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 검색 지표 (Recall@K, MRR@K)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -464,9 +488,11 @@ async def evaluate_one(
     record["retrieved_contexts"] = [merged.formatted_context]  # RAGAS용
 
     # ── 5. 컨텍스트 번역 ─────────────────────────────────────────────────────
-    # EN은 skip-translate 기본: gemma4가 KO 컨텍스트를 직접 읽고 EN 답변 생성
-    # --force-translate 플래그로 기존 번역 방식 강제 가능
-    use_skip = (lang == "en") and not skip_translate  # skip_translate → force_translate로 의미 반전
+    # --skip-translate 플래그 (CLI 도움말 라인 871~873 참조):
+    #   True  → KO 컨텍스트를 그대로 LLM에 전달 (Qwen이 직접 EN 답변 생성)
+    #   False → translator.translate_if_needed 로 target_lang(en/ko) 번역 후 전달
+    # 이전 버전은 `not skip_translate`로 의미가 반전되어 있었음 (P1.2 픽스, 2026-05-18).
+    use_skip = (lang == "en") and skip_translate
     if use_skip:
         context = merged.formatted_context  # KO 원문 그대로
         record["context_translated"] = False
@@ -529,9 +555,11 @@ async def evaluate_one(
         record["f1"]         = round(_token_f1(pred, ground_truth, lang), 4)
         record["na_correct"] = None
         # Contains-F1: key_facts 토큰이 pred에 포함되는 비율 (짧은 GT에 유리)
+        # P1.4 픽스(2026-05-18): 숫자 경계 보호 — "4"가 "40"에 매치되지 않도록
+        # 시작/끝이 숫자인 key_fact에만 word boundary 적용. 한국어 조사·접미사 매칭은 유지.
         if key_facts:
             pred_norm = pred.lower()
-            hits = sum(1 for kf in key_facts if kf.lower() in pred_norm)
+            hits = sum(1 for kf in key_facts if _contains_key_fact(pred_norm, kf.lower()))
             record["contains_f1"] = round(hits / len(key_facts), 4)
         else:
             record["contains_f1"] = None

@@ -39,6 +39,16 @@ _INTENT_FALLBACK_TERM: dict[str, dict] = {
     "COURSE_INFO":       {"ko": "교과목",     "en": "Course"},
     "ALTERNATIVE":       {"ko": "대체과목",   "en": "Alternative Course"},
     "TRANSCRIPT":        {"ko": "성적표",     "en": "Transcript"},
+    # ── multi-task 1 (2026-05-11): 분할 자식은 부모 용어 상속 ──
+    "REGISTRATION_GENERAL":      {"ko": "수강신청",   "en": "Course Registration"},
+    "GRADE_OPTION":              {"ko": "성적평가 선택", "en": "Grade Option"},
+    "REREGISTRATION":            {"ko": "재수강",     "en": "Re-registration"},
+    "SCHOLARSHIP_APPLY":         {"ko": "장학금 신청", "en": "Scholarship Application"},
+    "SCHOLARSHIP_QUALIFICATION": {"ko": "장학금 자격", "en": "Scholarship Qualification"},
+    "TUITION_BENEFIT":           {"ko": "등록금",     "en": "Tuition"},
+    "CERTIFICATE":               {"ko": "증명서",     "en": "Certificate"},
+    "CONTACT":                   {"ko": "학과사무실", "en": "Department Office"},
+    "FACILITY":                  {"ko": "학생포털",   "en": "Student Portal"},
 }
 
 # ── EN One-Pass 시스템 프롬프트 ───────────────────────────────────────────────
@@ -171,7 +181,7 @@ class AnswerGenerator:
         key_material = self._stable_dump(key_payload)
         return hashlib.sha256(key_material.encode("utf-8")).hexdigest()
 
-    def get_cached_response(self, **cache_kwargs) -> Optional[str]:
+    def get_cached_response(self, *, share_across_sessions: bool = True, **cache_kwargs) -> Optional[str]:
         if self._cache_ttl_seconds <= 0 or self._cache_max_entries <= 0:
             return None
 
@@ -188,7 +198,7 @@ class AnswerGenerator:
             self._response_cache.move_to_end(cache_key)
             return answer
 
-    def store_cached_response(self, answer: str, **cache_kwargs) -> None:
+    def store_cached_response(self, answer: str, *, share_across_sessions: bool = True, **cache_kwargs) -> None:
         if (
             self._cache_ttl_seconds <= 0
             or self._cache_max_entries <= 0
@@ -751,6 +761,9 @@ class AnswerGenerator:
             "top_p": 0.9,
             "think": False,
         }
+        # P1.1 픽스(2026-05-18): 평가 재현성용 seed
+        if settings.llm.seed is not None:
+            payload["seed"] = settings.llm.seed
 
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
@@ -901,17 +914,21 @@ class AnswerGenerator:
         if use_ollama_native:
             # Ollama 네이티브 /api/chat 페이로드
             # think:false가 실제로 동작 (OpenAI-compat /v1/chat/completions와 달리)
+            _options = {
+                "num_predict": max_tokens,
+                "temperature": settings.llm.temperature,
+                "top_p": settings.llm.top_p,
+                "repeat_penalty": settings.llm.repeat_penalty,
+            }
+            # P1.1 픽스(2026-05-18): 평가 재현성용 seed (settings.llm.seed가 None이면 미전달)
+            if settings.llm.seed is not None:
+                _options["seed"] = settings.llm.seed
             payload = {
                 "model": self.model,
                 "messages": messages,
                 "stream": True,
                 "think": False,
-                "options": {
-                    "num_predict": max_tokens,
-                    "temperature": settings.llm.temperature,
-                    "top_p": settings.llm.top_p,
-                    "repeat_penalty": settings.llm.repeat_penalty,
-                },
+                "options": _options,
             }
         else:
             payload = {
@@ -924,6 +941,8 @@ class AnswerGenerator:
                 "repeat_penalty": settings.llm.repeat_penalty,
                 "think": False,
             }
+            if settings.llm.seed is not None:
+                payload["seed"] = settings.llm.seed
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
