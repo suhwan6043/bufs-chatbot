@@ -735,6 +735,18 @@ async def chat_stream(
 
         # direct_answer 단락 응답 (KO only)
         if merged.direct_answer and analysis.lang != "en":
+            # 2026-05-26 게이트 적용 출처 추적 (관측 전용, 동작 변경 없음):
+            #   score is None → graph/context 추출 → PR #25 게이트 우회
+            #   score is float → vector reranker 통과 → PR #25 게이트 적용
+            logger.info("DIRECT_SOURCE %s", json.dumps({
+                "node": merged.direct_answer_source_node,
+                "score": merged.direct_answer_source_score,
+                "path": merged.direct_answer_source_path,
+                "gate_applied": merged.direct_answer_source_score is not None,
+                "intent": analysis.intent.value if analysis.intent else None,
+                "query": question[:80],
+                "endpoint": "stream",
+            }, ensure_ascii=False))
             # 멀티턴 컨텍스트 보존: direct_answer도 session history에 append.
             messages = session_data.get("messages", [])
             messages.append({"role": "user", "content": question})
@@ -752,6 +764,10 @@ async def chat_stream(
                 "intent": analysis.intent.value if analysis.intent else "",
                 "duration_ms": int((time.monotonic() - _t0) * 1000),
                 "path": "direct",
+                # 2026-05-26 게이트 적용 출처 (관측 전용):
+                "direct_source_node": merged.direct_answer_source_node,
+                "direct_source_score": merged.direct_answer_source_score,
+                "direct_source_path": merged.direct_answer_source_path,
             }, ensure_ascii=False)}
             _try_log(question, merged.direct_answer, sid, analysis, _t0, context_confidence=merged.context_confidence, user_id=user_id)
             return
@@ -1096,6 +1112,16 @@ async def chat_sync(
             merged.direct_answer = ""  # fall-through to LLM generate
 
     if merged.direct_answer and analysis.lang != "en":
+        # 2026-05-26 게이트 적용 출처 추적 (관측 전용, sync 경로):
+        logger.info("DIRECT_SOURCE %s", json.dumps({
+            "node": merged.direct_answer_source_node,
+            "score": merged.direct_answer_source_score,
+            "path": merged.direct_answer_source_path,
+            "gate_applied": merged.direct_answer_source_score is not None,
+            "intent": analysis.intent.value if analysis.intent else None,
+            "query": question[:80],
+            "endpoint": "sync",
+        }, ensure_ascii=False))
         # 멀티턴 컨텍스트 보존: direct_answer도 세션 history에 저장해야
         # 다음 턴 follow-up 감지·rewrite가 이전 주제를 참조할 수 있다.
         messages = session_data.get("messages", [])

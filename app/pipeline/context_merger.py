@@ -389,6 +389,10 @@ class ContextMerger:
         selected_vector = []
         selected_graph = []
         direct_answer = ""
+        # 2026-05-26 게이트 적용 출처 추적 (관측 전용)
+        direct_answer_source_node = ""
+        direct_answer_source_score: Optional[float] = None
+        direct_answer_source_path = ""
 
         # 그래프·FAQ direct_answer를 동등하게 경쟁시킴 (RRF 순위 기반)
         # all_results는 이미 RRF 점수순으로 정렬되어 있으므로,
@@ -429,6 +433,9 @@ class ContextMerger:
                 )
                 continue
             direct_answer = candidate
+            direct_answer_source_node = result.metadata.get("node_id", "MISSING")
+            direct_answer_source_score = result.metadata.get("raw_score")  # None=graph/context
+            direct_answer_source_path = "first_loop"
             break
 
         # OCU 섹션 트리밍 플래그 (질문에 OCU 미언급 시 활성화)
@@ -456,6 +463,9 @@ class ContextMerger:
                     candidate = result.metadata["direct_answer"]
                     if _answer_unit_aligns(question, candidate):
                         direct_answer = candidate
+                        direct_answer_source_node = result.metadata.get("node_id", "MISSING")
+                        direct_answer_source_score = result.metadata.get("raw_score")
+                        direct_answer_source_path = "fallback_loop"
 
             # 원칙 2: OCU 미언급 쿼리에서 혼합 청크의 OCU 섹션 동적 트리밍
             if _trim_ocu and result.metadata.get("source_type") != "graph":
@@ -526,6 +536,9 @@ class ContextMerger:
             extracted = self._try_extract_direct_answer(question, formatted, entities)
             if extracted:
                 direct_answer = extracted
+                direct_answer_source_node = ""  # context 추출 — 단일 노드 출처 없음
+                direct_answer_source_score = None
+                direct_answer_source_path = "context_extract"
 
         # [Fix A final gate] 어느 경로로 설정됐든 direct_answer는 최종적으로
         # AnswerUnit.aligns()를 통과해야 한다. 불일치면 폐기 → LLM 경로로 위임.
@@ -537,6 +550,11 @@ class ContextMerger:
                 (question or "")[:60], direct_answer[:80],
             )
             direct_answer = ""
+            # 폐기 시 source 정보도 일관성 위해 비움 — MergedContext가 빈 direct에
+            # 출처 정보 보관하는 모순 방지.
+            direct_answer_source_node = ""
+            direct_answer_source_score = None
+            direct_answer_source_path = ""
 
         # 원칙 2: context_confidence = 카운트 + 실제 점수 결합 신호 (0.0~1.0)
         #
@@ -589,6 +607,9 @@ class ContextMerger:
             direct_answer=direct_answer,
             source_urls=source_urls,
             context_confidence=confidence,
+            direct_answer_source_node=direct_answer_source_node,
+            direct_answer_source_score=direct_answer_source_score,
+            direct_answer_source_path=direct_answer_source_path,
         )
 
     @staticmethod

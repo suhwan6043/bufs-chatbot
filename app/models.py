@@ -105,6 +105,13 @@ class MergedContext:
     # 원칙 2: 하이브리드 시스템(IDF·Cross-Encoder·RRF) 점수를 집약한 관련성 신호
     # 1.0 = direct_answer 확보, 0.0 = 관련 컨텍스트 없음
     context_confidence: float = 0.0
+    # 2026-05-26 게이트 적용 출처 추적 (관측 전용, 동작 변경 없음):
+    #   direct_answer_source_score is None → graph 또는 context 추출 → PR #25 게이트 우회
+    #   direct_answer_source_score is float → vector reranker 통과 → PR #25 게이트 적용
+    # 사용처: chat.py done payload 노출 + DIRECT_SOURCE 로그
+    direct_answer_source_node: str = ""
+    direct_answer_source_score: Optional[float] = None
+    direct_answer_source_path: str = ""
 
 
 @dataclass
