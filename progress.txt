@@ -167,10 +167,58 @@ results 패턴 → 시점성. 5단계 "위험 없음" 후 6단계에서 진짜 1
   has_future 분포 보고 (a) enforce vs (b) 데이터 갱신 우선순위 결정.
 
 ### 다음 작업
-1. 보강 커밋 (eval 164문 1회) ← 진행 중
-2. schedule_gate dry-run 커밋 (골든 18/18, eval 생략)
+1. 보강 커밋 (eval 164문 1회) ← 완료 (5407f7b)
+2. schedule_gate dry-run 커밋 (골든 18/18, eval 생략) ← 완료
 3. dry-run 측정 며칠 — 차단율 + has_future 분포
 4. 분포 보고 enforce/폴백/B 데이터 결정
+
+### has_future_semester_data 함정 (미래의 누군가에게)
+
+**현재 정의**: 차단된 schedule의 학기 다음 버전(2026-1 → 2026-2)에 *아무*
+schedule 노드 있나. 즉 "다음 학기 데이터가 graph에 들어오기 시작했나" 신호.
+
+**왜 지금 충분한가**: 2026-2 = 0건이라 모든 케이스 "no". 함정 미활성.
+
+**언제 함정이 활성화되나**: 교무처가 2026-2 일정을 부분 공개·인제스트 시작
+하면, 다음 학기에 "개강일"만 들어오고 "수강신청 일정"은 아직 없는 상태가
+가능. 그럼 "수강신청 기간"이 차단됐을 때 has_future="yes" 나오지만 정작
+같은 이벤트 대체는 없어 거짓 안심을 줌.
+
+**조이기 방법** (데이터 인입 시 적용):
+  현재: has_future_semester_data(semester) — 학기 단위
+  미래: has_future_semester_data_for_event(semester, event_name) — 같은
+        이벤트의 다음 학기 버전 존재 여부
+
+이 조이기는 데이터가 채워질 때 의미가 생기므로, 2026-2 노드 카운트가
+1+ 되는 시점에 academic_graph.py에 메서드 추가하고 schedule_gate 로그
+호출도 갱신할 것. 본 메모는 그 시점을 미래의 임에게 알리는 신호.
+
+### enforce 진입 기준 (측정 후 결정)
+
+dry-run에서 두 분포를 본다:
+  1. 차단율 (past 비율) — 추정 53.2%, 실제 운영은 측정 후 확정
+  2. has_future_semester_data 분포 — 현재 100% "no" 예상 (2026-2 = 0건)
+
+기준:
+  - "yes" 다수 → enforce 켜도 폴백이 멀쩡, enforce 진입 가능
+  - "no" 다수 → enforce 켜면 schedule 질문 전체 "공지 확인" 폴백.
+    (b) 데이터 갱신 시급성 정량 증명. (a) enforce 보류, (b) 우선.
+
+**예상 결론**: 본 게이트의 dry-run 측정이 "차단기 켜는 도구"가 아니라
+"(b) 데이터 갱신이 진짜 작업임을 입증하는 도구"가 될 가능성. 1주차
+grounding이 "차단기 동결, 진짜 위험 다른 곳"으로 끝난 패턴 재현.
+
+### 운영 검증 (5/26 dry-run 첫 한 줄)
+
+쿼리: "1학년 수강신청일은?" → 응답 정상 (수강신청_1학년_2026-1 일정 안내)
+SCHEDULE_GATE 로그:
+  mode=dry_run, blocked=true, reason=schedule_past
+  node_id=schedule_수강신청_1학년_2026-1
+  종료일=2026-02-09
+  next_semester_has_data="no"  ← 첫 한 줄에서 (b) 시급성 신호 작동
+  loop=first_loop
+
+(b) 데이터 갱신 시급성이 운영 트래픽에서 정량 측정되기 시작.
 
 ## 주의 (다음 세션이 알아야 할 컨텍스트)
 1. 팀원 PR #24·#26은 OPEN 상태로 진화 중. 절대 cherry-pick·rebase 안 함.

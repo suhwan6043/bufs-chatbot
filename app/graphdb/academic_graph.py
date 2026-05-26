@@ -1071,6 +1071,62 @@ class AcademicGraph:
             if semester is None or data.get("학기") == semester
         ]
 
+    # ── 시점성 게이트(schedule_gate) 지원 — 2026-05-26 ─────────────────
+    # has_future_semester_data: 차단된 schedule의 학기 다음 버전 노드가 graph에
+    # 존재하는가. (a) 게이트 차단 시 폴백 답이 멀쩡한지 vs (b) 데이터 갱신이
+    # 시급한지를 가르는 신호. 현 시점(5/26) 데이터는 2026-2 = 0건이라 거의
+    # 모든 케이스에서 "no" 예상 — 이 값 자체가 (b) 시급성의 정량 증거.
+    #
+    # 한계 (의도된 느슨함):
+    #   "다음 학기에 *아무* schedule 노드 있나"로 측정 — "yes"여도 같은 이벤트
+    #   대체가 보장되진 않음 (예: 2026-2에 개강일은 있지만 수강신청 일정은 없을
+    #   수 있음). 2026-2 데이터가 채워지기 시작하면 "같은 이벤트 존재"로 조여야.
+    #   현재는 2026-2=0건이라 어차피 전부 "no"라 함정 미활성. 데이터 인입 시
+    #   progress.txt 메모 참고하여 조일 것.
+
+    @staticmethod
+    def next_semester(semester: str) -> Optional[str]:
+        """학기 문자열의 다음 학기 계산. "2026-1"→"2026-2", "2026-2"→"2027-1".
+
+        BUFS 학기 포맷 "YYYY-N" (N=1|2). 계절학기는 별도 표기 없이 본 학기
+        부속으로 인제스트됨 (확인: 47 schedule 노드 학기 분포에 계절학기 없음).
+
+        파싱 실패(빈 문자열·오염·다른 포맷) 시 None 반환 → 호출자가 "unknown"
+        처리. 1주차 grounding "포맷 차이 함정" 정신: 파싱 못 하면 차단 안 하고
+        모름으로 분류.
+        """
+        if not semester or not isinstance(semester, str):
+            return None
+        # 정확한 "YYYY-1" 또는 "YYYY-2" 포맷만 허용. "1", "2026", "2026학년도 1학기"
+        # 등 변종은 None.
+        import re
+        m = re.fullmatch(r"(\d{4})-([12])", semester.strip())
+        if not m:
+            return None
+        year = int(m.group(1))
+        half = int(m.group(2))
+        if half == 1:
+            return f"{year}-2"
+        return f"{year + 1}-1"
+
+    def has_future_semester_data(self, semester: str) -> str:
+        """차단된 schedule의 학기 다음 버전 노드가 graph에 *어떤 형태로든*
+        존재하는지 판정. schedule_gate dry-run 로그용.
+
+        Returns:
+            "yes"     — 다음 학기 schedule 노드 1+건 존재 (폴백 가능 잠재력).
+            "no"      — 다음 학기 schedule 노드 0건 (data layer gap).
+            "unknown" — 학기 파싱 실패 (오염·누락·다른 포맷).
+        """
+        nxt = self.next_semester(semester)
+        if nxt is None:
+            return "unknown"
+        # 다음 학기에 schedule 노드 1+건 있나
+        for _, data in self._nodes_by_type("학사일정"):
+            if data.get("학기") == nxt:
+                return "yes"
+        return "no"
+
     def get_alternatives(self, course_name: str) -> List[dict]:
         """대체과목/동일과목 체인 탐색 (1~2홉)."""
         node = self._find_course_by_name(course_name)

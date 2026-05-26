@@ -23,12 +23,21 @@ merged.formatted_context 구성 시 아래 순서로 예산(max_chars) 소비:
 이 파일에서는 raw 추가만 수행하고 우선순위 보호는 호출 순서로 달성된다.
 """
 
+import json
 import logging
 import re
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 
 from app.models import SearchResult, MergedContext, Intent, QuestionType
 from app.pipeline.answer_units import aligns as _answer_unit_aligns
+from app.pipeline.schedule_gate import (
+    is_temporally_valid as _schedule_gate_check,
+    get_mode as _schedule_gate_mode,
+    get_today as _schedule_gate_today,
+)
+
+if TYPE_CHECKING:
+    from app.graphdb.academic_graph import AcademicGraph
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +219,15 @@ class ContextMerger:
     [역할] Vector/Graph 검색 결과를 LLM 프롬프트용 컨텍스트로 통합
     [핵심] RRF(k=60)로 두 검색 채널을 순위 기반 병합 후 토큰 제한 내 선별
     """
+
+    def __init__(self, academic_graph: Optional["AcademicGraph"] = None):
+        """
+        Args:
+            academic_graph: schedule_gate dry-run 로그 합성용 (has_future_semester_data).
+                None이면 게이트 차단 로그의 next_semester_has_data가 "unknown"으로
+                기록됨. 게이트 판정 자체는 graph 없이도 동작 (metadata 기반).
+        """
+        self.academic_graph = academic_graph
 
     def merge(
         self,
@@ -413,6 +431,9 @@ class ContextMerger:
         # raw_score 없으면(reranker 미적용 경로) 게이트 우회 → 기존 동작 유지.
         from app.config import settings as _settings_rb
         _rb_thresh = _settings_rb.pipeline.rerank_bypass_threshold
+        # schedule_gate 모드·기준일 캐싱 (loop 내 env 반복 조회 회피)
+        _sg_mode = _schedule_gate_mode()
+        _sg_today = _schedule_gate_today()
         for result in all_results:
             if not result.metadata.get("direct_answer"):
                 continue
@@ -432,6 +453,32 @@ class ContextMerger:
                     (question or "")[:60], candidate[:60],
                 )
                 continue
+            # [Schedule Gate] 2026-05-26 시점성 검증 (schedule_* 노드 한정).
+            # dry_run (default): 통과 + JSON 로그. enforce: 차단 → 다음 후보.
+            # off: 비활성.
+            if _sg_mode != "off":
+                _sg_dec = _schedule_gate_check(result.metadata, _sg_today)
+                if not _sg_dec.valid:
+                    _sg_has_future = "unknown"
+                    if self.academic_graph and result.metadata.get("학기"):
+                        _sg_has_future = self.academic_graph.has_future_semester_data(
+                            result.metadata.get("학기", "")
+                        )
+                    logger.info("SCHEDULE_GATE %s", json.dumps({
+                        "mode": _sg_mode,
+                        "blocked": True,
+                        "reason": _sg_dec.reason,
+                        "node_id": result.metadata.get("node_id", ""),
+                        "종료일": result.metadata.get("종료일", ""),
+                        "학기": result.metadata.get("학기", ""),
+                        "이벤트명": result.metadata.get("이벤트명", ""),
+                        "next_semester_has_data": _sg_has_future,
+                        "today": _sg_today.isoformat(),
+                        "query": (question or "")[:80],
+                        "loop": "first_loop",
+                    }, ensure_ascii=False))
+                    if _sg_mode == "enforce":
+                        continue
             direct_answer = candidate
             direct_answer_source_node = result.metadata.get("node_id", "MISSING")
             direct_answer_source_score = result.metadata.get("raw_score")  # None=graph/context
@@ -462,10 +509,36 @@ class ContextMerger:
                 if _raw2 is None or float(_raw2) >= _rb_thresh:
                     candidate = result.metadata["direct_answer"]
                     if _answer_unit_aligns(question, candidate):
-                        direct_answer = candidate
-                        direct_answer_source_node = result.metadata.get("node_id", "MISSING")
-                        direct_answer_source_score = result.metadata.get("raw_score")
-                        direct_answer_source_path = "fallback_loop"
+                        # [Schedule Gate] fallback_loop도 동일 시점성 검증.
+                        _sg_block = False
+                        if _sg_mode != "off":
+                            _sg_dec2 = _schedule_gate_check(result.metadata, _sg_today)
+                            if not _sg_dec2.valid:
+                                _sg_has_future2 = "unknown"
+                                if self.academic_graph and result.metadata.get("학기"):
+                                    _sg_has_future2 = self.academic_graph.has_future_semester_data(
+                                        result.metadata.get("학기", "")
+                                    )
+                                logger.info("SCHEDULE_GATE %s", json.dumps({
+                                    "mode": _sg_mode,
+                                    "blocked": True,
+                                    "reason": _sg_dec2.reason,
+                                    "node_id": result.metadata.get("node_id", ""),
+                                    "종료일": result.metadata.get("종료일", ""),
+                                    "학기": result.metadata.get("학기", ""),
+                                    "이벤트명": result.metadata.get("이벤트명", ""),
+                                    "next_semester_has_data": _sg_has_future2,
+                                    "today": _sg_today.isoformat(),
+                                    "query": (question or "")[:80],
+                                    "loop": "fallback_loop",
+                                }, ensure_ascii=False))
+                                if _sg_mode == "enforce":
+                                    _sg_block = True
+                        if not _sg_block:
+                            direct_answer = candidate
+                            direct_answer_source_node = result.metadata.get("node_id", "MISSING")
+                            direct_answer_source_score = result.metadata.get("raw_score")
+                            direct_answer_source_path = "fallback_loop"
 
             # 원칙 2: OCU 미언급 쿼리에서 혼합 청크의 OCU 섹션 동적 트리밍
             if _trim_ocu and result.metadata.get("source_type") != "graph":

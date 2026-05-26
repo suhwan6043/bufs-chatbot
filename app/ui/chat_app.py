@@ -1268,7 +1268,7 @@ def init_components():
                 academic_graph=academic_graph,
                 bm25_index=bm25_index,
             )
-            st.session_state.merger    = ContextMerger()
+            st.session_state.merger    = ContextMerger(academic_graph=academic_graph)
             st.session_state.generator = AnswerGenerator()
             st.session_state.validator = ResponseValidator()
 

@@ -54,7 +54,10 @@ def init_all():
             academic_graph=academic_graph,
             bm25_index=bm25_index,
         )
-        _merger = ContextMerger()
+        # schedule_gate dry-run 로그에 has_future_semester_data 노출하려면
+        # ContextMerger에 graph 주입 필요 (2026-05-26). graph=None이면 게이트
+        # 판정은 여전히 동작하나 dry-run 로그가 "unknown"으로 빠짐.
+        _merger = ContextMerger(academic_graph=academic_graph)
         _generator = AnswerGenerator()
         _validator = ResponseValidator()
         _chat_logger = ChatLogger()
