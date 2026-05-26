@@ -2379,8 +2379,22 @@ class AcademicGraph:
         # 기간/일정 질문 → 학사일정에서 검색 (장바구니 기간, 수강신청 기간 등)
         # 절차/방법 질문은 제외 (e.g., "정정기간 이후 어떻게 처리되는가")
         _PROCESS_KW = ("어떻게", "무엇", "방법", "절차", "처리", "전에", "가능한")
+        # REG_SCHEDULE_GATE (디폴트 off, 측정용): on일 때 question_focus가
+        # None/""이고 "수강신청" 토큰이 있는 질문도 schedule fallback 허용.
+        # 화이트리스트로 차단되는 명시 focus: method/location/limit/table_lookup/
+        # rule_list/eligibility — None은 "분류 실패"라 넓을 수 있어 수강신청 토큰을
+        # AND로 걸어 폭을 좁힌다.
+        _focus = entities.get("question_focus")
+        _reg_gate_on = os.getenv("REG_SCHEDULE_GATE", "off").strip().lower() in {
+            "on", "true", "1", "yes"
+        }
+        _focus_allowed = _focus == "period" or (
+            _reg_gate_on
+            and not _focus
+            and ("수강신청" in question or "수강 신청" in question)
+        )
         if (
-            entities.get("question_focus") == "period"
+            _focus_allowed
             and not any(kw in question for kw in _PROCESS_KW)
         ):
             matches = self._find_schedule_matches(question)
