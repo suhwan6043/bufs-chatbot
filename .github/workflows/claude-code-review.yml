@@ -11,21 +11,22 @@ jobs:
     # runs on the self-hosted runner. Team PRs (same-repo branches) run normally.
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: self-hosted
-    # Isolate CI from the runner operator's personal Claude config.
-    # The action resolves config from $HOME/.claude, so pointing HOME at a
-    # per-job temp dir gives every PR a clean, identical, reproducible review
-    # (stock code-review plugin only) and never reads or mutates a person's
-    # ~/.claude. runner.temp is used so there is no hardcoded machine path.
-    env:
-      HOME: ${{ runner.temp }}/claude-home
     permissions:
       contents: read
       pull-requests: write
       issues: read
       id-token: write
     steps:
-      - name: Prepare isolated Claude home
-        run: mkdir -p "$HOME"
+      # Isolate CI from the runner operator's personal Claude config.
+      # The action resolves config from $HOME/.claude, so we point HOME at a
+      # per-job temp dir: every PR gets a clean, reproducible review and no
+      # one's ~/.claude is read or mutated. $RUNNER_TEMP avoids a hardcoded
+      # path; it is exported via $GITHUB_ENV because the runner context is not
+      # available in a job-level env block. HOME then applies to all later steps.
+      - name: Isolate Claude config
+        run: |
+          mkdir -p "$RUNNER_TEMP/claude-home"
+          echo "HOME=$RUNNER_TEMP/claude-home" >> "$GITHUB_ENV"
 
       - name: Checkout repository
         uses: actions/checkout@v4
