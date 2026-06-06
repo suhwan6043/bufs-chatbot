@@ -6,6 +6,10 @@ on:
 
 jobs:
   claude-review:
+    # Fork-guard: only auto-review PRs from branches within this repo.
+    # PRs opened from outside forks are skipped so untrusted code never
+    # runs on the self-hosted runner. Team PRs (same-repo branches) run normally.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: self-hosted
     permissions:
       contents: read
